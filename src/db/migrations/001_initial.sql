@@ -1,0 +1,3 @@
+-- Initial migration is represented by src/db/schema.sql in this scaffold.
+-- The runtime applies that schema directly so the MVP stays simple while the
+-- migrations folder establishes the future migration location.

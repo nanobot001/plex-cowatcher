@@ -1,0 +1,40 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+config/users.json
+!config/users.example.json
+
+# Logs
+*.log
+logs/*
+!logs/.gitkeep
+
+# Dependencies and build output
+node_modules/
+dist/
+build/
+coverage/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Local scratch
+.tmp/
+tmp/
+
+# Local tool state
+*.sqlite
+*.sqlite3

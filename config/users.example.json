@@ -1,0 +1,24 @@
+{
+  "sourceUsers": [
+    {
+      "displayName": "Tony",
+      "plexUsername": "Tony",
+      "plexUserId": "replace_me",
+      "discordUserId": "optional"
+    }
+  ],
+  "typicalCowatchUsers": [
+    {
+      "displayName": "Ian",
+      "plexUsername": "Ian",
+      "plexUserId": "replace_me",
+      "discordUserId": "optional"
+    },
+    {
+      "displayName": "Alex",
+      "plexUsername": "Alex",
+      "plexUserId": "replace_me",
+      "discordUserId": "optional"
+    }
+  ]
+}

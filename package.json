@@ -1,0 +1,33 @@
+{
+  "name": "plex-cowatch-sync",
+  "version": "0.1.0",
+  "description": "Tool-friendly local Plex co-watch sync service with Discord prompts, browser admin UI, CLI, SQLite, and PM2 supervision.",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "plex-cowatch": "./dist/cli/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "npm run build && node dist/server/app.js",
+    "start": "node dist/server/app.js",
+    "cli": "npm run build && node dist/cli/cli.js",
+    "test": "npm run build && node tests/run-tests.mjs",
+    "db:init": "npm run build && node dist/db/init.js",
+    "discord:test-prompt": "npm run build && node dist/cli/cli.js test-discord-prompt"
+  },
+  "dependencies": {
+    "discord.js": "^14.17.3",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
