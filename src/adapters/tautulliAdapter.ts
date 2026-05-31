@@ -37,20 +37,8 @@ export class HttpTautulliAdapter implements TautulliAdapter {
   async getRecentHistory(params: RecentHistoryParams): Promise<TautulliHistoryRow[]> {
     if (!appConfig.TAUTULLI_API_KEY) return [];
     const json = await this.getJson(this.buildUrl("get_history", { user: params.user, length: 100 }));
-    const rows = Array.isArray(json.response?.data?.data) ? json.response.data.data : [];
-    return rows.map((row: Record<string, unknown>) => ({
-      rowId: String(row.row_id ?? ""),
-      user: String(row.user ?? ""),
-      ratingKey: String(row.rating_key ?? ""),
-      mediaType: String(row.media_type ?? "unknown"),
-      title: String(row.title ?? ""),
-      showTitle: row.grandparent_title ? String(row.grandparent_title) : undefined,
-      seasonNumber: row.parent_media_index ? Number(row.parent_media_index) : undefined,
-      episodeNumber: row.media_index ? Number(row.media_index) : undefined,
-      watchedAt: row.date ? new Date(Number(row.date) * 1000).toISOString() : new Date().toISOString(),
-      percentComplete: row.percent_complete ? Number(row.percent_complete) : undefined,
-      completed: true
-    }));
+    const rows: Record<string, unknown>[] = Array.isArray(json.response?.data?.data) ? json.response.data.data : [];
+    return rows.map(normalizeTautulliHistoryRow).filter((row) => row.user && row.ratingKey);
   }
 
   async getActivity(): Promise<TautulliActivity> {
@@ -72,6 +60,60 @@ export class HttpTautulliAdapter implements TautulliAdapter {
     if (!response.ok) throw new Error(`Tautulli request failed: ${response.status}`);
     return response.json();
   }
+}
+
+function optionalString(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  return String(value);
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function optionalBoolean(value: unknown): boolean | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+  const normalized = String(value).toLowerCase();
+  if (["1", "true", "yes", "complete", "completed"].includes(normalized)) return true;
+  if (["0", "false", "no", "incomplete"].includes(normalized)) return false;
+  return undefined;
+}
+
+function watchedAtIso(value: unknown): string {
+  const numeric = optionalNumber(value);
+  if (numeric !== undefined) return new Date(numeric * 1000).toISOString();
+  const stringValue = optionalString(value);
+  if (stringValue) {
+    const parsed = new Date(stringValue);
+    if (Number.isFinite(parsed.getTime())) return parsed.toISOString();
+  }
+  return new Date().toISOString();
+}
+
+export function normalizeTautulliHistoryRow(row: Record<string, unknown>): TautulliHistoryRow {
+  return {
+    rowId: optionalString(row.row_id),
+    user: String(row.user ?? row.username ?? ""),
+    ratingKey: String(row.rating_key ?? ""),
+    grandparentRatingKey: optionalString(row.grandparent_rating_key),
+    parentRatingKey: optionalString(row.parent_rating_key),
+    plexGuid: optionalString(row.guid),
+    mediaType: String(row.media_type ?? row.media_type_full ?? "unknown"),
+    libraryName: optionalString(row.section_name),
+    title: String(row.title ?? ""),
+    showTitle: optionalString(row.grandparent_title),
+    seasonNumber: optionalNumber(row.parent_media_index),
+    episodeNumber: optionalNumber(row.media_index),
+    watchedAt: watchedAtIso(row.date ?? row.stopped),
+    percentComplete: optionalNumber(row.percent_complete),
+    viewOffset: optionalNumber(row.view_offset),
+    duration: optionalNumber(row.duration),
+    completed: optionalBoolean(row.completed ?? row.watched_status)
+  };
 }
 
 export function createTautulliAdapter(): TautulliAdapter {

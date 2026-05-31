@@ -62,7 +62,11 @@ export interface TautulliHistoryRow {
   rowId?: string;
   user: string;
   ratingKey: string;
+  grandparentRatingKey?: string;
+  parentRatingKey?: string;
+  plexGuid?: string;
   mediaType: string;
+  libraryName?: string;
   title: string;
   showTitle?: string;
   seasonNumber?: number;

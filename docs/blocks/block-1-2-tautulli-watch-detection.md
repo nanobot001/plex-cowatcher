@@ -1,8 +1,9 @@
 # Block 1-2: Tautulli Watch Detection
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Depends on Block 1-1 readiness reporting and config conventions.
+> Status: Implemented on 2026-05-31.
+> Result: Implemented.
+> Verification: `npm run build` - passed; `npm test` - passed.
+> Notes: Added Tautulli history normalization, source-user polling, completion filtering, exact and nearby duplicate prevention, watch-event persistence, and mocked coverage.
 
 ## Goal
 

@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { openMigratedDatabase } from "../dist/db/database.js";
+import { normalizeTautulliHistoryRow } from "../dist/adapters/tautulliAdapter.js";
 import { countsAsCompleted } from "../dist/watcher/watcher.js";
+import { WatcherService } from "../dist/watcher/watcher.js";
 import { isDuplicateWithinWindow, watchEventKey } from "../dist/watcher/dedupe.js";
+import { UserService } from "../dist/service/userService.js";
 import { AppError, errorResult } from "../dist/utils/errors.js";
 
 const tests = [];
@@ -20,6 +27,64 @@ test("watch completion uses percent threshold", () => {
 
 test("watch completion uses view offset and duration when percent is missing", () => {
   assert.equal(countsAsCompleted({ viewOffset: 90, duration: 100 }, 90), true);
+});
+
+test("Tautulli history rows normalize movie fields", () => {
+  assert.deepEqual(
+    normalizeTautulliHistoryRow({
+      row_id: 123,
+      user: "Tony",
+      rating_key: "movie-1",
+      media_type: "movie",
+      section_name: "Movies",
+      title: "The Movie",
+      date: 1780000000,
+      percent_complete: "95",
+      watched_status: 1
+    }),
+    {
+      rowId: "123",
+      user: "Tony",
+      ratingKey: "movie-1",
+      grandparentRatingKey: undefined,
+      parentRatingKey: undefined,
+      plexGuid: undefined,
+      mediaType: "movie",
+      libraryName: "Movies",
+      title: "The Movie",
+      showTitle: undefined,
+      seasonNumber: undefined,
+      episodeNumber: undefined,
+      watchedAt: "2026-05-28T20:26:40.000Z",
+      percentComplete: 95,
+      viewOffset: undefined,
+      duration: undefined,
+      completed: true
+    }
+  );
+});
+
+test("Tautulli history rows normalize episode fields", () => {
+  const row = normalizeTautulliHistoryRow({
+    user: "Tony",
+    rating_key: "episode-1",
+    grandparent_rating_key: "show-1",
+    parent_rating_key: "season-1",
+    media_type: "episode",
+    title: "Episode Title",
+    grandparent_title: "Show Title",
+    parent_media_index: "2",
+    media_index: "7",
+    view_offset: "900",
+    duration: "1000"
+  });
+
+  assert.equal(row.mediaType, "episode");
+  assert.equal(row.showTitle, "Show Title");
+  assert.equal(row.seasonNumber, 2);
+  assert.equal(row.episodeNumber, 7);
+  assert.equal(row.viewOffset, 900);
+  assert.equal(row.duration, 1000);
 });
 
 test("dedupe builds stable keys", () => {
@@ -42,6 +107,132 @@ test("API error formatting returns machine-readable app errors", () => {
       retryable: true
     }
   );
+});
+
+function withTestDb(fn) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "plex-cowatcher-test-"));
+  const dbPath = path.join(dir, "state.sqlite");
+  const db = openMigratedDatabase(dbPath);
+  const cleanup = () => {
+    db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  };
+
+  try {
+    const result = fn(db);
+    if (result && typeof result.then === "function") {
+      return result.finally(cleanup);
+    }
+    cleanup();
+    return result;
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+}
+
+function seedUsers(db) {
+  new UserService(db).syncConfiguredUsers([
+    { plexUsername: "Tony", displayName: "Tony", isSourceUser: true, isTypicalCowatcher: false, enabled: true },
+    { plexUsername: "Disabled", displayName: "Disabled", isSourceUser: true, isTypicalCowatcher: false, enabled: false },
+    { plexUsername: "Viewer", displayName: "Viewer", isSourceUser: false, isTypicalCowatcher: true, enabled: true }
+  ]);
+}
+
+test("completed source-user watch creates one watch_events row", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const watcher = new WatcherService(db);
+    const insertedId = watcher.insertWatchEvent({
+      rowId: "row-1",
+      user: "Tony",
+      ratingKey: "movie-1",
+      mediaType: "movie",
+      title: "The Movie",
+      watchedAt: "2026-05-30T20:00:00.000Z",
+      percentComplete: 95
+    });
+
+    assert.equal(typeof insertedId, "number");
+    const count = db.prepare("SELECT COUNT(*) AS count FROM watch_events").get().count;
+    assert.equal(count, 1);
+  });
+});
+
+test("re-polling exact and nearby duplicate watches does not create duplicates", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const watcher = new WatcherService(db);
+    const first = watcher.insertWatchEvent({
+      rowId: "row-1",
+      user: "Tony",
+      ratingKey: "movie-1",
+      mediaType: "movie",
+      title: "The Movie",
+      watchedAt: "2026-05-30T20:00:00.000Z",
+      completed: true
+    });
+    const exact = watcher.insertWatchEvent({
+      rowId: "row-1",
+      user: "Tony",
+      ratingKey: "movie-1",
+      mediaType: "movie",
+      title: "The Movie",
+      watchedAt: "2026-05-30T20:00:00.000Z",
+      completed: true
+    });
+    const nearby = watcher.insertWatchEvent({
+      rowId: "row-2",
+      user: "Tony",
+      ratingKey: "movie-1",
+      mediaType: "movie",
+      title: "The Movie",
+      watchedAt: "2026-05-30T20:04:00.000Z",
+      completed: true
+    });
+
+    assert.equal(typeof first, "number");
+    assert.equal(exact, undefined);
+    assert.equal(nearby, undefined);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM watch_events").get().count, 1);
+  });
+});
+
+test("incomplete, unknown, disabled, and non-source users are ignored", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const watcher = new WatcherService(db);
+    const rows = [
+      { user: "Tony", ratingKey: "movie-1", mediaType: "movie", title: "Incomplete", watchedAt: "2026-05-30T20:00:00.000Z", percentComplete: 20 },
+      { user: "Unknown", ratingKey: "movie-2", mediaType: "movie", title: "Unknown", watchedAt: "2026-05-30T20:00:00.000Z", completed: true },
+      { user: "Disabled", ratingKey: "movie-3", mediaType: "movie", title: "Disabled", watchedAt: "2026-05-30T20:00:00.000Z", completed: true },
+      { user: "Viewer", ratingKey: "movie-4", mediaType: "movie", title: "Viewer", watchedAt: "2026-05-30T20:00:00.000Z", completed: true }
+    ];
+
+    for (const row of rows) watcher.insertWatchEvent(row);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM watch_events").get().count, 0);
+  });
+});
+
+test("polling Tautulli recent history inserts completed movie and episode rows", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const tautulli = {
+      getUsers: async () => [],
+      getActivity: async () => ({ streamCount: 0 }),
+      getMetadata: async (ratingKey) => ({ ratingKey, title: "" }),
+      getRecentHistory: async ({ user }) => [
+        { user, ratingKey: "movie-1", mediaType: "movie", title: "The Movie", watchedAt: "2026-05-30T20:00:00.000Z", percentComplete: 95 },
+        { user, ratingKey: "episode-1", mediaType: "episode", title: "Episode", showTitle: "Show", seasonNumber: 1, episodeNumber: 2, watchedAt: "2026-05-30T21:00:00.000Z", viewOffset: 950, duration: 1000 }
+      ]
+    };
+    const watcher = new WatcherService(db, tautulli);
+    const result = await watcher.pollRecentHistory();
+
+    assert.deepEqual(result, { inserted: 2, skipped: 0 });
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM watch_events WHERE media_type = 'movie'").get().count, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM watch_events WHERE media_type = 'episode'").get().count, 1);
+  });
 });
 
 let passed = 0;

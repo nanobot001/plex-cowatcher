@@ -55,6 +55,12 @@ export class UserService {
       .all();
   }
 
+  listSourceUsers(): { id: number; plex_username: string }[] {
+    return this.db
+      .prepare("SELECT id, plex_username FROM users WHERE enabled = 1 AND is_source_user = 1 ORDER BY display_name ASC")
+      .all() as { id: number; plex_username: string }[];
+  }
+
   findById(id: number): { id: number; plex_user_id: string | null; plex_username: string; display_name: string } | undefined {
     return this.db.prepare("SELECT * FROM users WHERE id = ? AND enabled = 1").get(id) as
       | { id: number; plex_user_id: string | null; plex_username: string; display_name: string }
@@ -63,6 +69,12 @@ export class UserService {
 
   findByUsername(username: string): { id: number; plex_username: string } | undefined {
     return this.db.prepare("SELECT id, plex_username FROM users WHERE plex_username = ? AND enabled = 1").get(username) as
+      | { id: number; plex_username: string }
+      | undefined;
+  }
+
+  findSourceByUsername(username: string): { id: number; plex_username: string } | undefined {
+    return this.db.prepare("SELECT id, plex_username FROM users WHERE plex_username = ? AND enabled = 1 AND is_source_user = 1").get(username) as
       | { id: number; plex_username: string }
       | undefined;
   }
