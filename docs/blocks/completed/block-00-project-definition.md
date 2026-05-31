@@ -11,7 +11,7 @@ Clarify the project purpose, profile, audience, constraints, stable rules, succe
 - Record stable project rules in `docs/design/locked-rules.md`.
 - Identify the first useful verification command, if known.
 - Update `docs/continue-here.md` with current state and next steps.
-- Establish the active MVP block sequence starting at `docs/blocks/block-1-1-local-configuration-and-health.md`.
+- Establish the active MVP block sequence starting at `docs/blocks/completed/block-1-1-local-configuration-and-health.md`.
 
 ## Out Of Scope
 
@@ -25,7 +25,7 @@ Clarify the project purpose, profile, audience, constraints, stable rules, succe
 - `docs/project-charter.md`
 - `docs/design/locked-rules.md`
 - `docs/continue-here.md`
-- `docs/blocks/block-1-1-local-configuration-and-health.md`
+- `docs/blocks/completed/block-1-1-local-configuration-and-health.md`
 
 ## Acceptance Criteria
 

@@ -2,11 +2,14 @@
 import { openMigratedDatabase } from "../db/database.js";
 import { createPlexAdapter } from "../adapters/plexAdapter.js";
 import { createTautulliAdapter } from "../adapters/tautulliAdapter.js";
+import { DiscordBot } from "../discord/bot.js";
 import { AuditService } from "../service/auditService.js";
+import { CowatchService } from "../service/cowatchService.js";
 import { HealthService } from "../service/healthService.js";
 import { HistoryCopyService } from "../service/historyCopyService.js";
 import { SyncService } from "../service/syncService.js";
 import { UserService } from "../service/userService.js";
+import { appConfig } from "../utils/config.js";
 import { parseDays } from "../utils/time.js";
 
 const db = openMigratedDatabase();
@@ -28,6 +31,7 @@ async function main(): Promise<void> {
   const plex = createPlexAdapter();
   const tautulli = createTautulliAdapter();
   const sync = new SyncService(plex);
+  const cowatch = new CowatchService(db, sync);
   const historyCopy = new HistoryCopyService(db, tautulli, sync);
 
   switch (command) {
@@ -67,10 +71,29 @@ async function main(): Promise<void> {
       print({ ok: true, data: { retried: 0, note: "Retry queue scaffolded; live retry implementation waits for Plex verification." } });
       break;
     case "test-discord-prompt":
-      print({ ok: false, errorCode: "DISCORD_TEST_PROMPT_NEEDS_RUNNING_BOT", message: "Use the server runtime with DISCORD_ENABLED=true after configuring .env." });
+      if (!appConfig.DISCORD_ENABLED || !appConfig.DISCORD_BOT_TOKEN || !appConfig.DISCORD_CHANNEL_ID) {
+        print({ ok: false, errorCode: "DISCORD_UNCONFIGURED", message: "Set DISCORD_ENABLED=true, DISCORD_BOT_TOKEN, and DISCORD_CHANNEL_ID before sending a test prompt." });
+        break;
+      }
+      {
+        const requestedWatchEventId = arg("watch-event-id") ? Number(arg("watch-event-id")) : undefined;
+        const candidate = requestedWatchEventId
+          ? cowatch.listPendingPromptCandidates(100).find((item) => item.watchEventId === requestedWatchEventId)
+          : cowatch.listPendingPromptCandidates(1)[0];
+        if (!candidate) {
+          print({ ok: false, errorCode: "NO_PENDING_DISCORD_PROMPT", message: "No pending watch event was found for a Discord test prompt." });
+          break;
+        }
+
+        const bot = new DiscordBot(cowatch);
+        await bot.start();
+        const result = await bot.sendPromptCandidate(candidate);
+        await bot.stop();
+        print({ ok: true, data: result });
+      }
       break;
     default:
-      print({ ok: true, commands: ["health", "users", "recent", "pending", "preview-copy", "apply-copy", "audit", "retry-failed"] });
+      print({ ok: true, commands: ["health", "users", "recent", "pending", "preview-copy", "apply-copy", "audit", "retry-failed", "test-discord-prompt"] });
   }
 }
 

@@ -1,6 +1,10 @@
 import express from "express";
 import path from "node:path";
+import { createPlexAdapter } from "../adapters/plexAdapter.js";
 import { openMigratedDatabase } from "../db/database.js";
+import { DiscordBot } from "../discord/bot.js";
+import { CowatchService } from "../service/cowatchService.js";
+import { SyncService } from "../service/syncService.js";
 import { appConfig } from "../utils/config.js";
 import { log } from "../utils/logger.js";
 import { registerWebRoutes } from "../web/index.js";
@@ -30,4 +34,30 @@ if (process.argv[1]?.endsWith("app.js") || process.argv[1]?.endsWith("app.ts")) 
       message: `Plex Co-Watch Sync listening at http://${appConfig.APP_HOST}:${appConfig.APP_PORT}`
     });
   });
+  void startDiscordRuntime(app.locals.db);
+}
+
+async function startDiscordRuntime(db: ReturnType<typeof openMigratedDatabase>): Promise<void> {
+  if (!appConfig.DISCORD_ENABLED) return;
+
+  const sync = new SyncService(createPlexAdapter());
+  const cowatch = new CowatchService(db, sync);
+  const bot = new DiscordBot(cowatch);
+
+  try {
+    await bot.start();
+    const sendPending = async () => {
+      const result = await bot.sendPendingPrompts();
+      if (result.sent > 0 || result.failed > 0) {
+        log("info", { action: "discord_send_pending_prompts", message: "Processed pending Discord prompts", ...result });
+      }
+    };
+    await sendPending();
+    setInterval(() => void sendPending(), Math.max(10, appConfig.PROMPT_DELAY_SECONDS) * 1000);
+  } catch (error) {
+    log("error", {
+      action: "discord_start",
+      message: error instanceof Error ? error.message : String(error)
+    });
+  }
 }

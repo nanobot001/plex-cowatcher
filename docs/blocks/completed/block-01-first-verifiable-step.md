@@ -2,7 +2,7 @@
 
 > Status: Superseded by the Phase 1 MVP block series.
 > Result: Historical seed block retained for context.
-> Notes: Use `docs/blocks/block-1-1-local-configuration-and-health.md` as the next active implementation block.
+> Notes: Superseded by `docs/blocks/completed/block-1-1-local-configuration-and-health.md`.
 
 ## Goal
 

@@ -84,7 +84,17 @@ Windows restart-after-reboot should be documented after choosing between Task Sc
 
 ## Discord Test Prompt
 
-Set `DISCORD_ENABLED=true`, `DISCORD_BOT_TOKEN`, and `DISCORD_CHANNEL_ID` in `.env`, then run the service. The Discord module contains prompt builders and interaction handling; the CLI currently reports that a running configured bot is required for a live prompt.
+Set `DISCORD_ENABLED=true`, `DISCORD_BOT_TOKEN`, and `DISCORD_CHANNEL_ID` in `.env`, then run the service. When Discord is enabled, the service connects the bot and sends prompts for pending watch events. The prompt records the Discord channel/message IDs so the same pending event is not sent twice.
+
+To send one real prompt for a pending watch event from the CLI:
+
+```powershell
+npm run build
+node dist/cli/cli.js test-discord-prompt --pretty
+node dist/cli/cli.js test-discord-prompt --watch-event-id 42 --pretty
+```
+
+This posts to the configured Discord channel. Keep `PLEX_MUTATION_MODE=mock` until Block 1-4 verifies live per-user watched-state mutation.
 
 ## Project Docs
 

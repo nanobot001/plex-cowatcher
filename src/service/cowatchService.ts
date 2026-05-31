@@ -10,6 +10,22 @@ export interface ResolvePromptInput {
   selectedTargetUserIds: number[];
   actor: string;
   method: "discord_prompt" | "browser" | "cli";
+  resolution?: "selected" | "everyone" | "none" | "dismiss";
+}
+
+export interface PromptCandidate {
+  watchEventId: number;
+  sourceUser: string;
+  title: string;
+  showTitle?: string;
+  seasonNumber?: number;
+  episodeNumber?: number;
+  watchedAt: string;
+}
+
+export interface TypicalCowatcher {
+  id: number;
+  display_name: string;
 }
 
 export class CowatchService {
@@ -31,16 +47,74 @@ export class CowatchService {
     return { ok: true, watchEventId };
   }
 
+  listPendingPromptCandidates(limit = 10): PromptCandidate[] {
+    return this.db
+      .prepare(
+        `SELECT
+          watch_events.id AS watchEventId,
+          users.display_name AS sourceUser,
+          watch_events.title,
+          watch_events.show_title AS showTitle,
+          watch_events.season_number AS seasonNumber,
+          watch_events.episode_number AS episodeNumber,
+          watch_events.watched_at AS watchedAt
+        FROM watch_events
+        JOIN users ON users.id = watch_events.source_user_id
+        WHERE watch_events.prompt_status = 'pending'
+          AND watch_events.discord_prompt_message_id IS NULL
+        ORDER BY watch_events.watched_at ASC
+        LIMIT ?`
+      )
+      .all(limit) as unknown as PromptCandidate[];
+  }
+
+  listTypicalCowatchers(): TypicalCowatcher[] {
+    return this.users.listTypicalCowatchers() as TypicalCowatcher[];
+  }
+
+  getTypicalCowatcherIds(): number[] {
+    return this.listTypicalCowatchers().map((user) => user.id);
+  }
+
+  recordPromptSent(watchEventId: number, channelId: string, messageId: string, actor = "discord_bot") {
+    const now = nowIso();
+    const result = this.db
+      .prepare(
+        `UPDATE watch_events
+        SET prompt_status = 'prompted',
+          discord_prompt_channel_id = ?,
+          discord_prompt_message_id = ?,
+          discord_prompt_sent_at = ?,
+          updated_at = ?
+        WHERE id = ? AND discord_prompt_message_id IS NULL`
+      )
+      .run(channelId, messageId, now, now, watchEventId);
+
+    if (result.changes === 0) {
+      this.audit.record("create_cowatch_prompt", actor, "skipped", { watchEventId, reason: "Prompt already sent or missing" });
+      return { ok: true, sent: false };
+    }
+
+    this.audit.record("create_cowatch_prompt", actor, "ok", { watchEventId, channelId, messageId });
+    return { ok: true, sent: true };
+  }
+
+  recordPromptFailure(watchEventId: number, error: string, actor = "discord_bot"): void {
+    this.audit.record("create_cowatch_prompt", actor, "error", { watchEventId }, error);
+  }
+
   async resolvePrompt(input: ResolvePromptInput) {
     try {
       const event = this.db.prepare("SELECT * FROM watch_events WHERE id = ?").get(input.watchEventId) as
         | { id: number; rating_key: string }
         | undefined;
       if (!event) throw new AppError("WATCH_EVENT_NOT_FOUND", "Watch event not found", { watchEventId: input.watchEventId }, false, 404);
+      const resolution = input.resolution ?? (input.selectedTargetUserIds.length === 0 ? "none" : "selected");
       if (input.selectedTargetUserIds.length === 0) {
-        this.db.prepare("UPDATE watch_events SET prompt_status = ?, updated_at = ? WHERE id = ?").run("dismissed", nowIso(), input.watchEventId);
-        this.audit.record("resolve_cowatch_prompt", input.actor, "dismissed", input);
-        return { ok: true, data: { status: "dismissed", results: [] } };
+        const status = resolution === "dismiss" ? "dismissed" : "none";
+        this.db.prepare("UPDATE watch_events SET prompt_status = ?, updated_at = ? WHERE id = ?").run(status, nowIso(), input.watchEventId);
+        this.audit.record("resolve_cowatch_prompt", input.actor, status, input);
+        return { ok: true, data: { status, results: [] } };
       }
 
       const results = [];

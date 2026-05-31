@@ -20,6 +20,15 @@ export function migrateDatabase(db: Db): void {
     ? fs.readFileSync(sourceSchema, "utf8")
     : fs.readFileSync(builtSchema, "utf8");
   db.exec(schema);
+  ensureColumn(db, "watch_events", "discord_prompt_channel_id", "TEXT");
+  ensureColumn(db, "watch_events", "discord_prompt_message_id", "TEXT");
+  ensureColumn(db, "watch_events", "discord_prompt_sent_at", "TEXT");
+}
+
+function ensureColumn(db: Db, tableName: string, columnName: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  if (columns.some((column) => column.name === columnName)) return;
+  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
 }
 
 export function openMigratedDatabase(sqlitePath = appConfig.SQLITE_PATH): Db {

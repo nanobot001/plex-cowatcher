@@ -8,6 +8,8 @@ import { countsAsCompleted } from "../dist/watcher/watcher.js";
 import { WatcherService } from "../dist/watcher/watcher.js";
 import { isDuplicateWithinWindow, watchEventKey } from "../dist/watcher/dedupe.js";
 import { UserService } from "../dist/service/userService.js";
+import { CowatchService } from "../dist/service/cowatchService.js";
+import { SyncService } from "../dist/service/syncService.js";
 import { AppError, errorResult } from "../dist/utils/errors.js";
 
 const tests = [];
@@ -135,8 +137,32 @@ function seedUsers(db) {
   new UserService(db).syncConfiguredUsers([
     { plexUsername: "Tony", displayName: "Tony", isSourceUser: true, isTypicalCowatcher: false, enabled: true },
     { plexUsername: "Disabled", displayName: "Disabled", isSourceUser: true, isTypicalCowatcher: false, enabled: false },
-    { plexUsername: "Viewer", displayName: "Viewer", isSourceUser: false, isTypicalCowatcher: true, enabled: true }
+    { plexUsername: "Viewer", plexUserId: "viewer-plex", displayName: "Viewer", isSourceUser: false, isTypicalCowatcher: true, enabled: true }
   ]);
+}
+
+function insertCompletedWatch(db) {
+  const watcher = new WatcherService(db);
+  return watcher.insertWatchEvent({
+    rowId: "row-1",
+    user: "Tony",
+    ratingKey: "movie-1",
+    mediaType: "movie",
+    title: "The Movie",
+    watchedAt: "2026-05-30T20:00:00.000Z",
+    completed: true
+  });
+}
+
+function cowatchService(db, plexOverrides = {}) {
+  const plex = {
+    listUsers: async () => [],
+    getMetadataByRatingKey: async (ratingKey) => ({ ratingKey, title: "The Movie", mediaType: "movie" }),
+    getWatchedState: async () => ({ watched: false, source: "mock" }),
+    markWatched: async () => ({ ok: true, status: "mocked" }),
+    ...plexOverrides
+  };
+  return new CowatchService(db, new SyncService(plex));
 }
 
 test("completed source-user watch creates one watch_events row", () => {
@@ -232,6 +258,82 @@ test("polling Tautulli recent history inserts completed movie and episode rows",
     assert.deepEqual(result, { inserted: 2, skipped: 0 });
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM watch_events WHERE media_type = 'movie'").get().count, 1);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM watch_events WHERE media_type = 'episode'").get().count, 1);
+  });
+});
+
+test("pending watch events are listed as Discord prompt candidates", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const watchEventId = insertCompletedWatch(db);
+    const candidates = cowatchService(db).listPendingPromptCandidates();
+
+    assert.equal(candidates.length, 1);
+    assert.equal(candidates[0].watchEventId, watchEventId);
+    assert.equal(candidates[0].sourceUser, "Tony");
+    assert.equal(candidates[0].title, "The Movie");
+  });
+});
+
+test("recording a sent Discord prompt is idempotent", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const watchEventId = insertCompletedWatch(db);
+    const service = cowatchService(db);
+
+    assert.deepEqual(service.recordPromptSent(watchEventId, "channel-1", "message-1"), { ok: true, sent: true });
+    assert.deepEqual(service.recordPromptSent(watchEventId, "channel-1", "message-2"), { ok: true, sent: false });
+    const row = db.prepare("SELECT prompt_status, discord_prompt_message_id FROM watch_events WHERE id = ?").get(watchEventId);
+    assert.equal(row.prompt_status, "prompted");
+    assert.equal(row.discord_prompt_message_id, "message-1");
+  });
+});
+
+test("no-one resolution dismisses sync work without cowatch confirmations", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const watchEventId = insertCompletedWatch(db);
+    const result = await cowatchService(db).resolvePrompt({
+      watchEventId,
+      selectedTargetUserIds: [],
+      actor: "discord-user",
+      method: "discord_prompt",
+      resolution: "none"
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.data.status, "none");
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM cowatch_confirmations").get().count, 0);
+  });
+});
+
+test("selected Discord users create idempotent cowatch confirmations", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const watchEventId = insertCompletedWatch(db);
+    const viewer = db.prepare("SELECT id FROM users WHERE plex_username = 'Viewer'").get();
+    const service = cowatchService(db);
+
+    const first = await service.resolvePrompt({
+      watchEventId,
+      selectedTargetUserIds: [viewer.id, viewer.id],
+      actor: "discord-user",
+      method: "discord_prompt",
+      resolution: "selected"
+    });
+    const second = await service.resolvePrompt({
+      watchEventId,
+      selectedTargetUserIds: [viewer.id],
+      actor: "discord-user",
+      method: "discord_prompt",
+      resolution: "selected"
+    });
+
+    assert.equal(first.ok, true);
+    assert.equal(second.ok, true);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM cowatch_confirmations").get().count, 1);
+    const confirmation = db.prepare("SELECT status, plex_sync_status FROM cowatch_confirmations").get();
+    assert.equal(confirmation.status, "confirmed");
+    assert.equal(confirmation.plex_sync_status, "mocked");
   });
 });
 

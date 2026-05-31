@@ -20,7 +20,12 @@ const envSchema = z.object({
   TAUTULLI_API_KEY: z.string().default(""),
   DISCORD_BOT_TOKEN: z.string().default(""),
   DISCORD_CHANNEL_ID: z.string().default(""),
-  DISCORD_ENABLED: z.coerce.boolean().default(false),
+  DISCORD_ENABLED: z
+    .preprocess((value) => {
+      if (typeof value === "string") return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+      return value;
+    }, z.boolean())
+    .default(false),
   SQLITE_PATH: z.string().default("./data/plex-cowatch-sync.sqlite"),
   POLL_INTERVAL_SECONDS: z.coerce.number().default(60),
   WATCH_COMPLETION_THRESHOLD_PERCENT: z.coerce.number().default(90),

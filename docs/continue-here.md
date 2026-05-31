@@ -12,12 +12,12 @@
 - Project charter: `docs/project-charter.md`
 - Roadmap: `docs/roadmap.md`
 - Block index: `docs/blocks/README.md`
-- Project definition block: `docs/blocks/block-00-project-definition.md`
-- Next MVP block: `docs/blocks/block-1-1-local-configuration-and-health.md`
+- Project definition block: `docs/blocks/completed/block-00-project-definition.md`
+- Next MVP block: `docs/blocks/block-1-4-plex-watched-state-verification.md`
 
 ## Next Recommended Step
 
-- Implement `docs/blocks/block-1-1-local-configuration-and-health.md`. This should make the service honest about configured users, missing secrets, disabled adapters, database health, Discord readiness, Tautulli reachability, and Plex mutation mode.
+- Implement `docs/blocks/block-1-4-plex-watched-state-verification.md`. This should verify or explicitly keep disabled the live Plex per-user watched-state mutation path before later copy-history work depends on it.
 
 ## Open Questions
 

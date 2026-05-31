@@ -6,21 +6,21 @@ Blocks are numbered, bounded AI-buildable tickets for code, logic, docs, folder 
 
 The MVP is **Phase 1**. Implement the Phase 1 blocks in order:
 
-- `block-1-1-local-configuration-and-health.md`
-- `block-1-2-tautulli-watch-detection.md`
-- `block-1-3-discord-cowatch-flow.md`
 - `block-1-4-plex-watched-state-verification.md`
 - `block-1-5-preview-first-history-copy.md`
 - `block-1-6-mvp-operations-and-acceptance.md`
 
 Phase 1 is complete when both MVP workflows are verified end to end: Discord co-watch confirmation and preview-first history copy.
 
-## Historical Foundation Blocks
+## Completed And Historical Blocks
 
-- `block-00-project-definition.md`
-- `block-01-first-verifiable-step.md`
+- `completed/block-00-project-definition.md`
+- `completed/block-01-first-verifiable-step.md`
+- `completed/block-1-1-local-configuration-and-health.md`
+- `completed/block-1-2-tautulli-watch-detection.md`
+- `completed/block-1-3-discord-cowatch-flow.md`
 
-These seed-era blocks remain as context, but new MVP implementation work should use the `1-x` series.
+Completed and seed-era blocks remain as context in `docs/blocks/completed/`. New MVP implementation work should use the planned block files that remain directly under `docs/blocks/`.
 
 ## One Block At A Time
 

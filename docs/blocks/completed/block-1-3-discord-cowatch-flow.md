@@ -1,8 +1,9 @@
 # Block 1-3: Discord Co-Watch Flow
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Builds on Block 1-2 watch events and keeps Plex writes mock-safe unless Block 1-4 verifies live mutation.
+> Status: Implemented on 2026-05-31.
+> Result: Implemented with limitations.
+> Verification: `npm test` - passed; `node dist\cli\cli.js health` with a temporary local DB - passed.
+> Notes: Discord prompt sending, interaction resolution, message editing, prompt idempotency, and audit records are implemented; a real Discord post was not run in this pass and remains gated on configured `.env` approval.
 
 ## Goal
 

@@ -94,8 +94,8 @@ When a block creates durable project knowledge, update the relevant docs area so
 
 - Block index: `docs/blocks/README.md`
 - Roadmap: `docs/roadmap.md`
-- Project definition block: `docs/blocks/block-00-project-definition.md`
-- Next MVP block: `docs/blocks/block-1-1-local-configuration-and-health.md`
+- Project definition block: `docs/blocks/completed/block-00-project-definition.md`
+- Next MVP block: `docs/blocks/block-1-4-plex-watched-state-verification.md`
 
 ## Document Map
 
