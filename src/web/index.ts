@@ -337,6 +337,7 @@ export function registerWebRoutes(router: Router): void {
         });
 
         let currentJobId = null;
+        let lastClickedIndex = -1;
 
         // Form Submit for Preview
         document.getElementById('preview-form').addEventListener('submit', async (e) => {
@@ -386,6 +387,7 @@ export function registerWebRoutes(router: Router): void {
             if (result.ok) {
               const data = result.data;
               currentJobId = data.jobId;
+              lastClickedIndex = -1;
 
               // Update Summary Cards
               document.getElementById('summary-eligible').textContent = data.summary.eligible;
@@ -451,9 +453,36 @@ export function registerWebRoutes(router: Router): void {
         // Handle Row click highlight toggle
         document.getElementById('preview-items-body').addEventListener('click', (e) => {
           const row = e.target.closest('tr');
-          if (row && row.classList.contains('row-eligible')) {
+          if (!row || !row.classList.contains('row-eligible')) return;
+
+          const eligibleRows = Array.from(document.querySelectorAll('.row-eligible'));
+          const clickedIndex = eligibleRows.indexOf(row);
+
+          if (e.shiftKey && lastClickedIndex !== -1) {
+            // Prevent text selection while shift-clicking
+            if (window.getSelection) {
+              window.getSelection().removeAllRanges();
+            }
+
+            const start = Math.min(lastClickedIndex, clickedIndex);
+            const end = Math.max(lastClickedIndex, clickedIndex);
+            
+            // Toggle the row to determine the target selection state
+            row.classList.toggle('selected');
+            const targetState = row.classList.contains('selected');
+
+            for (let i = start; i <= end; i++) {
+              if (targetState) {
+                eligibleRows[i].classList.add('selected');
+              } else {
+                eligibleRows[i].classList.remove('selected');
+              }
+            }
+          } else {
             row.classList.toggle('selected');
           }
+
+          lastClickedIndex = clickedIndex;
         });
 
         // Apply Copy Job
