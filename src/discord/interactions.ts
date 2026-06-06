@@ -6,7 +6,7 @@ export async function handleCowatchInteraction(interaction: Interaction, service
   if (interaction.isChatInputCommand()) {
     if (interaction.commandName === "help-cowatch") {
       const typical = service.listTypicalCowatchers()
-        .map((u: any) => `• **${u.display_name}**` + (u.display_name === "Alex" ? " *(Mock/test user - not a real person)*" : ""))
+        .map((u: any) => `• **${u.display_name}**`)
         .join("\n");
       const helpText = [
         "**💡 Plex Co-Watch Sync Help**",
