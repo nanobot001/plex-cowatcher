@@ -153,7 +153,7 @@ export class HistoryCopyService {
       `);
 
       for (const item of itemsToInsert) {
-        insertItem.run(
+        const res = insertItem.run(
           job.lastInsertRowid,
           item.targetUserId,
           item.ratingKey,
@@ -169,6 +169,7 @@ export class HistoryCopyService {
           now,
           now
         );
+        (item as any).id = Number(res.lastInsertRowid);
       }
 
       const response = {
@@ -191,7 +192,7 @@ export class HistoryCopyService {
     }
   }
 
-  async applyCopy(jobId: number, confirm: boolean, actor = "unknown") {
+  async applyCopy(jobId: number, confirm: boolean, itemIds?: number[], actor = "unknown") {
     try {
       if (!confirm) throw new AppError("CONFIRMATION_REQUIRED", "Copy apply requires confirm=true", { jobId });
       const job = this.db.prepare("SELECT * FROM copy_jobs WHERE id = ?").get(jobId);
@@ -208,6 +209,12 @@ export class HistoryCopyService {
       let skipped = 0;
       let failed = 0;
       for (const item of items) {
+        if (itemIds && !itemIds.includes(item.id)) {
+          skipped += 1;
+          this.db.prepare("UPDATE copy_job_items SET status = ?, reason = ?, updated_at = ? WHERE id = ?").run("skipped", "deselected", nowIso(), item.id);
+          continue;
+        }
+
         const target = this.users.findById(item.target_user_id);
         if (!target?.plex_user_id) {
           failed += 1;
@@ -236,7 +243,7 @@ export class HistoryCopyService {
       this.audit.record("apply_history_copy", actor, "ok", response);
       return { ok: true, data: response };
     } catch (error) {
-      this.audit.record("apply_history_copy", actor, "error", { jobId, confirm }, error instanceof Error ? error.message : String(error));
+      this.audit.record("apply_history_copy", actor, "error", { jobId, confirm, itemIdsCount: itemIds?.length }, error instanceof Error ? error.message : String(error));
       return errorResult(error);
     }
   }

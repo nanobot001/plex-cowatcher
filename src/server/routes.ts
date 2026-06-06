@@ -97,7 +97,8 @@ export function buildRouter(db: Db): Router {
     res.json(await historyCopy.previewCopy({ ...req.body, targetUsers, actor: "api", dryRun: true }));
   });
   router.post("/api/history-copy/apply", async (req, res) => {
-    res.json(await historyCopy.applyCopy(Number(req.body.jobId), req.body.confirm === true || req.body.confirm === "true", "api"));
+    const itemIds = Array.isArray(req.body.itemIds) ? req.body.itemIds.map(Number) : undefined;
+    res.json(await historyCopy.applyCopy(Number(req.body.jobId), req.body.confirm === true || req.body.confirm === "true", itemIds, "api"));
   });
   router.get("/api/history-copy/jobs/:id", (req, res) => {
     const job = db.prepare("SELECT * FROM copy_jobs WHERE id = ?").get(Number(req.params.id));

@@ -434,7 +434,7 @@ test("HistoryCopyService previewCopy filters, deduplicates, and applies correctl
     assert.equal(job.status, "previewed");
     assert.equal(job.preview_count, 3);
 
-    const applyRes = await service.applyCopy(res.data.jobId, true, "test");
+    const applyRes = await service.applyCopy(res.data.jobId, true, undefined, "test");
     assert.equal(applyRes.ok, true);
     assert.equal(applyRes.data.copied, 2);
     assert.equal(applyRes.data.skipped, 0);
@@ -462,6 +462,61 @@ test("HistoryCopyService previewCopy filters, deduplicates, and applies correctl
     assert.equal(resFiltered.ok, true);
     assert.equal(resFiltered.data.summary.itemsToCopy, 1);
     assert.equal(resFiltered.data.items[0].title, "Pilot");
+  });
+});
+
+test("HistoryCopyService applyCopy respects selective itemIds list", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const viewer = db.prepare("SELECT id FROM users WHERE plex_username = 'Viewer'").get();
+
+    const mockTautulli = {
+      getRecentHistory: async () => [
+        { rowId: "1", user: "Tony", ratingKey: "movie-1", mediaType: "movie", libraryName: "Movies", title: "Iron Man", watchedAt: "2026-06-01T12:00:00Z" },
+        { rowId: "2", user: "Tony", ratingKey: "movie-2", mediaType: "movie", libraryName: "Movies", title: "Avatar", watchedAt: "2026-06-03T12:00:00Z" }
+      ]
+    };
+
+    const mockPlex = {
+      getWatchedState: async () => ({ watched: false })
+    };
+
+    let scrobbleCalled = [];
+    const mockSync = {
+      markWatchedIfNeeded: async (plexUserId, ratingKey) => {
+        scrobbleCalled.push({ plexUserId, ratingKey });
+        return { ok: true, status: "marked_watched" };
+      }
+    };
+
+    const service = new HistoryCopyService(db, mockTautulli, mockSync, mockPlex);
+
+    const res = await service.previewCopy({
+      sourceUser: "Tony",
+      targetUsers: ["Viewer"],
+      filters: {},
+      actor: "test"
+    });
+
+    assert.equal(res.ok, true);
+    assert.equal(res.data.items.length, 2);
+
+    const item1 = res.data.items.find(x => x.ratingKey === "movie-1");
+    const item2 = res.data.items.find(x => x.ratingKey === "movie-2");
+    assert.ok(item1.id);
+    assert.ok(item2.id);
+
+    const applyRes = await service.applyCopy(res.data.jobId, true, [item1.id], "test");
+    assert.equal(applyRes.ok, true);
+    assert.equal(applyRes.data.copied, 1);
+    assert.equal(applyRes.data.skipped, 1);
+
+    assert.equal(scrobbleCalled.length, 1);
+    assert.equal(scrobbleCalled[0].ratingKey, "movie-1");
+
+    const deselectedItem = db.prepare("SELECT * FROM copy_job_items WHERE id = ?").get(item2.id);
+    assert.equal(deselectedItem.status, "skipped");
+    assert.equal(deselectedItem.reason, "deselected");
   });
 });
 
@@ -513,7 +568,7 @@ test("HistoryCopyService resolves stale rating keys using plexGuid when checking
       { userId: "viewer-plex", ratingKey: "stale-key", plexGuid: "plex://movie/123" }
     ]);
 
-    const applyRes = await service.applyCopy(res.data.jobId, true, "test");
+    const applyRes = await service.applyCopy(res.data.jobId, true, undefined, "test");
     assert.equal(applyRes.ok, true);
     assert.deepEqual(scrobbleCalled, [
       { plexUserId: "viewer-plex", ratingKey: "stale-key", plexGuid: "plex://movie/123" }

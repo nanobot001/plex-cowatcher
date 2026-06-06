@@ -65,7 +65,7 @@ async function main(): Promise<void> {
       }));
       break;
     case "apply-copy":
-      print(await historyCopy.applyCopy(Number(arg("job")), true, "cli"));
+      print(await historyCopy.applyCopy(Number(arg("job")), true, undefined, "cli"));
       break;
     case "audit":
       print({ ok: true, audit: new AuditService(db).list(parseDays(arg("days"), 7)) });
