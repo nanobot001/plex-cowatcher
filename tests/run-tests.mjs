@@ -10,7 +10,9 @@ import { isDuplicateWithinWindow, watchEventKey } from "../dist/watcher/dedupe.j
 import { UserService } from "../dist/service/userService.js";
 import { CowatchService } from "../dist/service/cowatchService.js";
 import { SyncService } from "../dist/service/syncService.js";
+import { PlexAdapterError, MockPlexAdapter } from "../dist/adapters/plexAdapter.js";
 import { AppError, errorResult } from "../dist/utils/errors.js";
+import { HistoryCopyService } from "../dist/service/historyCopyService.js";
 
 const tests = [];
 
@@ -335,6 +337,199 @@ test("selected Discord users create idempotent cowatch confirmations", async () 
     assert.equal(confirmation.status, "confirmed");
     assert.equal(confirmation.plex_sync_status, "mocked");
   });
+});
+
+test("Plex adapter errors become structured sync failures", async () => {
+  const service = new SyncService({
+    listUsers: async () => [],
+    getMetadataByRatingKey: async (ratingKey) => ({ ratingKey, title: "Missing", mediaType: "movie" }),
+    getWatchedState: async () => {
+      throw new PlexAdapterError("PLEX_NO_MATCHING_MEDIA", "No matching media", "no_matching_media", false, { ratingKey: "missing-1" });
+    },
+    markWatched: async () => ({ ok: true, status: "marked_watched" })
+  });
+
+  assert.deepEqual(await service.markWatchedIfNeeded("viewer-plex", "missing-1"), {
+    ok: false,
+    status: "no_matching_media",
+    errorCode: "PLEX_NO_MATCHING_MEDIA",
+    error: "No matching media",
+    details: { ratingKey: "missing-1" }
+  });
+});
+
+test("prompt resolution reports missing target Plex user as a structured result", async () => {
+  await withTestDb(async (db) => {
+    new UserService(db).syncConfiguredUsers([
+      { plexUsername: "Tony", displayName: "Tony", isSourceUser: true, isTypicalCowatcher: false, enabled: true },
+      { plexUsername: "NoPlex", displayName: "No Plex", isSourceUser: false, isTypicalCowatcher: true, enabled: true }
+    ]);
+    const watchEventId = insertCompletedWatch(db);
+    const target = db.prepare("SELECT id FROM users WHERE plex_username = 'NoPlex'").get();
+    const result = await cowatchService(db).resolvePrompt({
+      watchEventId,
+      selectedTargetUserIds: [target.id],
+      actor: "cli",
+      method: "cli",
+      resolution: "selected"
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.data.results[0], {
+      targetUserId: target.id,
+      status: "failed",
+      plexSyncStatus: "target_unavailable",
+      errorCode: "PLEX_TARGET_UNAVAILABLE",
+      error: "Target user missing Plex user id"
+    });
+  });
+});
+
+test("HistoryCopyService previewCopy filters, deduplicates, and applies correctly", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const viewer = db.prepare("SELECT id FROM users WHERE plex_username = 'Viewer'").get();
+
+    const mockTautulli = {
+      getRecentHistory: async () => [
+        { rowId: "1", user: "Tony", ratingKey: "movie-1", mediaType: "movie", libraryName: "Movies", title: "Iron Man", watchedAt: "2026-06-01T12:00:00Z" },
+        { rowId: "2", user: "Tony", ratingKey: "episode-1", mediaType: "episode", libraryName: "TV Shows", title: "Pilot", showTitle: "The Office", seasonNumber: 1, episodeNumber: 1, watchedAt: "2026-06-02T12:00:00Z" },
+        { rowId: "3", user: "Tony", ratingKey: "movie-2", mediaType: "movie", libraryName: "Movies", title: "Avatar", watchedAt: "2026-06-03T12:00:00Z" }
+      ]
+    };
+
+    const mockPlex = {
+      getWatchedState: async (userId, ratingKey) => {
+        if (ratingKey === "movie-2") {
+          return { watched: true };
+        }
+        return { watched: false };
+      }
+    };
+
+    let scrobbleCalled = [];
+    const mockSync = {
+      markWatchedIfNeeded: async (plexUserId, ratingKey) => {
+        scrobbleCalled.push({ plexUserId, ratingKey });
+        return { ok: true, status: "marked_watched" };
+      }
+    };
+
+    const service = new HistoryCopyService(db, mockTautulli, mockSync, mockPlex);
+
+    const res = await service.previewCopy({
+      sourceUser: "Tony",
+      targetUsers: ["Viewer"],
+      filters: {},
+      actor: "test"
+    });
+
+    assert.equal(res.ok, true);
+    assert.equal(res.data.summary.itemsToCopy, 3);
+    assert.equal(res.data.summary.eligible, 2);
+    assert.equal(res.data.summary.alreadyWatched, 1);
+    assert.equal(res.data.summary.alreadyCopied, 0);
+
+    const job = db.prepare("SELECT * FROM copy_jobs WHERE id = ?").get(res.data.jobId);
+    assert.equal(job.status, "previewed");
+    assert.equal(job.preview_count, 3);
+
+    const applyRes = await service.applyCopy(res.data.jobId, true, "test");
+    assert.equal(applyRes.ok, true);
+    assert.equal(applyRes.data.copied, 2);
+    assert.equal(applyRes.data.skipped, 0);
+    assert.equal(applyRes.data.failed, 0);
+
+    assert.equal(scrobbleCalled.length, 2);
+    const keys = scrobbleCalled.map(x => x.ratingKey);
+    assert.ok(keys.includes("movie-1"));
+    assert.ok(keys.includes("episode-1"));
+
+    const jobAfter = db.prepare("SELECT * FROM copy_jobs WHERE id = ?").get(res.data.jobId);
+    assert.equal(jobAfter.status, "applied");
+    assert.equal(jobAfter.copied_count, 2);
+
+    const resFiltered = await service.previewCopy({
+      sourceUser: "Tony",
+      targetUsers: ["Viewer"],
+      filters: {
+        showTitle: "Office",
+        mediaType: "episode"
+      },
+      actor: "test"
+    });
+
+    assert.equal(resFiltered.ok, true);
+    assert.equal(resFiltered.data.summary.itemsToCopy, 1);
+    assert.equal(resFiltered.data.items[0].title, "Pilot");
+  });
+});
+
+test("HistoryCopyService resolves stale rating keys using plexGuid when checking watched state and applying", () => {
+  return withTestDb(async (db) => {
+    seedUsers(db);
+    const mockTautulli = {
+      getRecentHistory: async () => [
+        {
+          rowId: "1",
+          user: "Tony",
+          ratingKey: "stale-key",
+          plexGuid: "plex://movie/123",
+          mediaType: "movie",
+          title: "Stale Movie",
+          watchedAt: "2026-05-30T20:00:00Z",
+          completed: true
+        }
+      ]
+    };
+
+    let watchedStateCalled = [];
+    const mockPlex = {
+      getWatchedState: async (userId, ratingKey, plexGuid) => {
+        watchedStateCalled.push({ userId, ratingKey, plexGuid });
+        return { watched: false };
+      }
+    };
+
+    let scrobbleCalled = [];
+    const mockSync = {
+      markWatchedIfNeeded: async (plexUserId, ratingKey, plexGuid) => {
+        scrobbleCalled.push({ plexUserId, ratingKey, plexGuid });
+        return { ok: true, status: "marked_watched" };
+      }
+    };
+
+    const service = new HistoryCopyService(db, mockTautulli, mockSync, mockPlex);
+
+    const res = await service.previewCopy({
+      sourceUser: "Tony",
+      targetUsers: ["Viewer"],
+      filters: {},
+      actor: "test"
+    });
+
+    assert.equal(res.ok, true);
+    assert.deepEqual(watchedStateCalled, [
+      { userId: "viewer-plex", ratingKey: "stale-key", plexGuid: "plex://movie/123" }
+    ]);
+
+    const applyRes = await service.applyCopy(res.data.jobId, true, "test");
+    assert.equal(applyRes.ok, true);
+    assert.deepEqual(scrobbleCalled, [
+      { plexUserId: "viewer-plex", ratingKey: "stale-key", plexGuid: "plex://movie/123" }
+    ]);
+  });
+});
+
+test("PlexAdapter listLibraries and listShows mock implementations", async () => {
+  const adapter = new MockPlexAdapter();
+  const libraries = await adapter.listLibraries();
+  assert.equal(libraries.length, 4);
+  assert.equal(libraries[0].title, "Movies");
+  assert.equal(libraries[1].type, "show");
+
+  const shows = await adapter.listShows("2");
+  assert.deepEqual(shows, ["The Office", "Breaking Bad", "Parks and Recreation"]);
 });
 
 let passed = 0;

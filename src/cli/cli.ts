@@ -32,7 +32,7 @@ async function main(): Promise<void> {
   const tautulli = createTautulliAdapter();
   const sync = new SyncService(plex);
   const cowatch = new CowatchService(db, sync);
-  const historyCopy = new HistoryCopyService(db, tautulli, sync);
+  const historyCopy = new HistoryCopyService(db, tautulli, sync, plex);
 
   switch (command) {
     case "health":
@@ -54,6 +54,10 @@ async function main(): Promise<void> {
         filters: {
           showTitle: arg("show"),
           seasonNumber: arg("season") ? Number(arg("season")) : undefined,
+          libraryName: arg("library"),
+          mediaType: arg("media-type"),
+          dateFrom: arg("date-from"),
+          dateTo: arg("date-to"),
           skipAlreadyWatched: true
         },
         dryRun: true,
@@ -69,6 +73,47 @@ async function main(): Promise<void> {
     case "retry-failed":
       new AuditService(db).record("retry_failed_syncs", "cli", "not_implemented", {});
       print({ ok: true, data: { retried: 0, note: "Retry queue scaffolded; live retry implementation waits for Plex verification." } });
+      break;
+    case "verify-plex-watched-state":
+      {
+        const targetPlexUserId = arg("target-plex-user-id") ?? "";
+        const ratingKey = arg("rating-key") ?? "";
+        if (!targetPlexUserId || !ratingKey) {
+          print({
+            ok: false,
+            errorCode: "VERIFY_PLEX_INPUT_REQUIRED",
+            message: "Provide --target-plex-user-id and --rating-key for Plex watched-state verification."
+          });
+          break;
+        }
+
+        const result = {
+          mutationMode: appConfig.PLEX_MUTATION_MODE,
+          targetPlexUserId,
+          ratingKey,
+          users: null as unknown,
+          metadata: null as unknown,
+          watchedState: null as unknown,
+          markWatched: args.includes("--mark-watched") ? null as unknown : { ok: true, status: "not_requested" }
+        };
+
+        try {
+          result.users = await plex.listUsers();
+          result.metadata = await plex.getMetadataByRatingKey(ratingKey);
+          result.watchedState = await plex.getWatchedState(targetPlexUserId, ratingKey);
+          if (args.includes("--mark-watched")) {
+            result.markWatched = await plex.markWatched(targetPlexUserId, ratingKey);
+          }
+          print({ ok: true, data: result });
+        } catch (error) {
+          print({
+            ok: false,
+            errorCode: "VERIFY_PLEX_WATCHED_STATE_FAILED",
+            message: error instanceof Error ? error.message : String(error),
+            data: result
+          });
+        }
+      }
       break;
     case "test-discord-prompt":
       if (!appConfig.DISCORD_ENABLED || !appConfig.DISCORD_BOT_TOKEN || !appConfig.DISCORD_CHANNEL_ID) {
@@ -93,7 +138,7 @@ async function main(): Promise<void> {
       }
       break;
     default:
-      print({ ok: true, commands: ["health", "users", "recent", "pending", "preview-copy", "apply-copy", "audit", "retry-failed", "test-discord-prompt"] });
+      print({ ok: true, commands: ["health", "users", "recent", "pending", "preview-copy", "apply-copy", "audit", "retry-failed", "verify-plex-watched-state", "test-discord-prompt"] });
   }
 }
 

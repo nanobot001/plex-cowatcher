@@ -1,3 +1,4 @@
+import type { PlexAdapter } from "../adapters/plexAdapter.js";
 import type { TautulliAdapter } from "../adapters/tautulliAdapter.js";
 import type { Db } from "../db/database.js";
 import { AppError, errorResult } from "../utils/errors.js";
@@ -15,6 +16,8 @@ export interface PreviewCopyInput {
     seasonNumber?: number;
     dateFrom?: string;
     dateTo?: string;
+    libraryName?: string;
+    libraryKey?: string;
     skipAlreadyWatched?: boolean;
   };
   dryRun?: boolean;
@@ -28,7 +31,8 @@ export class HistoryCopyService {
   constructor(
     private readonly db: Db,
     private readonly tautulli: TautulliAdapter,
-    private readonly sync: SyncService
+    private readonly sync: SyncService,
+    private readonly plex: PlexAdapter
   ) {
     this.audit = new AuditService(db);
     this.users = new UserService(db);
@@ -43,17 +47,95 @@ export class HistoryCopyService {
         throw new AppError("TARGET_USER_NOT_FOUND", "One or more target users are not configured", { targetUsers: input.targetUsers });
       }
 
-      const history = (await this.tautulli.getRecentHistory({ user: input.sourceUser })).filter((item) => {
+      // Fetch with length: 500 for broader scan window coverage
+      // Pass section_id (libraryKey) to Tautulli for server-side library filtering
+      const history = (await this.tautulli.getRecentHistory({ user: input.sourceUser, length: 500, section_id: input.filters?.libraryKey || undefined })).filter((item) => {
+        // Exclude audio tracks (audiobooks, music) — not useful for watch-state copying
+        if (item.mediaType === "track") return false;
         if (input.filters?.mediaType && item.mediaType !== input.filters.mediaType) return false;
-        if (input.filters?.showTitle && item.showTitle !== input.filters.showTitle) return false;
-        if (input.filters?.seasonNumber && item.seasonNumber !== input.filters.seasonNumber) return false;
+        if (input.filters?.showTitle) {
+          const itemShow = (item.showTitle ?? "").toLowerCase();
+          const filterShow = input.filters.showTitle.toLowerCase();
+          if (!itemShow.includes(filterShow)) return false;
+        }
+        if (input.filters?.seasonNumber && item.seasonNumber !== Number(input.filters.seasonNumber)) return false;
         if (input.filters?.dateFrom && item.watchedAt < input.filters.dateFrom) return false;
         if (input.filters?.dateTo && item.watchedAt > `${input.filters.dateTo}T23:59:59`) return false;
+        // libraryName filtering is handled server-side via section_id param passed to Tautulli
         return true;
       });
 
       const now = nowIso();
       const targetIds = targets.map((target) => target!.id);
+      
+      // Calculate eligible, skipped (already_watched, already_copied), and failed status in advance
+      let eligibleCount = 0;
+      let alreadyWatchedCount = 0;
+      let alreadyCopiedCount = 0;
+      let failedCount = 0;
+      const itemsToInsert: any[] = [];
+
+      for (const item of history) {
+        for (const target of targets) {
+          if (!target) continue;
+
+          // 1. Check database copy status
+          const alreadyCopied = this.db.prepare(`
+            SELECT 1 FROM copy_job_items 
+            WHERE target_user_id = ? AND rating_key = ? AND status = 'copied'
+            LIMIT 1
+          `).get(target.id, item.ratingKey);
+
+          let status = "eligible";
+          let reason: string | null = null;
+
+          if (alreadyCopied) {
+            status = "skipped";
+            reason = "already_copied";
+            alreadyCopiedCount++;
+          } else {
+            // 2. Check Plex watched state
+            if (!target.plex_user_id) {
+              status = "failed";
+              reason = "PLEX_TARGET_UNAVAILABLE";
+              failedCount++;
+            } else {
+              try {
+                const state = await this.plex.getWatchedState(target.plex_user_id, item.ratingKey, item.plexGuid);
+                if (state.watched) {
+                  status = "skipped";
+                  reason = "already_watched";
+                  alreadyWatchedCount++;
+                } else {
+                  eligibleCount++;
+                }
+              } catch (error) {
+                status = "failed";
+                const errObj = error as any;
+                const errorCode = errObj?.errorCode ?? (error instanceof Error ? error.message : "PLEX_ERROR");
+                const errorLibrary = errObj?.details?.libraryName;
+                reason = errorLibrary ? `${errorCode} (${errorLibrary})` : errorCode;
+                failedCount++;
+              }
+            }
+          }
+
+          itemsToInsert.push({
+            targetUserId: target.id,
+            ratingKey: item.ratingKey,
+            plexGuid: item.plexGuid ?? null,
+            mediaType: item.mediaType,
+            title: item.title,
+            showTitle: item.showTitle ?? null,
+            seasonNumber: item.seasonNumber ?? null,
+            episodeNumber: item.episodeNumber ?? null,
+            watchedAt: item.watchedAt,
+            status,
+            reason
+          });
+        }
+      }
+
       const job = this.db
         .prepare(
           `INSERT INTO copy_jobs (
@@ -61,45 +143,45 @@ export class HistoryCopyService {
             created_by, created_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?)`
         )
-        .run(source.id, JSON.stringify(targetIds), JSON.stringify(input.filters ?? {}), "previewed", history.length * targetIds.length, input.actor ?? "unknown", now);
+        .run(source.id, JSON.stringify(targetIds), JSON.stringify(input.filters ?? {}), "previewed", itemsToInsert.length, input.actor ?? "unknown", now);
 
       const insertItem = this.db.prepare(`
         INSERT OR IGNORE INTO copy_job_items (
-          copy_job_id, target_user_id, rating_key, media_type, title, show_title,
+          copy_job_id, target_user_id, rating_key, plex_guid, media_type, title, show_title,
           season_number, episode_number, watched_at, status, reason, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
-      for (const item of history) {
-        for (const targetId of targetIds) {
-          insertItem.run(
-            job.lastInsertRowid,
-            targetId,
-            item.ratingKey,
-            item.mediaType,
-            item.title,
-            item.showTitle ?? null,
-            item.seasonNumber ?? null,
-            item.episodeNumber ?? null,
-            item.watchedAt,
-            "eligible",
-            null,
-            now,
-            now
-          );
-        }
+      for (const item of itemsToInsert) {
+        insertItem.run(
+          job.lastInsertRowid,
+          item.targetUserId,
+          item.ratingKey,
+          item.plexGuid,
+          item.mediaType,
+          item.title,
+          item.showTitle,
+          item.seasonNumber,
+          item.episodeNumber,
+          item.watchedAt,
+          item.status,
+          item.reason,
+          now,
+          now
+        );
       }
 
       const response = {
         jobId: Number(job.lastInsertRowid),
         requiresConfirmation: true,
         summary: {
-          itemsToCopy: history.length * targetIds.length,
-          alreadyWatched: 0,
-          unmatched: 0,
-          failed: 0
+          itemsToCopy: itemsToInsert.length,
+          eligible: eligibleCount,
+          alreadyWatched: alreadyWatchedCount,
+          alreadyCopied: alreadyCopiedCount,
+          failed: failedCount
         },
-        items: history
+        items: itemsToInsert
       };
       this.audit.record("preview_history_copy", input.actor, "ok", response);
       return { ok: true, data: response };
@@ -119,6 +201,7 @@ export class HistoryCopyService {
         id: number;
         target_user_id: number;
         rating_key: string;
+        plex_guid?: string;
       }>;
 
       let copied = 0;
@@ -128,11 +211,11 @@ export class HistoryCopyService {
         const target = this.users.findById(item.target_user_id);
         if (!target?.plex_user_id) {
           failed += 1;
-          this.db.prepare("UPDATE copy_job_items SET status = ?, reason = ?, updated_at = ? WHERE id = ?").run("failed", "missing_target_plex_user_id", nowIso(), item.id);
+          this.db.prepare("UPDATE copy_job_items SET status = ?, reason = ?, updated_at = ? WHERE id = ?").run("failed", "PLEX_TARGET_UNAVAILABLE", nowIso(), item.id);
           continue;
         }
 
-        const result = await this.sync.markWatchedIfNeeded(target.plex_user_id, item.rating_key);
+        const result = await this.sync.markWatchedIfNeeded(target.plex_user_id, item.rating_key, item.plex_guid);
         if (result.ok) {
           const status = result.status === "already_watched" ? "skipped" : "copied";
           copied += status === "copied" ? 1 : 0;
@@ -140,8 +223,9 @@ export class HistoryCopyService {
           this.db.prepare("UPDATE copy_job_items SET status = ?, reason = ?, updated_at = ? WHERE id = ?").run(status, result.status, nowIso(), item.id);
         } else {
           failed += 1;
-          this.db.prepare("UPDATE copy_job_items SET status = ?, reason = ?, updated_at = ? WHERE id = ?").run("failed", result.error ?? "plex_sync_failed", nowIso(), item.id);
-          this.db.prepare("INSERT INTO sync_failures (action, copy_job_item_id, target_user_id, rating_key, error, created_at) VALUES (?, ?, ?, ?, ?, ?)").run("apply_history_copy", item.id, item.target_user_id, item.rating_key, result.error ?? "plex_sync_failed", nowIso());
+          const reason = result.errorCode ?? result.status;
+          this.db.prepare("UPDATE copy_job_items SET status = ?, reason = ?, updated_at = ? WHERE id = ?").run("failed", reason, nowIso(), item.id);
+          this.db.prepare("INSERT INTO sync_failures (action, copy_job_item_id, target_user_id, rating_key, error, created_at) VALUES (?, ?, ?, ?, ?, ?)").run("apply_history_copy", item.id, item.target_user_id, item.rating_key, result.error ?? reason, nowIso());
         }
       }
 

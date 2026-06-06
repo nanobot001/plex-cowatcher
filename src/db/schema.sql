@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS copy_job_items (
   copy_job_id INTEGER NOT NULL,
   target_user_id INTEGER NOT NULL,
   rating_key TEXT NOT NULL,
+  plex_guid TEXT,
   media_type TEXT NOT NULL,
   title TEXT NOT NULL,
   show_title TEXT,

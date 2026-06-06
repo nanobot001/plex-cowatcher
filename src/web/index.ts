@@ -8,11 +8,41 @@ export function registerWebRoutes(router: Router): void {
         <div id="readiness" class="readiness-grid" aria-live="polite"></div>
         <pre id="health">Loading...</pre>
       </section>
+
+      <section class="band">
+        <h2>Configured Users</h2>
+        <div class="items-table-container">
+          <table class="preview-table">
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Display Name</th>
+                <th>Plex User ID</th>
+                <th>Role</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="users-table-body">
+              <tr><td colspan="5" class="text-center">Loading users...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <section class="band">
         <h2>Recent Activity</h2>
         <p>Use the API, CLI, or Discord prompt flow while the richer history copy UI fills in.</p>
       </section>
+
       <script>
+        const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#39;'
+        })[character]);
+
         fetch('/api/health').then(r => r.json()).then(data => {
           const readiness = data.readiness || {};
           const labels = {
@@ -23,13 +53,6 @@ export function registerWebRoutes(router: Router): void {
             watcher: 'Watcher',
             plexMutation: 'Plex mutation'
           };
-          const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            '"': '&quot;',
-            "'": '&#39;'
-          })[character]);
           document.getElementById('readiness').innerHTML = Object.entries(labels).map(([key, label]) => {
             const item = readiness[key] || { status: 'unconfigured', message: 'No status reported.' };
             return '<article class="readiness-item status-' + escapeHtml(item.status) + '">' +
@@ -40,18 +63,459 @@ export function registerWebRoutes(router: Router): void {
           }).join('');
           document.getElementById('health').textContent = JSON.stringify(data, null, 2);
         });
+
+        fetch('/api/users').then(r => r.json()).then(data => {
+          if (data.ok && data.users) {
+            const tbody = document.getElementById('users-table-body');
+            tbody.innerHTML = data.users.map(u => {
+              const role = u.is_source_user ? 'Source' : 'Typical Target';
+              const status = u.enabled ? '<span class="badge badge-success">Enabled</span>' : '<span class="badge badge-failed">Disabled</span>';
+              return '<tr>' +
+                '<td>' + escapeHtml(u.plex_username) + '</td>' +
+                '<td>' + escapeHtml(u.display_name || '-') + '</td>' +
+                '<td>' + escapeHtml(u.plex_user_id || '-') + '</td>' +
+                '<td>' + role + '</td>' +
+                '<td>' + status + '</td>' +
+                '</tr>';
+            }).join('');
+          }
+        });
       </script>
     `));
   });
 
   router.get("/copy", (_req, res) => {
     res.type("html").send(renderPage("Copy History", `
-      <form method="post" action="/api/history-copy/preview">
-        <label>Source user <input name="sourceUser" value="Tony"></label>
-        <label>Target user <input name="targetUsers" value="Ian"></label>
-        <label>Show <input name="showTitle"></label>
-        <button type="submit">Preview</button>
-      </form>
+      <div class="copy-container">
+        <!-- Help/Legend Section -->
+        <section class="copy-help-section card">
+          <details>
+            <summary class="help-summary"><strong>💡 Help & Status Legend</strong> (Click to expand)</summary>
+            <div class="help-content">
+              <p>When running a history sync preview, each item will resolve to one of the following statuses:</p>
+              <ul>
+                <li><strong>eligible:</strong> The item was watched by the source user, but is <em>not</em> marked as watched in the target user's Plex library and has <em>not</em> been copied yet. This item will be updated when you apply the copy.</li>
+                <li><strong>already_watched:</strong> The target user has already watched this item in their Plex library (either on their own or synced previously via Discord prompt or auto-sync). No action is taken.</li>
+                <li><strong>already_copied:</strong> The database indicates this specific item was successfully synced to the target user via a prior history copy job. It will be skipped.</li>
+                <li><strong>failed (e.g. PLEX_RESTRICTED_MEDIA):</strong> The media item exists on the server, but the target user cannot access it due to library sharing restrictions (like restricted content rating profiles or label restrictions).</li>
+                <li><strong>failed (e.g. PLEX_NO_MATCHING_MEDIA):</strong> The media item could not be found on the server at all (it may have been deleted or recreated since the source user watched it).</li>
+              </ul>
+            </div>
+          </details>
+        </section>
+
+        <!-- Form/Filters Section -->
+        <section class="copy-form-section card">
+          <h2>Configure Sync Job</h2>
+          <form id="preview-form" class="grid-form">
+            <div class="form-row">
+              <div class="form-col">
+                <label for="sourceUser">Source User</label>
+                <select id="sourceUser" name="sourceUser" required>
+                  <option value="">Select source user...</option>
+                </select>
+              </div>
+              <div class="form-col">
+                <label>Target Users</label>
+                <div id="targetUsersContainer" class="checkbox-group">
+                  <p class="text-muted">Select a source user first.</p>
+                </div>
+              </div>
+            </div>
+
+            <fieldset>
+              <legend>Optional Filters</legend>
+              <div class="filter-grid">
+                <div class="form-col">
+                  <label for="libraryName">Library Name</label>
+                  <select id="libraryName" name="libraryName">
+                    <option value="">All Libraries</option>
+                  </select>
+                </div>
+                <div class="form-col">
+                  <label for="mediaType">Media Type</label>
+                  <select id="mediaType" name="mediaType">
+                    <option value="">All</option>
+                    <option value="movie">Movie</option>
+                    <option value="episode">Episode</option>
+                  </select>
+                </div>
+                <div class="form-col" id="showTitleCol" style="display: none;">
+                  <label for="showTitle">Show Title</label>
+                  <select id="showTitle" name="showTitle" disabled>
+                    <option value="">N/A (Select a TV library)</option>
+                  </select>
+                </div>
+                <div class="form-col" id="seasonNumberCol" style="display: none;">
+                  <label for="seasonNumber">Season Number</label>
+                  <input type="number" id="seasonNumber" name="seasonNumber" min="0" placeholder="e.g. 1">
+                </div>
+                <div class="form-col">
+                  <label for="dateFrom">Date From</label>
+                  <input type="date" id="dateFrom" name="dateFrom">
+                </div>
+                <div class="form-col">
+                  <label for="dateTo">Date To</label>
+                  <input type="date" id="dateTo" name="dateTo">
+                </div>
+              </div>
+            </fieldset>
+
+            <button type="submit" id="preview-btn" class="btn btn-primary">Generate Preview</button>
+          </form>
+        </section>
+
+        <!-- Status/Feedback Section -->
+        <div id="status-feedback" class="status-feedback alert hidden"></div>
+
+        <!-- Preview Results Section (Initially Hidden) -->
+        <section id="preview-results-section" class="copy-results-section card hidden">
+          <h2>Job Preview Summary</h2>
+          <div class="summary-cards">
+            <div class="summary-card eligible">
+              <span class="card-count" id="summary-eligible">0</span>
+              <span class="card-label">Eligible to Copy</span>
+            </div>
+            <div class="summary-card watched">
+              <span class="card-count" id="summary-watched">0</span>
+              <span class="card-label">Already Watched</span>
+            </div>
+            <div class="summary-card copied">
+              <span class="card-count" id="summary-copied">0</span>
+              <span class="card-label">Already Copied (DB)</span>
+            </div>
+            <div class="summary-card failed">
+              <span class="card-count" id="summary-failed">0</span>
+              <span class="card-label">Unreachable/Failed</span>
+            </div>
+          </div>
+
+          <div id="apply-action-bar" class="apply-action-bar hidden">
+            <p>Review the items below. Click "Apply Copy" to synchronize watched states.</p>
+            <button id="apply-btn" class="btn btn-success">Apply Copy</button>
+          </div>
+
+          <div class="items-table-container">
+            <table class="preview-table">
+              <thead>
+                <tr>
+                  <th>Target User</th>
+                  <th>Media Type</th>
+                  <th>Title</th>
+                  <th>Season/Episode</th>
+                  <th>Watched At</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="preview-items-body">
+                <!-- Dynamic rows -->
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <script>
+        // Fetch and populate users
+        let usersList = [];
+        
+        function renderTargets(selectedSource) {
+          const targetContainer = document.getElementById('targetUsersContainer');
+          if (!selectedSource) {
+            targetContainer.innerHTML = '<p class="text-muted">Select a source user first.</p>';
+            return;
+          }
+          
+          // Allow targeting any user except the source user
+          const targets = usersList.filter(u => u.plex_username !== selectedSource);
+          if (targets.length === 0) {
+            targetContainer.innerHTML = '<p class="text-muted">No other Plex library users available.</p>';
+          } else {
+            targetContainer.innerHTML = targets.map(u => {
+              const displayNameText = u.display_name && u.display_name !== u.plex_username ? ' (' + u.display_name + ')' : '';
+              return '<label class="checkbox-label"><input type="checkbox" name="targetUsers" value="' + u.plex_username + '"> ' + u.plex_username + displayNameText + '</label>';
+            }).join('');
+          }
+        }
+
+        function escapeHtml(str) {
+          if (!str) return '';
+          return str.replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#039;');
+        }
+
+        fetch('/api/users')
+          .then(r => r.json())
+          .then(data => {
+            if (data.ok && data.users) {
+              usersList = data.users;
+              const sourceSelect = document.getElementById('sourceUser');
+              
+              // Populate source users dropdown with all users
+              usersList.forEach(u => {
+                const opt = document.createElement('option');
+                opt.value = u.plex_username;
+                opt.textContent = u.plex_username + (u.display_name && u.display_name !== u.plex_username ? ' (' + u.display_name + ')' : '');
+                sourceSelect.appendChild(opt);
+              });
+              
+              sourceSelect.addEventListener('change', (e) => {
+                renderTargets(e.target.value);
+              });
+            }
+          });
+
+        // Fetch and populate libraries
+        fetch('/api/libraries')
+          .then(r => r.json())
+          .then(data => {
+            if (data.ok && data.libraries) {
+              const librarySelect = document.getElementById('libraryName');
+              data.libraries.forEach(lib => {
+                const opt = document.createElement('option');
+                opt.value = lib.title;
+                opt.textContent = lib.title;
+                opt.setAttribute('data-key', lib.key);
+                opt.setAttribute('data-type', lib.type);
+                librarySelect.appendChild(opt);
+              });
+            }
+          });
+
+        // Handle library change to load shows dynamically
+        document.getElementById('libraryName').addEventListener('change', async (e) => {
+          const librarySelect = e.target;
+          const selectedOption = librarySelect.options[librarySelect.selectedIndex];
+          const type = selectedOption ? selectedOption.getAttribute('data-type') : '';
+          const title = selectedOption ? selectedOption.value : '';
+          const key = selectedOption ? selectedOption.getAttribute('data-key') : '';
+
+          const showTitleSelect = document.getElementById('showTitle');
+          const seasonNumberInput = document.getElementById('seasonNumber');
+          const mediaTypeSelect = document.getElementById('mediaType');
+          const showTitleCol = document.getElementById('showTitleCol');
+          const seasonNumberCol = document.getElementById('seasonNumberCol');
+
+          const isTv = type === 'show' || title.toLowerCase().includes('tv') || title.toLowerCase().includes('anime');
+
+          if (isTv && key) {
+            showTitleCol.style.display = '';
+            seasonNumberCol.style.display = '';
+            showTitleSelect.disabled = true;
+            showTitleSelect.innerHTML = '<option value="">Loading shows...</option>';
+            mediaTypeSelect.value = 'episode';
+            
+            try {
+              const response = await fetch('/api/shows?libraryKey=' + encodeURIComponent(key));
+              const result = await response.json();
+              if (result.ok && result.shows) {
+                showTitleSelect.innerHTML = '<option value="">All Shows</option>' + 
+                  result.shows.map(show => '<option value="' + escapeHtml(show) + '">' + escapeHtml(show) + '</option>').join('');
+                showTitleSelect.disabled = false;
+              } else {
+                showTitleSelect.innerHTML = '<option value="">Failed to load shows</option>';
+              }
+            } catch (err) {
+              console.error('Failed to fetch shows:', err);
+              showTitleSelect.innerHTML = '<option value="">Error loading shows</option>';
+            }
+          } else {
+            showTitleCol.style.display = 'none';
+            seasonNumberCol.style.display = 'none';
+            showTitleSelect.innerHTML = '<option value="">N/A (Select a TV library)</option>';
+            showTitleSelect.value = '';
+            showTitleSelect.disabled = true;
+            if (type === 'movie') {
+              mediaTypeSelect.value = 'movie';
+            } else {
+              mediaTypeSelect.value = '';
+            }
+          }
+        });
+
+        let currentJobId = null;
+
+        // Form Submit for Preview
+        document.getElementById('preview-form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const feedback = document.getElementById('status-feedback');
+          feedback.className = 'status-feedback alert hidden';
+          feedback.textContent = '';
+
+          const form = e.target;
+          const sourceUser = form.sourceUser.value;
+          const targetUsers = Array.from(form.querySelectorAll('input[name="targetUsers"]:checked')).map(cb => cb.value);
+
+          if (targetUsers.length === 0) {
+            feedback.className = 'status-feedback alert alert-danger';
+            feedback.textContent = 'Please select at least one target user.';
+            feedback.classList.remove('hidden');
+            return;
+          }
+
+          const filters = {};
+          if (form.showTitle.value) filters.showTitle = form.showTitle.value;
+          if (form.seasonNumber.value) filters.seasonNumber = Number(form.seasonNumber.value);
+          if (form.libraryName.value) {
+            filters.libraryName = form.libraryName.value;
+            const selectedLibOption = form.libraryName.options[form.libraryName.selectedIndex];
+            if (selectedLibOption && selectedLibOption.getAttribute('data-key')) {
+              filters.libraryKey = selectedLibOption.getAttribute('data-key');
+            }
+          }
+          if (form.mediaType.value) filters.mediaType = form.mediaType.value;
+          if (form.dateFrom.value) filters.dateFrom = form.dateFrom.value;
+          if (form.dateTo.value) filters.dateTo = form.dateTo.value;
+          filters.skipAlreadyWatched = true;
+
+          const previewBtn = document.getElementById('preview-btn');
+          previewBtn.disabled = true;
+          previewBtn.textContent = 'Generating Preview...';
+
+          try {
+            const response = await fetch('/api/history-copy/preview', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sourceUser, targetUsers, filters })
+            });
+            const result = await response.json();
+            
+            if (result.ok) {
+              const data = result.data;
+              currentJobId = data.jobId;
+
+              // Update Summary Cards
+              document.getElementById('summary-eligible').textContent = data.summary.eligible;
+              document.getElementById('summary-watched').textContent = data.summary.alreadyWatched;
+              document.getElementById('summary-copied').textContent = data.summary.alreadyCopied;
+              document.getElementById('summary-failed').textContent = data.summary.failed;
+
+              // Populate Items Table
+              const tbody = document.getElementById('preview-items-body');
+              if (data.items.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center">No history items matched the criteria.</td></tr>';
+                document.getElementById('apply-action-bar').classList.add('hidden');
+              } else {
+                tbody.innerHTML = data.items.map(item => {
+                  let statusClass = 'badge-eligible';
+                  if (item.status === 'skipped') {
+                    statusClass = item.reason === 'already_watched' ? 'badge-watched' : 'badge-copied';
+                  } else if (item.status === 'failed') {
+                    statusClass = 'badge-failed';
+                  }
+
+                  const targetUserObj = usersList.find(u => u.id === item.targetUserId);
+                  const targetName = targetUserObj ? targetUserObj.plex_username : 'User ' + item.targetUserId;
+                  const seasonEpisode = item.mediaType === 'episode' ? 'S' + String(item.seasonNumber).padStart(2, '0') + 'E' + String(item.episodeNumber).padStart(2, '0') : '-';
+                  const cleanTitle = item.mediaType === 'episode' ? (item.showTitle || '') + ': ' + item.title : item.title;
+
+                  return '<tr>' +
+                    '<td>' + targetName + '</td>' +
+                    '<td><span class="media-type-icon ' + item.mediaType + '">' + item.mediaType + '</span></td>' +
+                    '<td>' + cleanTitle + '</td>' +
+                    '<td>' + seasonEpisode + '</td>' +
+                    '<td>' + new Date(item.watchedAt).toLocaleString() + '</td>' +
+                    '<td><span class="badge ' + statusClass + '">' + (item.reason || item.status) + '</span></td>' +
+                    '</tr>';
+                }).join('');
+                
+                if (data.summary.eligible > 0) {
+                  document.getElementById('apply-action-bar').classList.remove('hidden');
+                } else {
+                  document.getElementById('apply-action-bar').classList.add('hidden');
+                }
+              }
+
+              document.getElementById('preview-results-section').classList.remove('hidden');
+            } else {
+              feedback.className = 'status-feedback alert alert-danger';
+              feedback.textContent = result.message || 'Error generating preview.';
+              feedback.classList.remove('hidden');
+            }
+          } catch (error) {
+            feedback.className = 'status-feedback alert alert-danger';
+            feedback.textContent = 'Server request failed: ' + error.message;
+            feedback.classList.remove('hidden');
+          } finally {
+            previewBtn.disabled = false;
+            previewBtn.textContent = 'Generate Preview';
+          }
+        });
+
+        // Apply Copy Job
+        document.getElementById('apply-btn').addEventListener('click', async () => {
+          if (!currentJobId) return;
+
+          const applyBtn = document.getElementById('apply-btn');
+          const feedback = document.getElementById('status-feedback');
+          
+          feedback.className = 'status-feedback alert alert-info';
+          feedback.textContent = 'Applying copy job... marking Plex states.';
+          feedback.classList.remove('hidden');
+          applyBtn.disabled = true;
+
+          try {
+            const response = await fetch('/api/history-copy/apply', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ jobId: currentJobId, confirm: true })
+            });
+            const result = await response.json();
+
+            if (result.ok) {
+              feedback.className = 'status-feedback alert alert-success';
+              feedback.textContent = 'Success! Applied copy job ' + currentJobId + ': ' +
+                result.data.copied + ' items copied, ' +
+                result.data.skipped + ' skipped, ' +
+                result.data.failed + ' failed.';
+              
+              // Hide action bar
+              document.getElementById('apply-action-bar').classList.add('hidden');
+
+              // Refresh job items to show updated statuses
+              const jobDetailsResponse = await fetch('/api/history-copy/jobs/' + currentJobId);
+              const jobDetails = await jobDetailsResponse.json();
+              if (jobDetails.ok && jobDetails.items) {
+                const tbody = document.getElementById('preview-items-body');
+                tbody.innerHTML = jobDetails.items.map(item => {
+                  let statusClass = 'badge-eligible';
+                  if (item.status === 'copied') statusClass = 'badge-success';
+                  else if (item.status === 'skipped') {
+                    statusClass = item.reason === 'already_watched' ? 'badge-watched' : 'badge-copied';
+                  } else if (item.status === 'failed') {
+                    statusClass = 'badge-failed';
+                  }
+
+                  const targetUserObj = usersList.find(u => u.id === item.target_user_id);
+                  const targetName = targetUserObj ? targetUserObj.plex_username : 'User ' + item.target_user_id;
+                  const seasonEpisode = item.media_type === 'episode' ? 'S' + String(item.season_number).padStart(2, '0') + 'E' + String(item.episode_number).padStart(2, '0') : '-';
+                  const cleanTitle = item.media_type === 'episode' ? (item.show_title || '') + ': ' + item.title : item.title;
+
+                  return '<tr>' +
+                    '<td>' + targetName + '</td>' +
+                    '<td><span class="media-type-icon ' + item.media_type + '">' + item.media_type + '</span></td>' +
+                    '<td>' + cleanTitle + '</td>' +
+                    '<td>' + seasonEpisode + '</td>' +
+                    '<td>' + new Date(item.watched_at).toLocaleString() + '</td>' +
+                    '<td><span class="badge ' + statusClass + '">' + (item.reason || item.status) + '</span></td>' +
+                    '</tr>';
+                }).join('');
+              }
+            } else {
+              feedback.className = 'status-feedback alert alert-danger';
+              feedback.textContent = result.message || 'Error applying copy job.';
+            }
+          } catch (error) {
+            feedback.className = 'status-feedback alert alert-danger';
+            feedback.textContent = 'Server request failed: ' + error.message;
+          } finally {
+            applyBtn.disabled = false;
+          }
+        });
+      </script>
     `));
   });
 

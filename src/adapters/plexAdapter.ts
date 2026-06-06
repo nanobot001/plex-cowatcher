@@ -3,9 +3,23 @@ import { appConfig } from "../utils/config.js";
 
 export interface PlexAdapter {
   listUsers(): Promise<PlexUser[]>;
-  getMetadataByRatingKey(ratingKey: string): Promise<PlexMetadata>;
-  getWatchedState(userId: string, ratingKey: string): Promise<WatchedState>;
-  markWatched(userId: string, ratingKey: string): Promise<MarkWatchedResult>;
+  getMetadataByRatingKey(ratingKey: string, plexGuid?: string): Promise<PlexMetadata>;
+  getWatchedState(userId: string, ratingKey: string, plexGuid?: string): Promise<WatchedState>;
+  markWatched(userId: string, ratingKey: string, plexGuid?: string): Promise<MarkWatchedResult>;
+  listLibraries(): Promise<Array<{ key: string; title: string; type: string }>>;
+  listShows(libraryKey: string): Promise<string[]>;
+}
+
+export class PlexAdapterError extends Error {
+  constructor(
+    public readonly errorCode: string,
+    message: string,
+    public readonly status: MarkWatchedResult["status"] = "plex_failure",
+    public readonly retryable = false,
+    public readonly details: Record<string, unknown> = {}
+  ) {
+    super(message);
+  }
 }
 
 export class MockPlexAdapter implements PlexAdapter {
@@ -13,40 +27,457 @@ export class MockPlexAdapter implements PlexAdapter {
     return [];
   }
 
-  async getMetadataByRatingKey(ratingKey: string): Promise<PlexMetadata> {
+  async getMetadataByRatingKey(ratingKey: string, _plexGuid?: string): Promise<PlexMetadata> {
     return { ratingKey, title: `Mock metadata ${ratingKey}`, mediaType: "unknown" };
   }
 
-  async getWatchedState(): Promise<WatchedState> {
+  async getWatchedState(_userId: string, _ratingKey: string, _plexGuid?: string): Promise<WatchedState> {
     return { watched: false, source: "mock" };
   }
 
-  async markWatched(_userId: string, _ratingKey: string): Promise<MarkWatchedResult> {
+  async markWatched(_userId: string, _ratingKey: string, _plexGuid?: string): Promise<MarkWatchedResult> {
     return { ok: true, status: "mocked" };
+  }
+
+  async listLibraries(): Promise<Array<{ key: string; title: string; type: string }>> {
+    return [
+      { key: "1", title: "Movies", type: "movie" },
+      { key: "2", title: "TV Shows", type: "show" },
+      { key: "3", title: "Anime", type: "show" },
+      { key: "4", title: "Classic TV", type: "show" }
+    ];
+  }
+
+  async listShows(libraryKey: string): Promise<string[]> {
+    if (libraryKey === "2") {
+      return ["The Office", "Breaking Bad", "Parks and Recreation"];
+    }
+    if (libraryKey === "3") {
+      return ["Death Note", "Attack on Titan", "Fullmetal Alchemist"];
+    }
+    if (libraryKey === "4") {
+      return ["I Love Lucy", "The Twilight Zone", "M*A*S*H"];
+    }
+    return [];
   }
 }
 
 export class HttpPlexAdapter extends MockPlexAdapter {
-  async listUsers(): Promise<PlexUser[]> {
-    if (!appConfig.PLEX_TOKEN) return [];
-    const response = await fetch(`${appConfig.PLEX_BASE_URL}/api/v2/server/access_tokens?X-Plex-Token=${encodeURIComponent(appConfig.PLEX_TOKEN)}`);
-    if (!response.ok) throw new Error(`Plex users request failed: ${response.status}`);
-    return [];
+  private userTokensCache = new Map<string, string>();
+
+  async getAccessTokenForUser(userId: string): Promise<string> {
+    if (userId === "1" || userId === "tonyhung") {
+      return appConfig.PLEX_TOKEN;
+    }
+
+    if (this.userTokensCache.has(userId)) {
+      return this.userTokensCache.get(userId)!;
+    }
+
+    if (!appConfig.PLEX_TOKEN) {
+      throw new PlexAdapterError("PLEX_TOKEN_MISSING", "Plex token is not configured.", "missing_permission");
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    let homeUsersXml = "";
+    try {
+      const url = new URL("https://plex.tv/api/v2/home/users");
+      url.searchParams.set("X-Plex-Token", appConfig.PLEX_TOKEN);
+      url.searchParams.set("X-Plex-Client-Identifier", "plex-cowatch-sync");
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) {
+        throw new PlexAdapterError("PLEX_HOME_USERS_FAILED", `Failed to fetch home users from plex.tv (HTTP ${response.status})`, "plex_failure");
+      }
+      homeUsersXml = await response.text();
+    } catch (error) {
+      if (error instanceof PlexAdapterError) throw error;
+      throw new PlexAdapterError("PLEX_HOME_USERS_FAILED", error instanceof Error ? error.message : "Failed to fetch home users.", "plex_failure");
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    const userMatch = homeUsersXml.match(new RegExp(`<user\\b[^>]*\\bid="${userId}"[^>]*>`)) || 
+                      homeUsersXml.match(new RegExp(`<user\\b[^>]*\\bkey="${userId}"[^>]*>`));
+    if (!userMatch) {
+      const adminMatch = homeUsersXml.match(/<user\b[^>]*\badmin="1"[^>]*>/);
+      if (adminMatch) {
+        const adminId = attr(adminMatch[0], "id") ?? attr(adminMatch[0], "key");
+        if (adminId === userId) {
+          this.userTokensCache.set(userId, appConfig.PLEX_TOKEN);
+          return appConfig.PLEX_TOKEN;
+        }
+      }
+      throw new PlexAdapterError("PLEX_USER_NOT_FOUND", `User ID ${userId} not found in Plex Home.`, "target_unavailable");
+    }
+
+    const userTag = userMatch[0];
+    const isAdmin = attr(userTag, "admin") === "1";
+    if (isAdmin) {
+      this.userTokensCache.set(userId, appConfig.PLEX_TOKEN);
+      return appConfig.PLEX_TOKEN;
+    }
+
+    const uuid = attr(userTag, "uuid");
+    if (!uuid) {
+      throw new PlexAdapterError("PLEX_USER_UUID_MISSING", `User ${userId} does not have a UUID.`, "target_unavailable");
+    }
+
+    const switchController = new AbortController();
+    const switchTimeout = setTimeout(() => switchController.abort(), 10000);
+    let switchXml = "";
+    try {
+      const url = new URL(`https://plex.tv/api/v2/home/users/${uuid}/switch`);
+      url.searchParams.set("X-Plex-Token", appConfig.PLEX_TOKEN);
+      url.searchParams.set("X-Plex-Client-Identifier", "plex-cowatch-sync");
+      const response = await fetch(url, { method: "POST", signal: switchController.signal });
+      if (!response.ok) {
+        throw new PlexAdapterError("PLEX_USER_SWITCH_FAILED", `Failed to switch to user ${userId} on plex.tv (HTTP ${response.status})`, "plex_failure");
+      }
+      switchXml = await response.text();
+    } catch (error) {
+      if (error instanceof PlexAdapterError) throw error;
+      throw new PlexAdapterError("PLEX_USER_SWITCH_FAILED", error instanceof Error ? error.message : "Failed to switch user.", "plex_failure");
+    } finally {
+      clearTimeout(switchTimeout);
+    }
+
+    const switchUserTag = switchXml.match(/<user\b[^>]*>/)?.[0];
+    if (!switchUserTag) {
+      throw new PlexAdapterError("PLEX_USER_SWITCH_FAILED", "Failed to parse switch user response.", "plex_failure");
+    }
+    const authToken = attr(switchUserTag, "authToken");
+    if (!authToken) {
+      throw new PlexAdapterError("PLEX_USER_SWITCH_FAILED", "User switch response did not return authToken.", "plex_failure");
+    }
+
+    const resController = new AbortController();
+    const resTimeout = setTimeout(() => resController.abort(), 10000);
+    let resourcesXml = "";
+    try {
+      const url = new URL("https://plex.tv/api/v2/resources");
+      url.searchParams.set("X-Plex-Token", authToken);
+      url.searchParams.set("X-Plex-Client-Identifier", "plex-cowatch-sync");
+      url.searchParams.set("includeHttps", "1");
+      const response = await fetch(url, { signal: resController.signal });
+      if (!response.ok) {
+        throw new PlexAdapterError("PLEX_RESOURCES_FAILED", `Failed to fetch resources for user ${userId} from plex.tv (HTTP ${response.status})`, "plex_failure");
+      }
+      resourcesXml = await response.text();
+    } catch (error) {
+      if (error instanceof PlexAdapterError) throw error;
+      throw new PlexAdapterError("PLEX_RESOURCES_FAILED", error instanceof Error ? error.message : "Failed to fetch resources.", "plex_failure");
+    } finally {
+      clearTimeout(resTimeout);
+    }
+
+    const resourceMatches = resourcesXml.match(/<resource\b[^>]*\bprovides="server"[^>]*>/g) ?? [];
+    if (resourceMatches.length === 0) {
+      throw new PlexAdapterError("PLEX_SERVER_NOT_SHARED", `No shared Plex server found for user ${userId}.`, "target_unavailable");
+    }
+
+    const serverResourceTag = resourceMatches[0]!;
+    const serverAccessToken = attr(serverResourceTag, "accessToken");
+    if (!serverAccessToken) {
+      throw new PlexAdapterError("PLEX_SERVER_NOT_SHARED", `Shared Plex server for user ${userId} does not have an accessToken.`, "target_unavailable");
+    }
+
+    this.userTokensCache.set(userId, serverAccessToken);
+    return serverAccessToken;
   }
 
-  async markWatched(userId: string, ratingKey: string): Promise<MarkWatchedResult> {
+  async fetchAsUser(
+    userId: string,
+    pathname: string,
+    queryParams: Record<string, string> = {},
+    options: RequestInit = {}
+  ): Promise<Response> {
+    const token = await this.getAccessTokenForUser(userId);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const url = new URL(pathname, appConfig.PLEX_BASE_URL);
+      url.searchParams.set("X-Plex-Token", token);
+      for (const [key, value] of Object.entries(queryParams)) {
+        url.searchParams.set(key, value);
+      }
+      return await fetch(url, { ...options, signal: controller.signal });
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new PlexAdapterError("PLEX_TIMEOUT", "Plex request timed out.", "timeout", true);
+      }
+      throw new PlexAdapterError("PLEX_REQUEST_FAILED", error instanceof Error ? error.message : "Plex request failed.", "plex_failure", true);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  async listUsers(): Promise<PlexUser[]> {
+    if (!appConfig.PLEX_TOKEN) {
+      throw new PlexAdapterError("PLEX_TOKEN_MISSING", "Plex token is not configured.", "missing_permission");
+    }
+
+    const response = await plexFetch("/accounts");
+    if (!response.ok) throw plexErrorFromResponse(response, "PLEX_USER_LIST_FAILED", "Plex user listing failed.");
+    return parsePlexUsers(await response.text());
+  }
+
+  async getMetadataByRatingKey(ratingKey: string, plexGuid?: string): Promise<PlexMetadata> {
+    if (!appConfig.PLEX_TOKEN) {
+      throw new PlexAdapterError("PLEX_TOKEN_MISSING", "Plex token is not configured.", "missing_permission", false, { ratingKey });
+    }
+
+    let activeKey = ratingKey;
+    let response = await plexFetch(`/library/metadata/${encodeURIComponent(activeKey)}`);
+    if (!response.ok && response.status === 404 && plexGuid) {
+      activeKey = await this.resolveActiveRatingKey(ratingKey, plexGuid);
+      if (activeKey !== ratingKey) {
+        response = await plexFetch(`/library/metadata/${encodeURIComponent(activeKey)}`);
+      }
+    }
+
+    if (!response.ok) throw plexErrorFromResponse(response, "PLEX_METADATA_LOOKUP_FAILED", "Plex metadata lookup failed.", { ratingKey: activeKey });
+
+    const xml = await response.text();
+    const tag = firstMediaTag(xml);
+    if (!tag) {
+      throw new PlexAdapterError("PLEX_NO_MATCHING_MEDIA", "No matching Plex media was found for the rating key.", "no_matching_media", false, { ratingKey: activeKey });
+    }
+
+    return {
+      ratingKey: activeKey,
+      title: attr(tag, "title") ?? attr(tag, "grandparentTitle") ?? activeKey,
+      mediaType: attr(tag, "type") ?? "unknown",
+      guid: attr(tag, "guid")
+    };
+  }
+
+  async getWatchedState(userId: string, ratingKey: string, plexGuid?: string): Promise<WatchedState> {
+    if (!userId) {
+      throw new PlexAdapterError("PLEX_TARGET_UNAVAILABLE", "Target Plex user is unavailable.", "target_unavailable", false, { ratingKey });
+    }
+
+    let activeKey = ratingKey;
+    let response = await this.fetchAsUser(userId, `/library/metadata/${encodeURIComponent(activeKey)}`);
+    if (!response.ok && response.status === 404 && plexGuid) {
+      activeKey = await this.resolveActiveRatingKey(ratingKey, plexGuid);
+      if (activeKey !== ratingKey) {
+        response = await this.fetchAsUser(userId, `/library/metadata/${encodeURIComponent(activeKey)}`);
+      }
+    }
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        let adminExists = false;
+        let libraryName: string | undefined;
+        try {
+          const adminResponse = await plexFetch(`/library/metadata/${encodeURIComponent(activeKey)}`);
+          if (adminResponse.ok) {
+            const adminXml = await adminResponse.text();
+            const mediaTag = firstMediaTag(adminXml);
+            if (mediaTag) {
+              adminExists = true;
+              libraryName = attr(mediaTag, "librarySectionTitle");
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+
+        if (adminExists) {
+          throw new PlexAdapterError(
+            "PLEX_RESTRICTED_MEDIA",
+            `Target user does not have access to this item${libraryName ? ` (library: ${libraryName})` : ""}.`,
+            "no_matching_media",
+            false,
+            { userId, ratingKey: activeKey, libraryName }
+          );
+        } else {
+          throw new PlexAdapterError(
+            "PLEX_NO_MATCHING_MEDIA",
+            "No matching Plex media was found for the rating key.",
+            "no_matching_media",
+            false,
+            { userId, ratingKey: activeKey }
+          );
+        }
+      }
+      throw plexErrorFromResponse(response, "PLEX_WATCHED_STATE_FAILED", "Plex watched-state check failed.", { userId, ratingKey: activeKey });
+    }
+
+    const tag = firstMediaTag(await response.text());
+    if (!tag) {
+      throw new PlexAdapterError("PLEX_NO_MATCHING_MEDIA", "No matching Plex media was found for the rating key.", "no_matching_media", false, { userId, ratingKey: activeKey });
+    }
+
+    const watched = Boolean(attr(tag, "viewedAt")) || Number(attr(tag, "viewCount") ?? "0") > 0;
+    return { watched, source: "plex" };
+  }
+
+  async markWatched(userId: string, ratingKey: string, plexGuid?: string): Promise<MarkWatchedResult> {
     if (appConfig.PLEX_MUTATION_MODE !== "live") {
       return { ok: true, status: "mocked" };
     }
 
-    return {
-      ok: false,
-      status: "failed",
-      error: `Live per-user mark-watched is intentionally unverified for user ${userId}, rating key ${ratingKey}.`
-    };
+    if (!userId) {
+      throw new PlexAdapterError("PLEX_TARGET_UNAVAILABLE", "Target Plex user is unavailable.", "target_unavailable", false, { ratingKey });
+    }
+
+    let activeKey = ratingKey;
+    try {
+      let response = await this.fetchAsUser(userId, "/:/scrobble", {
+        identifier: "com.plexapp.plugins.library",
+        key: activeKey
+      });
+
+      if (!response.ok && response.status === 404 && plexGuid) {
+        activeKey = await this.resolveActiveRatingKey(ratingKey, plexGuid);
+        if (activeKey !== ratingKey) {
+          response = await this.fetchAsUser(userId, "/:/scrobble", {
+            identifier: "com.plexapp.plugins.library",
+            key: activeKey
+          });
+        }
+      }
+
+      if (!response.ok) {
+        throw plexErrorFromResponse(response, "PLEX_MARK_WATCHED_FAILED", "Plex mark-watched failed.", { userId, ratingKey: activeKey });
+      }
+
+      return { ok: true, status: "marked_watched" };
+    } catch (error) {
+      if (error instanceof PlexAdapterError) {
+        return {
+          ok: false,
+          status: error.status,
+          errorCode: error.errorCode,
+          error: error.message,
+          details: error.details
+        };
+      }
+      return {
+        ok: false,
+        status: "plex_failure",
+        errorCode: "PLEX_SYNC_FAILED",
+        error: error instanceof Error ? error.message : "Plex sync failed."
+      };
+    }
+  }
+
+  async resolveActiveRatingKey(originalRatingKey: string, plexGuid?: string): Promise<string> {
+    if (!plexGuid) return originalRatingKey;
+    try {
+      const response = await plexFetch(`/library/all?guid=${encodeURIComponent(plexGuid)}`);
+      if (response.ok) {
+        const xml = await response.text();
+        const tag = firstMediaTag(xml);
+        if (tag) {
+          const resolvedKey = attr(tag, "ratingKey");
+          if (resolvedKey && resolvedKey !== originalRatingKey) {
+            console.log(`[PlexAdapter] Resolved stale ratingKey ${originalRatingKey} to active ratingKey ${resolvedKey} using GUID ${plexGuid}`);
+            return resolvedKey;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`[PlexAdapter] Failed to resolve active ratingKey for GUID ${plexGuid}:`, e);
+    }
+    return originalRatingKey;
+  }
+
+  async listLibraries(): Promise<Array<{ key: string; title: string; type: string }>> {
+    if (!appConfig.PLEX_TOKEN) {
+      throw new PlexAdapterError("PLEX_TOKEN_MISSING", "Plex token is not configured.", "missing_permission", false);
+    }
+    const response = await plexFetch("/library/sections");
+    if (!response.ok) {
+      throw plexErrorFromResponse(response, "PLEX_LIBRARIES_FAILED", "Failed to retrieve Plex libraries.");
+    }
+    const xml = await response.text();
+    const directories: Array<{ key: string; title: string; type: string }> = [];
+    const directoryTags = xml.match(/<Directory\b[^>]*>/g) ?? [];
+    for (const tag of directoryTags) {
+      const key = attr(tag, "key");
+      const title = attr(tag, "title");
+      const type = attr(tag, "type");
+      if (key && title && type) {
+        directories.push({ key, title, type });
+      }
+    }
+    return directories;
+  }
+
+  async listShows(libraryKey: string): Promise<string[]> {
+    if (!appConfig.PLEX_TOKEN) {
+      throw new PlexAdapterError("PLEX_TOKEN_MISSING", "Plex token is not configured.", "missing_permission", false);
+    }
+    const response = await plexFetch(`/library/sections/${encodeURIComponent(libraryKey)}/all?type=2`);
+    if (!response.ok) {
+      throw plexErrorFromResponse(response, "PLEX_SHOWS_FAILED", "Failed to retrieve Plex shows.");
+    }
+    const xml = await response.text();
+    const showsSet = new Set<string>();
+    const directoryTags = xml.match(/<Directory\b[^>]*>/g) ?? [];
+    for (const tag of directoryTags) {
+      const title = attr(tag, "title");
+      if (title) {
+        showsSet.add(title);
+      }
+    }
+    return Array.from(showsSet).sort();
   }
 }
 
 export function createPlexAdapter(): PlexAdapter {
   return appConfig.PLEX_MUTATION_MODE === "live" ? new HttpPlexAdapter() : new MockPlexAdapter();
+}
+
+async function plexFetch(pathname: string): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const url = new URL(pathname, appConfig.PLEX_BASE_URL);
+    url.searchParams.set("X-Plex-Token", appConfig.PLEX_TOKEN);
+    return await fetch(url, { signal: controller.signal });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new PlexAdapterError("PLEX_TIMEOUT", "Plex request timed out.", "timeout", true);
+    }
+    throw new PlexAdapterError("PLEX_REQUEST_FAILED", error instanceof Error ? error.message : "Plex request failed.", "plex_failure", true);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function plexErrorFromResponse(response: Response, fallbackCode: string, fallbackMessage: string, details: Record<string, unknown> = {}): PlexAdapterError {
+  if (response.status === 401 || response.status === 403) {
+    return new PlexAdapterError("PLEX_MISSING_PERMISSION", "Plex token is missing permission for the requested operation.", "missing_permission", false, details);
+  }
+
+  if (response.status === 404 && details.ratingKey !== undefined) {
+    return new PlexAdapterError("PLEX_NO_MATCHING_MEDIA", "No matching Plex media was found for the rating key.", "no_matching_media", false, details);
+  }
+
+  return new PlexAdapterError(fallbackCode, `${fallbackMessage} HTTP ${response.status}.`, "plex_failure", response.status >= 500, details);
+}
+
+function parsePlexUsers(xml: string): PlexUser[] {
+  const users: PlexUser[] = [];
+  const accountTags = xml.match(/<(?:Account|User)\b[^>]*>/g) ?? [];
+  for (const tag of accountTags) {
+    const id = attr(tag, "id") ?? attr(tag, "key");
+    const username = attr(tag, "username") ?? attr(tag, "title") ?? attr(tag, "name");
+    if (!id || !username) continue;
+    users.push({ id, username, displayName: attr(tag, "title") ?? username });
+  }
+  return users;
+}
+
+function firstMediaTag(xml: string): string | undefined {
+  return xml.match(/<(?:Video|Directory|Track)\b[^>]*>/)?.[0];
+}
+
+function attr(tag: string, name: string): string | undefined {
+  const pattern = new RegExp(`${name}="([^"]*)"`);
+  return tag.match(pattern)?.[1];
 }

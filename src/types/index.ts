@@ -5,6 +5,7 @@ export interface ConfiguredUser {
   displayName: string;
   plexUsername: string;
   plexUserId?: string;
+  plexPin?: string;
   discordUserId?: string;
   isSourceUser?: boolean;
   isTypicalCowatcher?: boolean;
@@ -47,15 +48,31 @@ export interface WatchedState {
   source: "plex" | "mock";
 }
 
+export type PlexSyncStatus =
+  | "marked_watched"
+  | "already_watched"
+  | "mocked"
+  | "missing_permission"
+  | "target_unavailable"
+  | "no_matching_media"
+  | "plex_failure"
+  | "timeout"
+  | "unsupported_mutation"
+  | "failed";
+
 export interface MarkWatchedResult {
   ok: boolean;
-  status: "marked_watched" | "already_watched" | "mocked" | "failed";
+  status: PlexSyncStatus;
+  errorCode?: string;
   error?: string;
+  details?: JsonRecord;
 }
 
 export interface RecentHistoryParams {
   user?: string;
   days?: number;
+  length?: number;
+  section_id?: string;
 }
 
 export interface TautulliHistoryRow {

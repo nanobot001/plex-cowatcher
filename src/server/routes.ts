@@ -19,9 +19,17 @@ export function buildRouter(db: Db): Router {
   const health = new HealthService(db);
   const users = new UserService(db);
   const cowatch = new CowatchService(db, sync);
-  const historyCopy = new HistoryCopyService(db, tautulli, sync);
+  const historyCopy = new HistoryCopyService(db, tautulli, sync, plex);
 
   users.syncConfiguredUsers();
+  (async () => {
+    try {
+      const plexUsers = await plex.listUsers();
+      users.syncConfiguredUsers(undefined, plexUsers);
+    } catch (error) {
+      console.warn("Failed to sync users with Plex at startup:", error instanceof Error ? error.message : error);
+    }
+  })();
 
   router.get("/api/health", (_req, res) => res.json(health.getHealth()));
   router.get("/api/status", (_req, res) => res.json(health.getHealth()));
@@ -33,10 +41,38 @@ export function buildRouter(db: Db): Router {
       next(error);
     }
   });
-  router.post("/api/users/refresh", (_req, res) => {
-    users.syncConfiguredUsers();
-    audit.record("refresh_user_cache", "api", "ok", {});
-    res.json({ ok: true, users: users.listConfigured() });
+  router.get("/api/libraries", async (_req, res, next) => {
+    try {
+      res.json({ ok: true, libraries: await plex.listLibraries() });
+    } catch (error) {
+      next(error);
+    }
+  });
+  router.get("/api/shows", async (req, res, next) => {
+    try {
+      const libraryKey = String(req.query.libraryKey || "");
+      if (!libraryKey) {
+        return res.status(400).json({ ok: false, message: "Missing libraryKey query parameter." });
+      }
+      res.json({ ok: true, shows: await plex.listShows(libraryKey) });
+    } catch (error) {
+      next(error);
+    }
+  });
+  router.post("/api/users/refresh", async (_req, res, next) => {
+    try {
+      let plexUsers: any[] = [];
+      try {
+        plexUsers = await plex.listUsers();
+      } catch (err) {
+        console.warn("Failed to fetch Plex users during refresh:", err);
+      }
+      users.syncConfiguredUsers(undefined, plexUsers);
+      audit.record("refresh_user_cache", "api", "ok", {});
+      res.json({ ok: true, users: users.listConfigured() });
+    } catch (error) {
+      next(error);
+    }
   });
   router.get("/api/watches/recent", (req, res) => {
     const days = parseDays(req.query.days, 7);

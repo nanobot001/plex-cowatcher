@@ -106,7 +106,7 @@ export class CowatchService {
   async resolvePrompt(input: ResolvePromptInput) {
     try {
       const event = this.db.prepare("SELECT * FROM watch_events WHERE id = ?").get(input.watchEventId) as
-        | { id: number; rating_key: string }
+        | { id: number; rating_key: string; plex_guid?: string }
         | undefined;
       if (!event) throw new AppError("WATCH_EVENT_NOT_FOUND", "Watch event not found", { watchEventId: input.watchEventId }, false, 404);
       const resolution = input.resolution ?? (input.selectedTargetUserIds.length === 0 ? "none" : "selected");
@@ -121,11 +121,17 @@ export class CowatchService {
       for (const targetUserId of [...new Set(input.selectedTargetUserIds)]) {
         const user = this.users.findById(targetUserId);
         if (!user?.plex_user_id) {
-          results.push({ targetUserId, status: "failed", error: "Target user missing Plex user id" });
+          results.push({
+            targetUserId,
+            status: "failed",
+            plexSyncStatus: "target_unavailable",
+            errorCode: "PLEX_TARGET_UNAVAILABLE",
+            error: "Target user missing Plex user id"
+          });
           continue;
         }
 
-        const syncResult = await this.sync.markWatchedIfNeeded(user.plex_user_id, event.rating_key);
+        const syncResult = await this.sync.markWatchedIfNeeded(user.plex_user_id, event.rating_key, event.plex_guid);
         const status = syncResult.ok ? "confirmed" : "failed";
         const now = nowIso();
         this.db
@@ -151,8 +157,8 @@ export class CowatchService {
             syncResult.error ?? null,
             now,
             now
-          );
-        results.push({ targetUserId, status, plexSyncStatus: syncResult.status, error: syncResult.error });
+        );
+        results.push({ targetUserId, status, plexSyncStatus: syncResult.status, errorCode: syncResult.errorCode, error: syncResult.error });
       }
 
       this.db.prepare("UPDATE watch_events SET prompt_status = ?, updated_at = ? WHERE id = ?").run("resolved", nowIso(), input.watchEventId);

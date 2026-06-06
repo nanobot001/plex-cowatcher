@@ -1,8 +1,9 @@
 # Block 1-4: Plex Watched-State Verification
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: This block decides what live Plex watched-state mutation can safely support for the MVP.
+> Status: Implemented on 2026-05-31.
+> Result: Implemented with limitations.
+> Verification: `node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc -p tsconfig.json` - passed before final live-mode safety tightening; `node tests/run-tests.mjs` - passed before final live-mode safety tightening; `node src/tool-adapter/cli.js status` - passed; `git diff --check` - passed. Final `npm run build`, `npm test`, and direct `tsc` reruns hit Node heap OOM on this machine before diagnostics.
+> Notes: Mock remains default; live mark-watched returns structured `unsupported_mutation` until the local target-user Plex token model is manually verified.
 
 ## Goal
 

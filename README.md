@@ -64,7 +64,10 @@ node dist/cli/cli.js preview-copy --source Tony --target Ian --show "The Bear" -
 node dist/cli/cli.js apply-copy --job 42 --pretty
 node dist/cli/cli.js audit --days 7 --pretty
 node dist/cli/cli.js retry-failed --pretty
+node dist/cli/cli.js verify-plex-watched-state --target-plex-user-id Ian --rating-key 12345 --pretty
 ```
+
+`verify-plex-watched-state` is the guided Block 1-4 check for Plex user listing, metadata lookup, and watched-state lookup. Add `--mark-watched` only with a known safe media item after confirming the target account/token model. The current live mutation path returns `unsupported_mutation` instead of writing watched state because per-target Plex mutation has not been verified for this household setup.
 
 ## PM2
 
@@ -94,7 +97,7 @@ node dist/cli/cli.js test-discord-prompt --pretty
 node dist/cli/cli.js test-discord-prompt --watch-event-id 42 --pretty
 ```
 
-This posts to the configured Discord channel. Keep `PLEX_MUTATION_MODE=mock` until Block 1-4 verifies live per-user watched-state mutation.
+This posts to the configured Discord channel. Keep `PLEX_MUTATION_MODE=mock` until live per-user watched-state mutation is verified and explicitly enabled in code.
 
 ## Project Docs
 
@@ -104,7 +107,7 @@ This posts to the configured Discord channel. Keep `PLEX_MUTATION_MODE=mock` unt
 
 ## Known Limitations
 
-- Plex per-user mark-watched is mocked unless `PLEX_MUTATION_MODE=live`; the live mutation path still intentionally returns an unverified failure.
+- Plex per-user mark-watched is mocked by default. With `PLEX_MUTATION_MODE=live`, reads can be checked through the Plex adapter, but mark-watched returns structured `unsupported_mutation` failures until the account/token model for target-user mutation is verified.
 - Tautulli is used only through its HTTP API as a history/activity source.
 - Browser UI is server-rendered MVP HTML and intentionally minimal.
 - Retry queue storage exists; live retry behavior waits for Plex mutation verification.

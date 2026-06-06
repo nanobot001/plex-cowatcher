@@ -36,7 +36,7 @@ export class HttpTautulliAdapter implements TautulliAdapter {
 
   async getRecentHistory(params: RecentHistoryParams): Promise<TautulliHistoryRow[]> {
     if (!appConfig.TAUTULLI_API_KEY) return [];
-    const json = await this.getJson(this.buildUrl("get_history", { user: params.user, length: 100 }));
+    const json = await this.getJson(this.buildUrl("get_history", { user: params.user, length: params.length ?? 100, section_id: params.section_id }));
     const rows: Record<string, unknown>[] = Array.isArray(json.response?.data?.data) ? json.response.data.data : [];
     return rows.map(normalizeTautulliHistoryRow).filter((row) => row.user && row.ratingKey);
   }
@@ -103,7 +103,7 @@ export function normalizeTautulliHistoryRow(row: Record<string, unknown>): Tautu
     parentRatingKey: optionalString(row.parent_rating_key),
     plexGuid: optionalString(row.guid),
     mediaType: String(row.media_type ?? row.media_type_full ?? "unknown"),
-    libraryName: optionalString(row.section_name),
+    libraryName: optionalString(row.library_name ?? row.section_name),
     title: String(row.title ?? ""),
     showTitle: optionalString(row.grandparent_title),
     seasonNumber: optionalNumber(row.parent_media_index),
