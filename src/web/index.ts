@@ -199,7 +199,6 @@ export function registerWebRoutes(router: Router): void {
             <table class="preview-table">
               <thead>
                 <tr>
-                  <th style="width: 40px; text-align: center;"><input type="checkbox" id="select-all-items" checked></th>
                   <th>Target User</th>
                   <th>Media Type</th>
                   <th>Title</th>
@@ -388,13 +387,6 @@ export function registerWebRoutes(router: Router): void {
               const data = result.data;
               currentJobId = data.jobId;
 
-              // Reset Select All checkbox
-              const selectAllCheckbox = document.getElementById('select-all-items');
-              if (selectAllCheckbox) {
-                selectAllCheckbox.checked = true;
-                selectAllCheckbox.disabled = data.items.filter(item => item.status === 'eligible').length === 0;
-              }
-
               // Update Summary Cards
               document.getElementById('summary-eligible').textContent = data.summary.eligible;
               document.getElementById('summary-watched').textContent = data.summary.alreadyWatched;
@@ -404,7 +396,7 @@ export function registerWebRoutes(router: Router): void {
               // Populate Items Table
               const tbody = document.getElementById('preview-items-body');
               if (data.items.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7" class="text-center">No history items matched the criteria.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center">No history items matched the criteria.</td></tr>';
                 document.getElementById('apply-action-bar').classList.add('hidden');
               } else {
                 tbody.innerHTML = data.items.map(item => {
@@ -420,12 +412,10 @@ export function registerWebRoutes(router: Router): void {
                   const seasonEpisode = item.mediaType === 'episode' ? 'S' + String(item.seasonNumber).padStart(2, '0') + 'E' + String(item.episodeNumber).padStart(2, '0') : '-';
                   const cleanTitle = item.mediaType === 'episode' ? (item.showTitle || '') + ': ' + item.title : item.title;
 
-                  const checkboxHtml = item.status === 'eligible'
-                    ? '<td style="text-align: center;"><input type="checkbox" class="item-checkbox" data-id="' + item.id + '" checked></td>'
-                    : '<td style="text-align: center;"><input type="checkbox" disabled></td>';
+                  const rowClass = item.status === 'eligible' ? 'class="row-eligible"' : '';
+                  const dataIdAttr = item.status === 'eligible' ? ' data-id="' + item.id + '"' : '';
 
-                  return '<tr>' +
-                    checkboxHtml +
+                  return '<tr ' + rowClass + dataIdAttr + '>' +
                     '<td>' + targetName + '</td>' +
                     '<td><span class="media-type-icon ' + item.mediaType + '">' + item.mediaType + '</span></td>' +
                     '<td>' + cleanTitle + '</td>' +
@@ -458,26 +448,24 @@ export function registerWebRoutes(router: Router): void {
           }
         });
 
-        // Handle Select All checkbox toggle
-        document.getElementById('select-all-items').addEventListener('change', (e) => {
-          const isChecked = e.target.checked;
-          document.querySelectorAll('.item-checkbox').forEach(cb => {
-            if (!cb.disabled) {
-              cb.checked = isChecked;
-            }
-          });
+        // Handle Row click highlight toggle
+        document.getElementById('preview-items-body').addEventListener('click', (e) => {
+          const row = e.target.closest('tr');
+          if (row && row.classList.contains('row-eligible')) {
+            row.classList.toggle('selected');
+          }
         });
 
         // Apply Copy Job
         document.getElementById('apply-btn').addEventListener('click', async () => {
           if (!currentJobId) return;
 
-          const checkedCbs = Array.from(document.querySelectorAll('.item-checkbox:checked'));
-          if (checkedCbs.length === 0) {
-            alert('Please select at least one item to copy.');
+          const selectedRows = Array.from(document.querySelectorAll('.row-eligible.selected'));
+          if (selectedRows.length === 0) {
+            alert('Please select at least one row to copy by clicking on it.');
             return;
           }
-          const selectedItemIds = checkedCbs.map(cb => Number(cb.getAttribute('data-id')));
+          const selectedItemIds = selectedRows.map(row => Number(row.getAttribute('data-id')));
 
           const applyBtn = document.getElementById('apply-btn');
           const feedback = document.getElementById('status-feedback');
@@ -505,13 +493,6 @@ export function registerWebRoutes(router: Router): void {
               // Hide action bar
               document.getElementById('apply-action-bar').classList.add('hidden');
 
-              // Disable Select All checkbox
-              const selectAllCheckbox = document.getElementById('select-all-items');
-              if (selectAllCheckbox) {
-                selectAllCheckbox.checked = false;
-                selectAllCheckbox.disabled = true;
-              }
-
               // Refresh job items to show updated statuses
               const jobDetailsResponse = await fetch('/api/history-copy/jobs/' + currentJobId);
               const jobDetails = await jobDetailsResponse.json();
@@ -531,11 +512,7 @@ export function registerWebRoutes(router: Router): void {
                   const seasonEpisode = item.media_type === 'episode' ? 'S' + String(item.season_number).padStart(2, '0') + 'E' + String(item.episode_number).padStart(2, '0') : '-';
                   const cleanTitle = item.media_type === 'episode' ? (item.show_title || '') + ': ' + item.title : item.title;
 
-                  const isChecked = item.status === 'copied' || (item.status === 'skipped' && item.reason === 'already_watched');
-                  const checkboxHtml = '<td style="text-align: center;"><input type="checkbox" disabled' + (isChecked ? ' checked' : '') + '></td>';
-
                   return '<tr>' +
-                    checkboxHtml +
                     '<td>' + targetName + '</td>' +
                     '<td><span class="media-type-icon ' + item.media_type + '">' + item.media_type + '</span></td>' +
                     '<td>' + cleanTitle + '</td>' +

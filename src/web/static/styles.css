@@ -448,3 +448,23 @@ pre {
 .help-content li strong {
   color: #c9d1d9;
 }
+
+/* Row-selection support for History Copy Preview Table */
+.preview-table tr.row-eligible {
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.preview-table tr.row-eligible.selected {
+  background-color: rgba(88, 166, 255, 0.12) !important;
+  border-left: 4px solid #58a6ff;
+}
+
+.preview-table tr.row-eligible.selected:hover {
+  background-color: rgba(88, 166, 255, 0.2) !important;
+}
+
+/* Ensure padding behaves with border-left trick */
+.preview-table tr.row-eligible.selected td:first-child {
+  padding-left: 12px;
+}
