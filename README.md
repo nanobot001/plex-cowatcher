@@ -36,6 +36,18 @@ Open:
 http://localhost:8787
 ```
 
+Go to `/copy` for the history copy utility:
+
+```text
+http://localhost:8787/copy
+```
+
+### History Copy UI Features
+- **Interactive Preview Grid**: Lists all history items for the copy job, including status (eligible, already watched, already copied, restricted, or no matching media).
+- **Selective Sync Highlight**: Click on any eligible row to toggle its selection status. Only highlighted rows will be copied.
+- **Shift-Click Range Selection**: Click on a starting row, then hold `Shift` and click on another row to select/deselect a range of rows.
+- **Skipped Item Handling**: Deselected eligible items are marked as `skipped` in the database with the reason `deselected` when the copy is applied.
+
 Health endpoint:
 
 ```text

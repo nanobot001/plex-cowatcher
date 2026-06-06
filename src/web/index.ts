@@ -94,11 +94,17 @@ export function registerWebRoutes(router: Router): void {
             <div class="help-content">
               <p>When running a history sync preview, each item will resolve to one of the following statuses:</p>
               <ul>
-                <li><strong>eligible:</strong> The item was watched by the source user, but is <em>not</em> marked as watched in the target user's Plex library and has <em>not</em> been copied yet. This item will be updated when you apply the copy.</li>
-                <li><strong>already_watched:</strong> The target user has already watched this item in their Plex library (either on their own or synced previously via Discord prompt or auto-sync). No action is taken.</li>
-                <li><strong>already_copied:</strong> The database indicates this specific item was successfully synced to the target user via a prior history copy job. It will be skipped.</li>
-                <li><strong>failed (e.g. PLEX_RESTRICTED_MEDIA):</strong> The media item exists on the server, but the target user cannot access it due to library sharing restrictions (like restricted content rating profiles or label restrictions).</li>
-                <li><strong>failed (e.g. PLEX_NO_MATCHING_MEDIA):</strong> The media item could not be found on the server at all (it may have been deleted or recreated since the source user watched it).</li>
+                <li><strong>eligible:</strong> The item was watched by the source user, but is <em>not</em> marked as watched in the target user's Plex library.</li>
+                <li><strong>already_watched:</strong> The target user has already watched this item in their Plex library.</li>
+                <li><strong>already_copied:</strong> The item was successfully synced to the target user via a prior copy job.</li>
+                <li><strong>failed (e.g. PLEX_RESTRICTED_MEDIA):</strong> The media item exists on the server, but the target user cannot access it due to library sharing restrictions.</li>
+                <li><strong>failed (e.g. PLEX_NO_MATCHING_MEDIA):</strong> The media item could not be found on the server at all.</li>
+              </ul>
+              <p style="margin-top: 12px; border-top: 1px solid #21262d; padding-top: 12px;"><strong>👉 Selective Sync Instructions:</strong></p>
+              <ul>
+                <li>To select/deselect an <strong>eligible</strong> item, click anywhere on its row. Selected rows will be highlighted in blue.</li>
+                <li>To select a range of items, click on the first row, then hold <strong>Shift</strong> and click on the last row.</li>
+                <li>Only highlighted rows will be copied when you click <strong>Apply Copy</strong>. All unselected rows will be marked as skipped.</li>
               </ul>
             </div>
           </details>
