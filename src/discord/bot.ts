@@ -22,6 +22,17 @@ export class DiscordBot {
     });
     await this.client.login(appConfig.DISCORD_BOT_TOKEN);
     await this.waitUntilReady();
+
+    try {
+      await this.client.application?.commands.create({
+        name: "help-cowatch",
+        description: "Show Plex Co-Watch Sync help and active user list."
+      });
+      log("info", { action: "discord_command_register", message: "Registered /help-cowatch slash command" });
+    } catch (error) {
+      log("warn", { action: "discord_command_register_error", message: error instanceof Error ? error.message : String(error) });
+    }
+
     log("info", { action: "discord_start", message: "Discord bot connected" });
   }
 

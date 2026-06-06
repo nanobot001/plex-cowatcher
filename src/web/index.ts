@@ -100,6 +100,10 @@ export function registerWebRoutes(router: Router): void {
                 <li><strong>failed (e.g. PLEX_RESTRICTED_MEDIA):</strong> The media item exists on the server, but the target user cannot access it due to library sharing restrictions.</li>
                 <li><strong>failed (e.g. PLEX_NO_MATCHING_MEDIA):</strong> The media item could not be found on the server at all.</li>
               </ul>
+              <p style="margin-top: 12px; border-top: 1px solid #21262d; padding-top: 12px;"><strong>👥 Configured Users Note:</strong></p>
+              <ul>
+                <li><strong>Alex</strong> is a test/mock user and is not a real person.</li>
+              </ul>
               <p style="margin-top: 12px; border-top: 1px solid #21262d; padding-top: 12px;"><strong>👉 Selective Sync Instructions:</strong></p>
               <ul>
                 <li>To select/deselect an <strong>eligible</strong> item, click anywhere on its row. Selected rows will be highlighted in blue.</li>
