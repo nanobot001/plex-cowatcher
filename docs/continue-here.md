@@ -13,14 +13,12 @@
 - Roadmap: `docs/roadmap.md`
 - Block index: `docs/blocks/README.md`
 - Project definition block: `docs/blocks/completed/block-00-project-definition.md`
-- Next MVP block: `docs/blocks/block-1-4-plex-watched-state-verification.md`
+- Next MVP block: `docs/blocks/block-1-6-mvp-operations-and-acceptance.md`
 
 ## Next Recommended Step
 
-- Implement `docs/blocks/block-1-4-plex-watched-state-verification.md`. This should verify or explicitly keep disabled the live Plex per-user watched-state mutation path before later copy-history work depends on it.
+- Implement `docs/blocks/block-1-6-mvp-operations-and-acceptance.md` to establish Windows service restart strategies, document operations, restart commands, and verify full end-to-end MVP operations.
 
 ## Open Questions
 
 - Which Windows restart-after-reboot strategy should be documented: Task Scheduler or Windows service wrapper?
-- Which Plex authentication approach supports per-user watched-state mutation in this household setup?
-- Should local user config move from `config/users.example.json` to a non-example ignored file in the next block?

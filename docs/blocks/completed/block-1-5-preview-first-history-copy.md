@@ -1,8 +1,8 @@
 # Block 1-5: Preview-First History Copy
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Completes the second MVP workflow once detection, Discord, and Plex sync safety are established.
+> Status: Implemented on 2026-06-06.
+> Result: Implemented with selective copying and shift-click range-selection UI.
+> Notes: Completes the second MVP workflow, verified with comprehensive tests.
 
 ## Goal
 
