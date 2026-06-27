@@ -13,6 +13,12 @@ import { SyncService } from "../dist/service/syncService.js";
 import { PlexAdapterError, MockPlexAdapter } from "../dist/adapters/plexAdapter.js";
 import { AppError, errorResult } from "../dist/utils/errors.js";
 import { HistoryCopyService } from "../dist/service/historyCopyService.js";
+import { IngestionService } from "../dist/service/ingestionService.js";
+import { MetadataService } from "../dist/service/metadataService.js";
+import { QueryService } from "../dist/service/queryService.js";
+import { SummaryService } from "../dist/service/summaryService.js";
+import { SessionService } from "../dist/service/sessionService.js";
+import { CowatchingIntelligenceService } from "../dist/service/cowatchingIntelligenceService.js";
 
 const tests = [];
 
@@ -60,7 +66,9 @@ test("Tautulli history rows normalize movie fields", () => {
       seasonNumber: undefined,
       episodeNumber: undefined,
       watchedAt: "2026-05-28T20:26:40.000Z",
+      watchedAtProvenance: "source",
       percentComplete: 95,
+      percentCompleteProvenance: "source",
       viewOffset: undefined,
       duration: undefined,
       completed: true
@@ -585,6 +593,481 @@ test("PlexAdapter listLibraries and listShows mock implementations", async () =>
 
   const shows = await adapter.listShows("2");
   assert.deepEqual(shows, ["The Office", "Breaking Bad", "Parks and Recreation"]);
+});
+
+test("IngestionService polls recent history and writes to playback_observations and watch_events", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const tautulli = {
+      getUsers: async () => [],
+      getActivity: async () => ({ streamCount: 0 }),
+      getMetadata: async (ratingKey) => ({ ratingKey, title: "" }),
+      getRecentHistory: async ({ user }) => {
+        if (user === "Tony") {
+          return [
+            { user, ratingKey: "movie-1", mediaType: "movie", title: "The Movie", watchedAt: "2026-05-30T20:00:00.000Z", percentComplete: 95 }
+          ];
+        } else if (user === "Viewer") {
+          return [
+            { user, ratingKey: "episode-1", mediaType: "episode", title: "Episode", showTitle: "Show", seasonNumber: 1, episodeNumber: 2, watchedAt: "2026-05-30T21:00:00.000Z", percentComplete: 50 }
+          ];
+        }
+        return [];
+      }
+    };
+
+    const ingestion = new IngestionService(db, tautulli);
+    const result = await ingestion.pollRecentHistory();
+
+    assert.equal(result.inserted, 2);
+    
+    const obs = db.prepare("SELECT * FROM playback_observations").all();
+    assert.equal(obs.length, 2);
+    
+    const tonyObs = obs.find(o => o.rating_key === "movie-1");
+    const viewerObs = obs.find(o => o.rating_key === "episode-1");
+    assert.ok(tonyObs);
+    assert.ok(viewerObs);
+    assert.equal(tonyObs.completed, 1);
+    assert.equal(viewerObs.completed, 0);
+
+    const events = db.prepare("SELECT * FROM watch_events").all();
+    assert.equal(events.length, 1);
+    assert.equal(events[0].rating_key, "movie-1");
+  });
+});
+
+test("IngestionService backfillHistory paginated is idempotent", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    
+    let callCount = 0;
+    const tautulli = {
+      getUsers: async () => [],
+      getActivity: async () => ({ streamCount: 0 }),
+      getMetadata: async (ratingKey) => ({ ratingKey, title: "" }),
+      getRecentHistory: async ({ user, start, length }) => {
+        callCount++;
+        if (start === 0) {
+          return [
+            { user, ratingKey: "movie-1", mediaType: "movie", title: "The Movie", watchedAt: "2026-05-30T20:00:00.000Z", percentComplete: 95 }
+          ];
+        }
+        return [];
+      }
+    };
+
+    const ingestion = new IngestionService(db, tautulli);
+    
+    const result = await ingestion.backfillHistory(1, 10);
+    assert.equal(result.inserted, 1);
+    assert.equal(callCount, 2);
+
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM playback_observations").get().count, 1);
+
+    const result2 = await ingestion.backfillHistory(1, 10);
+    assert.equal(result2.inserted, 0);
+    assert.equal(result2.skipped, 1);
+  });
+});
+
+test("MetadataService retrieves and caches Plex metadata, handling fallbacks", async () => {
+  await withTestDb(async (db) => {
+    const plex = {
+      getUsers: async () => [],
+      getWatchedState: async () => ({ watched: false, source: "mock" }),
+      markWatched: async () => ({ ok: true, status: "mocked" }),
+      listLibraries: async () => [],
+      listShows: async () => [],
+      getRichMetadataByRatingKey: async (ratingKey) => {
+        if (ratingKey === "movie-1") {
+          return {
+            ratingKey,
+            mediaType: "movie",
+            title: "Movie One",
+            genres: ["Drama"],
+            duration: 6000000,
+            librarySectionID: "1",
+            librarySectionTitle: "Movies"
+          };
+        }
+        throw new Error("Plex lookup failed");
+      }
+    };
+
+    const metadata = new MetadataService(db, plex);
+    
+    const entry = await metadata.getMetadata("movie-1");
+    assert.ok(entry);
+    assert.equal(entry.title, "Movie One");
+    assert.equal(entry.sourceProvenance, "plex");
+
+    const entry2 = await metadata.getMetadata("movie-1");
+    assert.ok(entry2);
+    assert.equal(entry2.title, "Movie One");
+    assert.equal(entry2.sourceProvenance, "plex");
+
+    const entry3 = await metadata.getMetadata("movie-invalid");
+    assert.ok(entry3);
+    assert.equal(entry3.title, "Unknown Media (movie-invalid)");
+    assert.equal(entry3.sourceProvenance, "fallback");
+  });
+});
+
+test("MetadataService Smart Auto-Healing triggers refresh on count discrepancy", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    let fetchCount = 0;
+    const plex = {
+      getUsers: async () => [],
+      getWatchedState: async () => ({ watched: false, source: "mock" }),
+      markWatched: async () => ({ ok: true, status: "mocked" }),
+      listLibraries: async () => [],
+      listShows: async () => [],
+      getRichMetadataByRatingKey: async (ratingKey) => {
+        fetchCount++;
+        return {
+          ratingKey,
+          mediaType: "show",
+          title: "Airing Show",
+          genres: [],
+          leafCount: fetchCount === 1 ? 5 : 8,
+          librarySectionID: "2",
+          librarySectionTitle: "TV Shows"
+        };
+      }
+    };
+
+    const metadata = new MetadataService(db, plex);
+    
+    const show = await metadata.getMetadata("show-1");
+    assert.equal(show.leafCount, 5);
+    assert.equal(fetchCount, 1);
+
+    for (let i = 1; i <= 6; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (
+          user_id, rating_key, media_type, title, grandparent_rating_key, watched_at, completed, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      `).run(1, `episode-${i}`, "episode", `Episode ${i}`, "show-1", `2026-05-30T20:0${i}:00Z`, 1);
+    }
+
+    await metadata.checkAndAutoHealShow("show-1");
+
+    assert.equal(fetchCount, 2);
+    const updatedShow = metadata.getCached("show-1");
+    assert.equal(updatedShow.leafCount, 8);
+  });
+});
+
+test("QueryService filters, orders, and paginates watch history deterministically", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    
+    db.prepare(`
+      INSERT INTO content_catalog (
+        rating_key, media_type, title, genres_json, source_provenance, refreshed_at
+      ) VALUES (?, ?, ?, ?, ?, datetime('now'))
+    `).run("movie-1", "movie", "Drama Movie", JSON.stringify(["Drama"]), "plex");
+    db.prepare(`
+      INSERT INTO content_catalog (
+        rating_key, media_type, title, genres_json, source_provenance, refreshed_at
+      ) VALUES (?, ?, ?, ?, ?, datetime('now'))
+    `).run("movie-2", "movie", "Sci-Fi Movie", JSON.stringify(["Sci-Fi"]), "plex");
+
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, title, watched_at, completed, created_at, updated_at
+      ) VALUES (1, 'movie-1', 'movie', 'Drama Movie', '2026-05-30T10:00:00.000Z', 1, datetime('now'), datetime('now'))
+    `).run();
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, title, watched_at, completed, created_at, updated_at
+      ) VALUES (1, 'movie-2', 'movie', 'Sci-Fi Movie', '2026-05-30T12:00:00.000Z', 1, datetime('now'), datetime('now'))
+    `).run();
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, title, watched_at, completed, created_at, updated_at
+      ) VALUES (1, 'movie-1', 'movie', 'Drama Movie', '2026-05-30T14:00:00.000Z', 0, datetime('now'), datetime('now'))
+    `).run();
+
+    const queryService = new QueryService(db);
+
+    const completedResults = queryService.queryHistory({ user: "Tony", completed: true });
+    assert.equal(completedResults.length, 2);
+    assert.equal(completedResults[0].ratingKey, "movie-2");
+    assert.equal(completedResults[1].ratingKey, "movie-1");
+
+    const dramaResults = queryService.queryHistory({ user: "Tony", genre: "Drama" });
+    assert.equal(dramaResults.length, 2);
+    assert.equal(dramaResults[0].watchedAt, "2026-05-30T14:00:00.000Z");
+
+    const paginatedResults = queryService.queryHistory({ user: "Tony", limit: 1, offset: 0 });
+    assert.equal(paginatedResults.length, 1);
+    assert.equal(paginatedResults[0].watchedAt, "2026-05-30T14:00:00.000Z");
+
+    const paginatedResults2 = queryService.queryHistory({ user: "Tony", limit: 1, offset: 1 });
+    assert.equal(paginatedResults2.length, 1);
+    assert.equal(paginatedResults2[0].watchedAt, "2026-05-30T12:00:00.000Z");
+  });
+});
+
+test("QueryService filters by localDay with timezone offset", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, title, watched_at, completed, created_at, updated_at
+      ) VALUES (1, 'movie-1', 'movie', 'Movie', '2026-05-30T03:00:00.000Z', 1, datetime('now'), datetime('now'))
+    `).run();
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, title, watched_at, completed, created_at, updated_at
+      ) VALUES (1, 'movie-2', 'movie', 'Movie', '2026-05-30T05:00:00.000Z', 1, datetime('now'), datetime('now'))
+    `).run();
+
+    const queryService = new QueryService(db);
+
+    const results = queryService.queryHistory({
+      user: "Tony",
+      localDay: "2026-05-30",
+      timezone: "-04:00"
+    });
+
+    assert.equal(results.length, 1);
+    assert.equal(results[0].ratingKey, "movie-2");
+  });
+});
+
+test("QueryService throws structured validation errors", () => {
+  withTestDb((db) => {
+    const queryService = new QueryService(db);
+    assert.throws(() => {
+      queryService.queryHistory({ localDay: "invalid-date" });
+    }, /Validation Error/);
+  });
+});
+
+test("SummaryService aggregates playback observations into watch progress summaries", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+
+    const plex = {
+      getRichMetadataByRatingKey: async (ratingKey) => {
+        return {
+          ratingKey,
+          mediaType: "show",
+          title: "Mock Show",
+          genres: [],
+          leafCount: 10
+        };
+      }
+    };
+
+    db.prepare(`
+      INSERT INTO content_catalog (
+        rating_key, media_type, title, leaf_count, source_provenance, refreshed_at
+      ) VALUES ('show-1', 'show', 'Mock Show', 10, 'plex', datetime('now'))
+    `).run();
+
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, title, grandparent_rating_key, show_title, watched_at, completed, duration, created_at, updated_at
+      ) VALUES (1, 'episode-1', 'episode', 'Episode 1', 'show-1', 'Mock Show', '2026-05-30T10:00:00.000Z', 1, 1200, datetime('now'), datetime('now'))
+    `).run();
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, title, grandparent_rating_key, show_title, watched_at, completed, duration, created_at, updated_at
+      ) VALUES (1, 'episode-2', 'episode', 'Episode 2', 'show-1', 'Mock Show', '2026-05-30T11:00:00.000Z', 0, 600, datetime('now'), datetime('now'))
+    `).run();
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, title, grandparent_rating_key, show_title, watched_at, completed, duration, created_at, updated_at
+      ) VALUES (1, 'episode-1', 'episode', 'Episode 1', 'show-1', 'Mock Show', '2026-05-30T12:00:00.000Z', 1, 1200, datetime('now'), datetime('now'))
+    `).run();
+
+    const summaryService = new SummaryService(db, plex);
+
+    const summary = summaryService.getWatchSummary({ user: "Tony" });
+
+    assert.equal(summary.user, "Tony");
+    assert.equal(summary.totalPlaybackTimeSeconds, 3000);
+    assert.equal(summary.shows.length, 1);
+
+    const showSummary = summary.shows[0];
+    assert.equal(showSummary.showTitle, "Mock Show");
+    assert.equal(showSummary.distinctEpisodesWatched, 2);
+    assert.equal(showSummary.completedEpisodesWatched, 1);
+    assert.equal(showSummary.totalAvailableEpisodes, 10);
+    assert.equal(showSummary.progressPercent, 10);
+    assert.equal(showSummary.totalPlaybackTimeSeconds, 3000);
+    assert.equal(showSummary.latestWatch.title, "Episode 1");
+  });
+});
+
+test("SessionService groups contiguous plays and splits on gaps", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, title, watched_at, completed, duration, created_at, updated_at
+      ) VALUES (1, 'movie-1', 'movie', 'Movie 1', '2026-05-30T10:20:00.000Z', 1, 1200, datetime('now'), datetime('now'))
+    `).run();
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, title, watched_at, completed, duration, created_at, updated_at
+      ) VALUES (1, 'movie-2', 'movie', 'Movie 2', '2026-05-30T10:45:00.000Z', 1, 1200, datetime('now'), datetime('now'))
+    `).run();
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, title, watched_at, completed, duration, created_at, updated_at
+      ) VALUES (1, 'movie-1', 'movie', 'Movie 1', '2026-05-30T13:30:00.000Z', 1, 1800, datetime('now'), datetime('now'))
+    `).run();
+
+    const sessionService = new SessionService(db);
+
+    const sessions = sessionService.getViewingSessions({ user: "Tony" });
+    assert.equal(sessions.length, 2);
+
+    const session1 = sessions[0];
+    const session2 = sessions[1];
+
+    assert.equal(session1.observations.length, 1);
+    assert.equal(session1.observations[0].ratingKey, "movie-1");
+    assert.equal(session1.playbackDurationSeconds, 1800);
+
+    assert.equal(session2.observations.length, 2);
+    assert.equal(session2.playbackDurationSeconds, 2400);
+    assert.equal(session2.sessionDurationSeconds, 2700);
+
+    const longGapSessions = sessionService.getViewingSessions({ user: "Tony", inactivityGapHours: 3 });
+    assert.equal(longGapSessions.length, 1);
+    assert.equal(longGapSessions[0].observations.length, 3);
+  });
+});
+
+test("SessionService merges overlapping repeat plays", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, title, watched_at, completed, duration, created_at, updated_at
+      ) VALUES (1, 'movie-1', 'movie', 'Movie 1', '2026-05-30T11:00:00.000Z', 1, 3600, datetime('now'), datetime('now'))
+    `).run();
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, title, watched_at, completed, duration, created_at, updated_at
+      ) VALUES (1, 'movie-1', 'movie', 'Movie 1', '2026-05-30T11:30:00.000Z', 1, 3600, datetime('now'), datetime('now'))
+    `).run();
+
+    const sessionService = new SessionService(db);
+    const sessions = sessionService.getViewingSessions({ user: "Tony" });
+
+    assert.equal(sessions.length, 1);
+    const session = sessions[0];
+    assert.equal(session.observations.length, 2);
+    assert.equal(session.playbackDurationSeconds, 5400);
+    assert.equal(session.sessionDurationSeconds, 5400);
+  });
+});
+
+test("CowatchingIntelligenceService infers co-watching from overlapping play times", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+
+    const tonyId = db.prepare("SELECT id FROM users WHERE plex_username = 'Tony'").get().id;
+    const viewerId = db.prepare("SELECT id FROM users WHERE plex_username = 'Viewer'").get().id;
+
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, title, watched_at, completed, duration, created_at, updated_at
+      ) VALUES (?, 'movie-1', 'movie', 'Movie 1', '2026-05-30T11:00:00.000Z', 1, 3600, datetime('now'), datetime('now'))
+    `).run(tonyId);
+
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, title, watched_at, completed, duration, created_at, updated_at
+      ) VALUES (?, 'movie-1', 'movie', 'Movie 1', '2026-05-30T11:03:00.000Z', 1, 3600, datetime('now'), datetime('now'))
+    `).run(viewerId);
+
+    const service = new CowatchingIntelligenceService(db);
+    const events = service.getCowatchingEvents({ days: 100 });
+
+    assert.equal(events.length, 1);
+    const event = events[0];
+    assert.equal(event.ratingKey, "movie-1");
+
+    const tony = event.participants.find(p => p.userId === tonyId);
+    const viewer = event.participants.find(p => p.userId === viewerId);
+
+    assert.equal(tony.role, "source");
+    assert.equal(tony.evidenceState, "observed");
+
+    assert.equal(viewer.role, "target");
+    assert.equal(viewer.evidenceState, "inferred");
+    assert.ok(viewer.confidence > 0.8);
+    assert.ok(viewer.reason.includes("Inferred co-watching"));
+  });
+});
+
+test("CowatchingIntelligenceService respects explicit Discord confirmations", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+
+    const tonyId = db.prepare("SELECT id FROM users WHERE plex_username = 'Tony'").get().id;
+    const viewerId = db.prepare("SELECT id FROM users WHERE plex_username = 'Viewer'").get().id;
+
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, title, watched_at, completed, duration, created_at, updated_at
+      ) VALUES (?, 'movie-1', 'movie', 'Movie 1', '2026-05-30T11:00:00.000Z', 1, 3600, datetime('now'), datetime('now'))
+    `).run(tonyId);
+
+    db.prepare(`
+      INSERT INTO watch_events (
+        source_user_id, rating_key, media_type, title, watched_at, prompt_status, created_at, updated_at
+      ) VALUES (?, 'movie-1', 'movie', 'Movie 1', '2026-05-30T10:00:00.000Z', 'prompted', datetime('now'), datetime('now'))
+    `).run(tonyId);
+
+    const watchEventId = db.prepare("SELECT last_insert_rowid() as id").get().id;
+
+    db.prepare(`
+      INSERT INTO cowatch_confirmations (
+        watch_event_id, target_user_id, status, confirmation_method, created_at, updated_at
+      ) VALUES (?, ?, 'confirmed', 'discord_prompt', datetime('now'), datetime('now'))
+    `).run(watchEventId, viewerId);
+
+    db.prepare(`
+      INSERT INTO users (
+        plex_username, plex_user_id, display_name, enabled, created_at, updated_at
+      ) VALUES ('user3', 'user3-id', 'User 3', 1, datetime('now'), datetime('now'))
+    `).run();
+    const user3Id = db.prepare("SELECT last_insert_rowid() as id").get().id;
+
+    db.prepare(`
+      INSERT INTO cowatch_confirmations (
+        watch_event_id, target_user_id, status, confirmation_method, created_at, updated_at
+      ) VALUES (?, ?, 'dismissed', 'discord_prompt', datetime('now'), datetime('now'))
+    `).run(watchEventId, user3Id);
+
+    const service = new CowatchingIntelligenceService(db);
+    const events = service.getCowatchingEvents({ days: 100 });
+
+    assert.equal(events.length, 1);
+    const event = events[0];
+
+    const viewer = event.participants.find(p => p.userId === viewerId);
+    const user3 = event.participants.find(p => p.userId === user3Id);
+
+    assert.equal(viewer.evidenceState, "confirmed");
+    assert.equal(viewer.confidence, 1.0);
+
+    assert.equal(user3.evidenceState, "dismissed");
+    assert.equal(user3.confidence, 0.0);
+  });
 });
 
 let passed = 0;

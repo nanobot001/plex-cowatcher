@@ -47,9 +47,15 @@ export class HistoryCopyService {
         throw new AppError("TARGET_USER_NOT_FOUND", "One or more target users are not configured", { targetUsers: input.targetUsers });
       }
 
-      // Fetch with length: 500 for broader scan window coverage
+      // Fetch with length: 10000 for broader scan window coverage
       // Pass section_id (libraryKey) to Tautulli for server-side library filtering
-      const history = (await this.tautulli.getRecentHistory({ user: input.sourceUser, length: 500, section_id: input.filters?.libraryKey || undefined })).filter((item) => {
+      // Pass search (showTitle) to Tautulli for server-side title filtering
+      const history = (await this.tautulli.getRecentHistory({ 
+        user: input.sourceUser, 
+        length: 10000, 
+        section_id: input.filters?.libraryKey || undefined,
+        search: input.filters?.showTitle || undefined
+      })).filter((item) => {
         // Exclude audio tracks (audiobooks, music) — not useful for watch-state copying
         if (item.mediaType === "track") return false;
         if (input.filters?.mediaType && item.mediaType !== input.filters.mediaType) return false;

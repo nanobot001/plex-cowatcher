@@ -1,9 +1,10 @@
-import type { MarkWatchedResult, PlexMetadata, PlexUser, WatchedState } from "../types/index.js";
+import type { MarkWatchedResult, PlexMetadata, PlexRichMetadata, PlexUser, WatchedState } from "../types/index.js";
 import { appConfig } from "../utils/config.js";
 
 export interface PlexAdapter {
   listUsers(): Promise<PlexUser[]>;
   getMetadataByRatingKey(ratingKey: string, plexGuid?: string): Promise<PlexMetadata>;
+  getRichMetadataByRatingKey(ratingKey: string, plexGuid?: string): Promise<PlexRichMetadata>;
   getWatchedState(userId: string, ratingKey: string, plexGuid?: string): Promise<WatchedState>;
   markWatched(userId: string, ratingKey: string, plexGuid?: string): Promise<MarkWatchedResult>;
   listLibraries(): Promise<Array<{ key: string; title: string; type: string }>>;
@@ -29,6 +30,43 @@ export class MockPlexAdapter implements PlexAdapter {
 
   async getMetadataByRatingKey(ratingKey: string, _plexGuid?: string): Promise<PlexMetadata> {
     return { ratingKey, title: `Mock metadata ${ratingKey}`, mediaType: "unknown" };
+  }
+
+  async getRichMetadataByRatingKey(ratingKey: string, _plexGuid?: string): Promise<PlexRichMetadata> {
+    if (ratingKey.startsWith("show-")) {
+      return {
+        ratingKey,
+        mediaType: "show",
+        title: "Mock Show",
+        genres: ["Comedy", "Drama"],
+        leafCount: 24,
+        librarySectionID: "2",
+        librarySectionTitle: "TV Shows"
+      };
+    }
+    if (ratingKey.startsWith("episode-")) {
+      return {
+        ratingKey,
+        mediaType: "episode",
+        title: "Mock Episode",
+        genres: [],
+        duration: 1200000,
+        librarySectionID: "2",
+        librarySectionTitle: "TV Shows",
+        grandparentRatingKey: "show-1",
+        grandparentTitle: "Mock Show",
+        parentRatingKey: "season-1"
+      };
+    }
+    return {
+      ratingKey,
+      mediaType: "movie",
+      title: "Mock Movie",
+      genres: ["Action", "Sci-Fi"],
+      duration: 7200000,
+      librarySectionID: "1",
+      librarySectionTitle: "Movies"
+    };
   }
 
   async getWatchedState(_userId: string, _ratingKey: string, _plexGuid?: string): Promise<WatchedState> {
@@ -217,9 +255,31 @@ export class HttpPlexAdapter extends MockPlexAdapter {
       throw new PlexAdapterError("PLEX_TOKEN_MISSING", "Plex token is not configured.", "missing_permission");
     }
 
-    const response = await plexFetch("/accounts");
-    if (!response.ok) throw plexErrorFromResponse(response, "PLEX_USER_LIST_FAILED", "Plex user listing failed.");
-    return parsePlexUsers(await response.text());
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const url = new URL("https://plex.tv/api/v2/home/users");
+      url.searchParams.set("X-Plex-Token", appConfig.PLEX_TOKEN);
+      url.searchParams.set("X-Plex-Client-Identifier", "plex-cowatch-sync");
+      const response = await fetch(url, { signal: controller.signal });
+      
+      if (!response.ok) {
+        // Fallback to local accounts if home users endpoint fails (e.g., no Plex Home)
+        const fallbackResponse = await plexFetch("/accounts");
+        if (!fallbackResponse.ok) {
+          throw plexErrorFromResponse(fallbackResponse, "PLEX_USER_LIST_FAILED", "Plex user listing failed.");
+        }
+        return parsePlexUsers(await fallbackResponse.text());
+      }
+      return parsePlexUsers(await response.text());
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new PlexAdapterError("PLEX_TIMEOUT", "Plex request timed out.", "timeout", true);
+      }
+      throw new PlexAdapterError("PLEX_REQUEST_FAILED", error instanceof Error ? error.message : "Plex request failed.", "plex_failure", true);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async getMetadataByRatingKey(ratingKey: string, plexGuid?: string): Promise<PlexMetadata> {
@@ -364,6 +424,55 @@ export class HttpPlexAdapter extends MockPlexAdapter {
     }
   }
 
+  async getRichMetadataByRatingKey(ratingKey: string, plexGuid?: string): Promise<PlexRichMetadata> {
+    if (!appConfig.PLEX_TOKEN) {
+      throw new PlexAdapterError("PLEX_TOKEN_MISSING", "Plex token is not configured.", "missing_permission", false, { ratingKey });
+    }
+
+    let activeKey = ratingKey;
+    let response = await plexFetch(`/library/metadata/${encodeURIComponent(activeKey)}`);
+    if (!response.ok && response.status === 404 && plexGuid) {
+      activeKey = await this.resolveActiveRatingKey(ratingKey, plexGuid);
+      if (activeKey !== ratingKey) {
+        response = await plexFetch(`/library/metadata/${encodeURIComponent(activeKey)}`);
+      }
+    }
+
+    if (!response.ok) throw plexErrorFromResponse(response, "PLEX_METADATA_LOOKUP_FAILED", "Plex metadata lookup failed.", { ratingKey: activeKey });
+
+    const xml = await response.text();
+    const tag = firstMediaTag(xml);
+    if (!tag) {
+      throw new PlexAdapterError("PLEX_NO_MATCHING_MEDIA", "No matching Plex media was found for the rating key.", "no_matching_media", false, { ratingKey: activeKey });
+    }
+
+    const mediaType = attr(tag, "type") ?? "unknown";
+    const genres = parseGenres(xml);
+
+    const metadata: PlexRichMetadata = {
+      ratingKey: activeKey,
+      guid: attr(tag, "guid"),
+      mediaType,
+      title: attr(tag, "title") ?? attr(tag, "grandparentTitle") ?? activeKey,
+      duration: attr(tag, "duration") ? Number(attr(tag, "duration")) : undefined,
+      librarySectionID: attr(tag, "librarySectionID"),
+      librarySectionTitle: attr(tag, "librarySectionTitle"),
+      genres,
+      grandparentRatingKey: attr(tag, "grandparentRatingKey"),
+      grandparentGuid: attr(tag, "grandparentGuid"),
+      grandparentTitle: attr(tag, "grandparentTitle"),
+      parentRatingKey: attr(tag, "parentRatingKey"),
+      parentGuid: attr(tag, "parentGuid"),
+      parentTitle: attr(tag, "parentTitle")
+    };
+
+    if (mediaType === "show") {
+      metadata.leafCount = attr(tag, "leafCount") ? Number(attr(tag, "leafCount")) : undefined;
+    }
+
+    return metadata;
+  }
+
   async resolveActiveRatingKey(originalRatingKey: string, plexGuid?: string): Promise<string> {
     if (!plexGuid) return originalRatingKey;
     try {
@@ -463,7 +572,7 @@ function plexErrorFromResponse(response: Response, fallbackCode: string, fallbac
 
 function parsePlexUsers(xml: string): PlexUser[] {
   const users: PlexUser[] = [];
-  const accountTags = xml.match(/<(?:Account|User)\b[^>]*>/g) ?? [];
+  const accountTags = xml.match(/<(?:Account|User)\b[^>]*>/ig) ?? [];
   for (const tag of accountTags) {
     const id = attr(tag, "id") ?? attr(tag, "key");
     const username = attr(tag, "username") ?? attr(tag, "title") ?? attr(tag, "name");
@@ -473,11 +582,31 @@ function parsePlexUsers(xml: string): PlexUser[] {
   return users;
 }
 
+function parseGenres(xml: string): string[] {
+  const matches = xml.match(/<Genre\b[^>]*\btag="([^"]*)"/g) ?? [];
+  return matches.map(m => {
+    const val = m.match(/tag="([^"]*)"/)?.[1] ?? "";
+    return unescapeXml(val);
+  }).filter(Boolean);
+}
+
 function firstMediaTag(xml: string): string | undefined {
   return xml.match(/<(?:Video|Directory|Track)\b[^>]*>/)?.[0];
 }
 
+function unescapeXml(str: string): string {
+  return str
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&#x([a-fA-F0-9]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
+
 function attr(tag: string, name: string): string | undefined {
   const pattern = new RegExp(`${name}="([^"]*)"`);
-  return tag.match(pattern)?.[1];
+  const match = tag.match(pattern)?.[1];
+  return match ? unescapeXml(match) : undefined;
 }

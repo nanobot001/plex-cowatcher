@@ -1,6 +1,10 @@
 import type { Router } from "express";
+import path from "node:path";
 
 export function registerWebRoutes(router: Router): void {
+  router.get("/manifest.json", (_req, res) => res.sendFile(path.resolve("src/web/static/manifest.json")));
+  router.get("/sw.js", (_req, res) => res.sendFile(path.resolve("src/web/static/sw.js")));
+
   router.get("/", (_req, res) => {
     res.type("html").send(renderPage("Dashboard", `
       <section class="band">
@@ -591,8 +595,19 @@ function renderPage(title: string, body: string): string {
     <head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1">
+      <meta name="theme-color" content="#e5a00d">
+      <link rel="manifest" href="/manifest.json">
+      <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+      <link rel="apple-touch-icon" href="/static/icon.svg">
       <title>${title} - Plex Co-Watch Sync</title>
       <link rel="stylesheet" href="/static/styles.css">
+      <script>
+        if ('serviceWorker' in navigator) {
+          window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw.js').catch(err => console.error('SW registration failed:', err));
+          });
+        }
+      </script>
     </head>
     <body>
       <nav><strong>Plex Co-Watch Sync</strong><a href="/">Dashboard</a><a href="/copy">Copy History</a><a href="/audit">Audit</a></nav>

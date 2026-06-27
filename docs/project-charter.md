@@ -39,6 +39,10 @@ The MVP is **Phase 1** of the roadmap. The current scaffold is the **foundation 
 
 ## Future Goals
 
+- Retain richer playback evidence than Plex watched flags, including who watched, when, and how much.
+- Let trusted local scripts query watch history by person, exact content, media type or genre, and household-local time.
+- Calculate show progress without confusing repeated plays with distinct episodes watched.
+- Reconstruct viewing sessions and distinguish explicit confirmation from co-watching inference.
 - Better matching for renamed or migrated media.
 - CSV export/import for history copy previews.
 - Per-user Discord DM prompts.
@@ -46,6 +50,12 @@ The MVP is **Phase 1** of the roadmap. The current scaffold is the **foundation 
 - Richer browser copy-history UI with search, pagination, and bulk review ergonomics.
 - Restart-after-reboot documentation for Windows.
 - Supervisor-bot or future MCP-style wrapper integration.
+
+## Phase 2 MVP Definition
+
+Phase 2 makes Plex CoWatcher a local watch-history intelligence service for other scripts. It is complete when blocks `2-1` through `2-6` are implemented and verified: rich playback evidence is captured for enabled configured users; content has stable queryable identity and classification; CLI and HTTP callers can combine person, exact content, type or genre, and household-local time filters; summaries explain how much was watched; viewing sessions are reproducible; and co-watching results clearly separate observed playback, human confirmation, synchronized Plex state, and inference.
+
+Phase 2 remains read-oriented. Inferred participation must never trigger Plex watched-state mutation, and missing evidence must remain unknown rather than being converted into a confident fact.
 
 ## Success Criteria
 
@@ -96,6 +106,7 @@ When a block creates durable project knowledge, update the relevant docs area so
 - Roadmap: `docs/roadmap.md`
 - Project definition block: `docs/blocks/completed/block-00-project-definition.md`
 - Next MVP block: `docs/blocks/block-1-4-plex-watched-state-verification.md`
+- Phase 2 starts after Phase 1 acceptance with `docs/blocks/block-2-1-rich-playback-evidence-capture.md`.
 
 ## Document Map
 

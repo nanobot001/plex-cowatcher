@@ -36,7 +36,7 @@ export class HttpTautulliAdapter implements TautulliAdapter {
 
   async getRecentHistory(params: RecentHistoryParams): Promise<TautulliHistoryRow[]> {
     if (!appConfig.TAUTULLI_API_KEY) return [];
-    const json = await this.getJson(this.buildUrl("get_history", { user: params.user, length: params.length ?? 100, section_id: params.section_id }));
+    const json = await this.getJson(this.buildUrl("get_history", { user: params.user, length: params.length ?? 100, start: params.start, section_id: params.section_id, search: params.search }));
     const rows: Record<string, unknown>[] = Array.isArray(json.response?.data?.data) ? json.response.data.data : [];
     return rows.map(normalizeTautulliHistoryRow).filter((row) => row.user && row.ratingKey);
   }
@@ -94,7 +94,26 @@ function watchedAtIso(value: unknown): string {
   return new Date().toISOString();
 }
 
+function sanitizeTitle(value: unknown): string {
+  const str = optionalString(value);
+  if (!str) return "";
+  return str
+    .replace(/\s+/g, " ")
+    .replace(/\s*Narrated by:.*$/i, "")
+    .trim();
+}
+
+function sanitizeShowTitle(value: unknown): string | undefined {
+  const str = optionalString(value);
+  if (!str) return undefined;
+  return sanitizeTitle(str) || undefined;
+}
+
 export function normalizeTautulliHistoryRow(row: Record<string, unknown>): TautulliHistoryRow {
+  const hasDate = row.date !== undefined && row.date !== null && row.date !== "";
+  const hasStopped = row.stopped !== undefined && row.stopped !== null && row.stopped !== "";
+  const hasPercentComplete = row.percent_complete !== undefined && row.percent_complete !== null && row.percent_complete !== "";
+
   return {
     rowId: optionalString(row.row_id),
     user: String(row.user ?? row.username ?? ""),
@@ -104,12 +123,14 @@ export function normalizeTautulliHistoryRow(row: Record<string, unknown>): Tautu
     plexGuid: optionalString(row.guid),
     mediaType: String(row.media_type ?? row.media_type_full ?? "unknown"),
     libraryName: optionalString(row.library_name ?? row.section_name),
-    title: String(row.title ?? ""),
-    showTitle: optionalString(row.grandparent_title),
+    title: sanitizeTitle(row.title),
+    showTitle: sanitizeShowTitle(row.grandparent_title),
     seasonNumber: optionalNumber(row.parent_media_index),
     episodeNumber: optionalNumber(row.media_index),
     watchedAt: watchedAtIso(row.date ?? row.stopped),
+    watchedAtProvenance: (hasDate || hasStopped) ? "source" : "fallback",
     percentComplete: optionalNumber(row.percent_complete),
+    percentCompleteProvenance: hasPercentComplete ? "source" : "unknown",
     viewOffset: optionalNumber(row.view_offset),
     duration: optionalNumber(row.duration),
     completed: optionalBoolean(row.completed ?? row.watched_status)

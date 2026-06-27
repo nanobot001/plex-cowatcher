@@ -1,12 +1,14 @@
 import express from "express";
 import path from "node:path";
 import { createPlexAdapter } from "../adapters/plexAdapter.js";
+import { createTautulliAdapter } from "../adapters/tautulliAdapter.js";
 import { openMigratedDatabase } from "../db/database.js";
 import { DiscordBot } from "../discord/bot.js";
 import { CowatchService } from "../service/cowatchService.js";
 import { SyncService } from "../service/syncService.js";
 import { appConfig } from "../utils/config.js";
 import { log } from "../utils/logger.js";
+import { WatcherService } from "../watcher/watcher.js";
 import { registerWebRoutes } from "../web/index.js";
 import { buildRouter } from "./routes.js";
 
@@ -26,7 +28,9 @@ export function createApp() {
   return app;
 }
 
-if (process.argv[1]?.endsWith("app.js") || process.argv[1]?.endsWith("app.ts")) {
+console.log("process.argv in app.ts:", process.argv);
+const isMain = process.argv[1]?.endsWith("app.js") || process.argv[1]?.endsWith("app.ts") || process.env.pm_id !== undefined;
+if (isMain) {
   const app = createApp();
   app.listen(appConfig.APP_PORT, appConfig.APP_HOST, () => {
     log("info", {
@@ -34,6 +38,7 @@ if (process.argv[1]?.endsWith("app.js") || process.argv[1]?.endsWith("app.ts")) 
       message: `Plex Co-Watch Sync listening at http://${appConfig.APP_HOST}:${appConfig.APP_PORT}`
     });
   });
+  void startWatcherRuntime(app.locals.db);
   void startDiscordRuntime(app.locals.db);
 }
 
@@ -60,4 +65,31 @@ async function startDiscordRuntime(db: ReturnType<typeof openMigratedDatabase>):
       message: error instanceof Error ? error.message : String(error)
     });
   }
+}
+
+async function startWatcherRuntime(db: ReturnType<typeof openMigratedDatabase>): Promise<void> {
+  if (!appConfig.TAUTULLI_API_KEY) return;
+  
+  const { IngestionService } = await import("../service/ingestionService.js");
+  const { MetadataService } = await import("../service/metadataService.js");
+  const { createPlexAdapter } = await import("../adapters/plexAdapter.js");
+  
+  const plex = createPlexAdapter();
+  const tautulli = createTautulliAdapter();
+  const metadata = new MetadataService(db, plex);
+  const ingestion = new IngestionService(db, tautulli, metadata);
+  
+  const poll = async () => {
+    try {
+      const { inserted } = await ingestion.pollRecentHistory();
+      if (inserted > 0) {
+        log("info", { action: "watcher_poll", message: `Ingested ${inserted} new playback observations from Tautulli` });
+      }
+    } catch (error) {
+      log("error", { action: "watcher_poll_error", message: error instanceof Error ? error.message : String(error) });
+    }
+  };
+  
+  await poll();
+  setInterval(() => void poll(), Math.max(10, appConfig.POLL_INTERVAL_SECONDS) * 1000);
 }
