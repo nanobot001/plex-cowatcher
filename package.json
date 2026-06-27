@@ -14,7 +14,8 @@
     "cli": "npm run build && node dist/cli/cli.js",
     "test": "npm run build && node tests/launch-tests.mjs",
     "db:init": "npm run build && node dist/db/init.js",
-    "discord:test-prompt": "npm run build && node dist/cli/cli.js test-discord-prompt"
+    "discord:test-prompt": "npm run build && node dist/cli/cli.js test-discord-prompt",
+    "verify:tools": "node scripts/verify-tools.js"
   },
   "dependencies": {
     "discord.js": "^14.17.3",

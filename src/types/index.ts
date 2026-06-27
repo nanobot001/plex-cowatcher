@@ -43,6 +43,24 @@ export interface PlexMetadata {
   guid?: string;
 }
 
+export interface PlexRichMetadata {
+  ratingKey: string;
+  guid?: string;
+  mediaType: string;
+  title: string;
+  duration?: number;
+  librarySectionID?: string;
+  librarySectionTitle?: string;
+  genres: string[];
+  grandparentRatingKey?: string;
+  grandparentGuid?: string;
+  grandparentTitle?: string;
+  parentRatingKey?: string;
+  parentGuid?: string;
+  parentTitle?: string;
+  leafCount?: number;
+}
+
 export interface WatchedState {
   watched: boolean;
   source: "plex" | "mock";
@@ -72,7 +90,9 @@ export interface RecentHistoryParams {
   user?: string;
   days?: number;
   length?: number;
+  start?: number;
   section_id?: string;
+  search?: string;
 }
 
 export interface TautulliHistoryRow {
@@ -89,10 +109,37 @@ export interface TautulliHistoryRow {
   seasonNumber?: number;
   episodeNumber?: number;
   watchedAt: string;
+  watchedAtProvenance?: "source" | "fallback";
   percentComplete?: number;
+  percentCompleteProvenance?: "source" | "unknown";
   viewOffset?: number;
   duration?: number;
   completed?: boolean;
+}
+
+export interface PlaybackObservation {
+  id?: number;
+  userId: number;
+  tautulliRowId?: string;
+  ratingKey: string;
+  grandparentRatingKey?: string;
+  parentRatingKey?: string;
+  plexGuid?: string;
+  mediaType: string;
+  libraryName?: string;
+  title: string;
+  showTitle?: string;
+  seasonNumber?: number;
+  episodeNumber?: number;
+  watchedAt: string;
+  watchedAtProvenance?: string;
+  percentComplete?: number;
+  percentCompleteProvenance?: string;
+  viewOffset?: number;
+  duration?: number;
+  completed: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ServiceResult<T = JsonRecord> {

@@ -10,6 +10,19 @@ The MVP is **Phase 1**. Implement the Phase 1 blocks in order:
 
 Phase 1 is complete when both MVP workflows are verified end to end: Discord co-watch confirmation and preview-first history copy.
 
+## Phase 2 MVP: Watch History Intelligence
+
+After Phase 1 acceptance, implement the Phase 2 blocks in order:
+
+- `block-2-1-rich-playback-evidence-capture.md`
+- `block-2-2-content-metadata-catalog.md`
+- `block-2-3-watch-history-query-api.md`
+- `block-2-4-watch-progress-summaries.md`
+- `block-2-5-viewing-session-reconstruction.md`
+- `block-2-6-cowatching-intelligence.md`
+
+Phase 2 is complete when Plex CoWatcher can retain rich playback evidence for configured users; answer structured queries by person, exact content, media type or genre, and household-local time; calculate explainable watch progress; and distinguish confirmed co-watching from time-based inference.
+
 ## Completed And Historical Blocks
 
 - `completed/block-00-project-definition.md`

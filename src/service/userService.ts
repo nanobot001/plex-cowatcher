@@ -199,6 +199,12 @@ export class UserService {
       .all() as { id: number; plex_username: string }[];
   }
 
+  listEnabledUsers(): { id: number; plex_username: string }[] {
+    return this.db
+      .prepare("SELECT id, plex_username FROM users WHERE enabled = 1 ORDER BY display_name ASC")
+      .all() as { id: number; plex_username: string }[];
+  }
+
   findById(id: number): { id: number; plex_user_id: string | null; plex_username: string; display_name: string } | undefined {
     return this.db.prepare("SELECT * FROM users WHERE id = ? AND enabled = 1").get(id) as
       | { id: number; plex_user_id: string | null; plex_username: string; display_name: string }

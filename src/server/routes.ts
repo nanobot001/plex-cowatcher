@@ -8,6 +8,10 @@ import { HealthService } from "../service/healthService.js";
 import { HistoryCopyService } from "../service/historyCopyService.js";
 import { SyncService } from "../service/syncService.js";
 import { UserService } from "../service/userService.js";
+import { QueryService } from "../service/queryService.js";
+import { SummaryService } from "../service/summaryService.js";
+import { SessionService } from "../service/sessionService.js";
+import { CowatchingIntelligenceService } from "../service/cowatchingIntelligenceService.js";
 import { parseDays } from "../utils/time.js";
 
 export function buildRouter(db: Db): Router {
@@ -20,6 +24,10 @@ export function buildRouter(db: Db): Router {
   const users = new UserService(db);
   const cowatch = new CowatchService(db, sync);
   const historyCopy = new HistoryCopyService(db, tautulli, sync, plex);
+  const queryService = new QueryService(db);
+  const summaryService = new SummaryService(db, plex);
+  const sessionService = new SessionService(db);
+  const cowatchingIntelligenceService = new CowatchingIntelligenceService(db);
 
   users.syncConfiguredUsers();
   (async () => {
@@ -110,6 +118,58 @@ export function buildRouter(db: Db): Router {
   router.post("/api/sync/retry-failed", (_req, res) => {
     audit.record("retry_failed_syncs", "api", "not_implemented", { reason: "Adapter-backed retry queue scaffolded for MVP" });
     res.json({ ok: true, data: { retried: 0, note: "Retry queue scaffolded; live retry implementation waits for Plex verification." } });
+  });
+
+  router.get("/api/watch-history", (req, res, next) => {
+    try {
+      const results = queryService.queryHistory(req.query);
+      res.json({ ok: true, history: results });
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Validation Error:")) {
+        res.status(400).json({ ok: false, errorCode: "VALIDATION_ERROR", message: error.message });
+      } else {
+        next(error);
+      }
+    }
+  });
+
+  router.get("/api/watch-summary", (req, res, next) => {
+    try {
+      const result = summaryService.getWatchSummary(req.query);
+      res.json({ ok: true, ...result });
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Validation Error:")) {
+        res.status(400).json({ ok: false, errorCode: "VALIDATION_ERROR", message: error.message });
+      } else {
+        next(error);
+      }
+    }
+  });
+
+  router.get("/api/viewing-sessions", (req, res, next) => {
+    try {
+      const results = sessionService.getViewingSessions(req.query);
+      res.json({ ok: true, sessions: results });
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Validation Error:")) {
+        res.status(400).json({ ok: false, errorCode: "VALIDATION_ERROR", message: error.message });
+      } else {
+        next(error);
+      }
+    }
+  });
+
+  router.get("/api/cowatching", (req, res, next) => {
+    try {
+      const results = cowatchingIntelligenceService.getCowatchingEvents(req.query);
+      res.json({ ok: true, events: results });
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Validation Error:")) {
+        res.status(400).json({ ok: false, errorCode: "VALIDATION_ERROR", message: error.message });
+      } else {
+        next(error);
+      }
+    }
   });
 
   return router;

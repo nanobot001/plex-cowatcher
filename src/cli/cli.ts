@@ -38,6 +38,127 @@ async function main(): Promise<void> {
     case "health":
       print(new HealthService(db).getHealth());
       break;
+    case "ingest":
+      {
+        const { IngestionService } = await import("../service/ingestionService.js");
+        const ingestion = new IngestionService(db, tautulli);
+        const result = await ingestion.pollRecentHistory(arg("length") ? Number(arg("length")) : 100);
+        print({ ok: true, ...result });
+      }
+      break;
+    case "refresh-catalog":
+      {
+        const { MetadataService } = await import("../service/metadataService.js");
+        const metadataService = new MetadataService(db, plex);
+        const ratingKey = arg("rating-key") || arg("show");
+        if (!ratingKey) {
+          print({ ok: false, message: "Provide --rating-key or --show" });
+          break;
+        }
+        const result = await metadataService.refreshMetadata(ratingKey);
+        print({ ok: true, metadata: result });
+      }
+      break;
+    case "watch-history":
+      {
+        const { QueryService } = await import("../service/queryService.js");
+        const queryService = new QueryService(db);
+        try {
+          const results = queryService.queryHistory({
+            user: arg("user"),
+            ratingKey: arg("rating-key"),
+            showRatingKey: arg("show"),
+            mediaType: arg("media-type"),
+            genre: arg("genre"),
+            localDay: arg("local-day"),
+            dateFrom: arg("date-from"),
+            dateTo: arg("date-to"),
+            timezone: arg("timezone"),
+            completed: arg("completed"),
+            limit: arg("limit"),
+            offset: arg("offset")
+          });
+          print({ ok: true, history: results });
+        } catch (error) {
+          print({ ok: false, message: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      break;
+    case "watch-summary":
+      {
+        const { SummaryService } = await import("../service/summaryService.js");
+        const summaryService = new SummaryService(db, plex);
+        try {
+          const result = summaryService.getWatchSummary({
+            user: arg("user"),
+            showRatingKey: arg("show"),
+            localDay: arg("local-day"),
+            dateFrom: arg("date-from"),
+            dateTo: arg("date-to"),
+            timezone: arg("timezone"),
+            days: arg("days")
+          });
+          print({ ok: true, ...result });
+        } catch (error) {
+          print({ ok: false, message: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      break;
+    case "viewing-sessions":
+      {
+        const { SessionService } = await import("../service/sessionService.js");
+        const sessionService = new SessionService(db);
+        try {
+          const results = sessionService.getViewingSessions({
+            user: arg("user"),
+            dateFrom: arg("date-from"),
+            dateTo: arg("date-to"),
+            timezone: arg("timezone"),
+            days: arg("days"),
+            inactivityGapHours: arg("inactivity-gap")
+          });
+          print({ ok: true, sessions: results });
+        } catch (error) {
+          print({ ok: false, message: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      break;
+    case "cowatching":
+      {
+        const { CowatchingIntelligenceService } = await import("../service/cowatchingIntelligenceService.js");
+        const service = new CowatchingIntelligenceService(db);
+        try {
+          const results = service.getCowatchingEvents({
+            days: arg("days"),
+            dateFrom: arg("date-from"),
+            dateTo: arg("date-to"),
+            timezone: arg("timezone"),
+            maxStartGapMinutes: arg("max-start-gap")
+          });
+          print({ ok: true, events: results });
+        } catch (error) {
+          print({ ok: false, message: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      break;
+    case "backfill":
+      {
+        const { IngestionService } = await import("../service/ingestionService.js");
+        const ingestion = new IngestionService(db, tautulli);
+        let targetId: number | undefined;
+        const username = arg("user");
+        if (username) {
+          const userRecord = users.findByUsername(username);
+          if (!userRecord) {
+            print({ ok: false, message: `User ${username} not found or not enabled` });
+            break;
+          }
+          targetId = userRecord.id;
+        }
+        const result = await ingestion.backfillHistory(targetId, arg("page-size") ? Number(arg("page-size")) : 200);
+        print({ ok: true, ...result });
+      }
+      break;
     case "users":
       print({ ok: true, users: users.listConfigured() });
       break;

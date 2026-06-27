@@ -74,3 +74,61 @@ tools:
           description: Optional logical log source name, not a local file path.
     output_schema:
       type: object
+
+  - name: project.watch_history
+    risk: public_read
+    description: Query normalized playback observations and watch history.
+    input_schema:
+      type: object
+      properties:
+        user:
+          type: string
+        media_type:
+          type: string
+        completed:
+          type: boolean
+        limit:
+          type: integer
+        offset:
+          type: integer
+    output_schema:
+      type: object
+
+  - name: project.watch_summary
+    risk: public_read
+    description: Query daily watch summaries and show progress.
+    input_schema:
+      type: object
+      properties:
+        user:
+          type: string
+        days:
+          type: integer
+    output_schema:
+      type: object
+
+  - name: project.viewing_sessions
+    risk: public_read
+    description: Group playback observations into contiguous viewing sessions.
+    input_schema:
+      type: object
+      properties:
+        user:
+          type: string
+        days:
+          type: integer
+        inactivity_gap:
+          type: number
+    output_schema:
+      type: object
+
+  - name: project.cowatching
+    risk: public_read
+    description: Infer co-watching using proximity and explicit confirmation.
+    input_schema:
+      type: object
+      properties:
+        days:
+          type: integer
+    output_schema:
+      type: object

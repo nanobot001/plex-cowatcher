@@ -77,6 +77,15 @@ node dist/cli/cli.js apply-copy --job 42 --pretty
 node dist/cli/cli.js audit --days 7 --pretty
 node dist/cli/cli.js retry-failed --pretty
 node dist/cli/cli.js verify-plex-watched-state --target-plex-user-id Ian --rating-key 12345 --pretty
+
+# Phase 2 playback observations, ingestion, metadata catalog, and query APIs
+node dist/cli/cli.js ingest --pretty
+node dist/cli/cli.js backfill --user Tony --pages 3 --pretty
+node dist/cli/cli.js refresh-catalog --show 12345 --pretty
+node dist/cli/cli.js watch-history --user Tony --limit 5 --pretty
+node dist/cli/cli.js watch-summary --user Tony --days 7 --pretty
+node dist/cli/cli.js viewing-sessions --user Tony --days 7 --pretty
+node dist/cli/cli.js cowatching --days 7 --pretty
 ```
 
 `verify-plex-watched-state` is the guided Block 1-4 check for Plex user listing, metadata lookup, and watched-state lookup. Add `--mark-watched` only with a known safe media item after confirming the target account/token model. The current live mutation path returns `unsupported_mutation` instead of writing watched state because per-target Plex mutation has not been verified for this household setup.

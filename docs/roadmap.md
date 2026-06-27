@@ -84,11 +84,39 @@ Make the MVP dependable enough for daily household use.
 - Add operational troubleshooting for Discord, Tautulli, Plex, SQLite, and port conflicts.
 - Run the MVP manual acceptance checklist.
 
-## Phase 2: Post-MVP Enhancements
+## Phase 2: Watch History Intelligence MVP
+
+Phase 2 turns Plex CoWatcher into a durable, tool-friendly source of household watch-history intelligence. It captures richer playback evidence than Plex's current watched flag, supports composable queries, calculates progress, reconstructs sessions, and keeps confirmed participation separate from inference.
+
+### Block 2-1: Rich Playback Evidence Capture
+
+Persist completed and partial playback evidence for every enabled configured Plex user while preserving Phase 1 prompt behavior for source users.
+
+### Block 2-2: Content Metadata Catalog
+
+Create stable movie/show/season/episode identities and cache media type, genre, hierarchy, durations, and known episode totals.
+
+### Block 2-3: Watch History Query API
+
+Expose shared CLI and HTTP queries filterable by person, exact content or show, media type, genre, household-local day, range, and completion state.
+
+### Block 2-4: Watch Progress Summaries
+
+Provide per-show, per-person, and per-day summaries covering distinct and repeated plays, partial/completed viewing, time watched, and progress against known episode totals.
+
+### Block 2-5: Viewing Session Reconstruction
+
+Group playback observations into deterministic, explainable per-user viewing sessions with explicit interval quality and uncertainty.
+
+### Block 2-6: Co-Watching Intelligence
+
+Combine explicit Discord confirmation with cautious time-based session correlation, returning provenance, supporting evidence, and confidence without mutating Plex from inference.
+
+### Deferred Beyond The Phase 2 MVP
 
 - Richer browser UI with pagination, search, CSV export, and more review controls.
 - Per-user Discord DM prompts.
-- Daily or weekly household watch reports.
+- Daily or weekly household watch reports and scheduled delivery.
 - Advanced matching across renamed or migrated libraries.
-- Supervisor bot or MCP-style adapter.
+- Natural-language query parsing or recommendation features.
 - Multi-server support.

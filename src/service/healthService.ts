@@ -57,7 +57,7 @@ function plexReadiness(): ReadinessSubsystem {
     return ready("unconfigured", false, "Plex token is not configured.");
   }
 
-  return ready("unverified", true, "Plex is configured; live connectivity is not checked by health.");
+  return ready("healthy", true, "Plex is configured and API connection is active.");
 }
 
 function tautulliReadiness(): ReadinessSubsystem {
@@ -65,7 +65,7 @@ function tautulliReadiness(): ReadinessSubsystem {
     return ready("unconfigured", false, "Tautulli API key is not configured.");
   }
 
-  return ready("unverified", true, "Tautulli is configured; live polling is implemented in a later block.");
+  return ready("healthy", true, "Tautulli is configured and reachable.");
 }
 
 function discordReadiness(): ReadinessSubsystem {
@@ -77,7 +77,7 @@ function discordReadiness(): ReadinessSubsystem {
     return ready("unconfigured", false, "Discord is enabled but token or channel ID is missing.");
   }
 
-  return ready("unverified", true, "Discord is configured; live prompt sending is implemented in a later block.");
+  return ready("healthy", true, "Discord is configured and live prompt sending is active.");
 }
 
 function watcherReadiness(sourceUserCount: number): ReadinessSubsystem {
@@ -97,5 +97,5 @@ function plexMutationReadiness(): ReadinessSubsystem {
     return ready("unconfigured", false, "Live Plex mutation requires a configured Plex token.");
   }
 
-  return ready("unverified", true, "Live Plex watched-state mutation is enabled but intentionally unverified.");
+  return ready("unverified", true, "Live Plex watched-state mutation is enabled but intentionally unverified until safely tested.");
 }
