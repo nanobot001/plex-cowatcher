@@ -1,6 +1,6 @@
 {
   "name": "plex-cowatch-sync",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Tool-friendly local Plex co-watch sync service with Discord prompts, browser admin UI, CLI, SQLite, and PM2 supervision.",
   "private": true,
   "type": "module",

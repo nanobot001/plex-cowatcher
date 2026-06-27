@@ -203,6 +203,10 @@ export class IngestionService {
     
     if (sourceUser && sourceUser.id === userId && countsAsCompleted(row)) {
       if (!this.hasNearbyWatchEventDuplicate(userId, row.ratingKey, row.watchedAt)) {
+        const eventDate = new Date(row.watchedAt).getTime();
+        const twoDaysAgo = Date.now() - 48 * 60 * 60 * 1000;
+        const initialPromptStatus = eventDate > twoDaysAgo ? "pending" : "dismissed";
+
         const watchEventResult = this.db.prepare(
           `INSERT OR IGNORE INTO watch_events (
             source_user_id, tautulli_row_id, rating_key, grandparent_rating_key, parent_rating_key,
@@ -223,7 +227,7 @@ export class IngestionService {
           row.seasonNumber ?? null,
           row.episodeNumber ?? null,
           row.watchedAt,
-          "pending",
+          initialPromptStatus,
           now,
           now
         );

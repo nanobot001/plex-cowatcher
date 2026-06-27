@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0] - 2026-06-27
 
 ### Added
 - **Playback Evidence Ingestion (Block 2-1)**: Normalized history pagination from Tautulli, tracking user play history with idempotent insertions and provenance labels. (2026-06-27)
@@ -11,6 +11,9 @@
 - **Co-Watching Intelligence (Block 2-6)**: Implemented CowatchingIntelligenceService and cowatching CLI/HTTP routes to correlate multi-user playback times and explain time-based inference with timing reasons and bounded confidence. (2026-06-27)
 - **Tautulli User Sync & `is_home_user` Flag**: Synchronizes both Plex Home users and Tautulli library streamers into the database, preserving a clear database-level division between home and non-home users, with a new `sync-users` CLI subcommand. (2026-06-27)
 - **Tool Contract Verification**: Added verify:tools script ensuring CLI and HTTP endpoints conform to docs/tool-manifest.yaml. (2026-06-27)
+
+### Fixed
+- **Historical Backfill Discord Spam**: Prevented historical Tautulli play backfills from queueing and spamming thousands of Discord verification prompts by automatically dismissing prompts for events older than 48 hours. (2026-06-27)
 
 ## [0.2.0] - 2026-06-06
 
