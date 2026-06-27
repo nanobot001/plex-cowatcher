@@ -159,6 +159,20 @@ async function main(): Promise<void> {
         print({ ok: true, ...result });
       }
       break;
+    case "sync-users":
+      {
+        try {
+          const [plexUsers, tautulliUsers] = await Promise.all([
+            plex.listUsers().catch(() => []),
+            tautulli.getUsers().catch(() => [])
+          ]);
+          users.syncConfiguredUsers(undefined, plexUsers, tautulliUsers);
+          print({ ok: true, message: "Users successfully synchronized with Plex and Tautulli" });
+        } catch (error) {
+          print({ ok: false, message: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      break;
     case "users":
       print({ ok: true, users: users.listConfigured() });
       break;

@@ -9,6 +9,7 @@
 - **Watch Progress Summaries (Block 2-4)**: Implemented SummaryService and watch-summary CLI/HTTP routes aggregating playback times and show completion progress. (2026-06-27)
 - **Viewing Session Reconstruction (Block 2-5)**: Implemented SessionService and viewing-sessions CLI/HTTP routes grouping contiguous observations using a 2-hour inactivity gap and merging overlapping intervals. (2026-06-27)
 - **Co-Watching Intelligence (Block 2-6)**: Implemented CowatchingIntelligenceService and cowatching CLI/HTTP routes to correlate multi-user playback times and explain time-based inference with timing reasons and bounded confidence. (2026-06-27)
+- **Tautulli User Sync & `is_home_user` Flag**: Synchronizes both Plex Home users and Tautulli library streamers into the database, preserving a clear database-level division between home and non-home users, with a new `sync-users` CLI subcommand. (2026-06-27)
 - **Tool Contract Verification**: Added verify:tools script ensuring CLI and HTTP endpoints conform to docs/tool-manifest.yaml. (2026-06-27)
 
 ## [0.2.0] - 2026-06-06

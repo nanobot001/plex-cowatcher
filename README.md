@@ -70,6 +70,7 @@ After `npm run build`, the CLI entry is available at `dist/cli/cli.js`.
 ```powershell
 node dist/cli/cli.js health --pretty
 node dist/cli/cli.js users --pretty
+node dist/cli/cli.js sync-users
 node dist/cli/cli.js recent --user Tony --days 7 --pretty
 node dist/cli/cli.js pending --pretty
 node dist/cli/cli.js preview-copy --source Tony --target Ian --show "The Bear" --season 3 --pretty

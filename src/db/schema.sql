@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
   is_source_user INTEGER NOT NULL DEFAULT 0,
   is_typical_cowatcher INTEGER NOT NULL DEFAULT 0,
   enabled INTEGER NOT NULL DEFAULT 1,
+  is_home_user INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(plex_username)

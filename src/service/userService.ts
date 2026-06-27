@@ -8,7 +8,8 @@ export class UserService {
 
   syncConfiguredUsers(
     configUsers = readConfiguredUsers(),
-    plexUsers: PlexUser[] = []
+    plexUsers: PlexUser[] = [],
+    tautulliUsers: any[] = []
   ): void {
     const now = nowIso();
     const mergedUsersMap = new Map<string, {
@@ -19,6 +20,7 @@ export class UserService {
       isSourceUser: boolean;
       isTypicalCowatcher: boolean;
       enabled: boolean;
+      isHomeUser: boolean;
     }>();
 
     // 1. Initialize with config users
@@ -30,7 +32,8 @@ export class UserService {
         discordUserId: u.discordUserId,
         isSourceUser: u.isSourceUser === true,
         isTypicalCowatcher: u.isTypicalCowatcher !== false,
-        enabled: u.enabled !== false
+        enabled: u.enabled !== false,
+        isHomeUser: true
       });
     }
 
@@ -43,6 +46,7 @@ export class UserService {
           existing.plexUserId = pu.id;
         }
         existing.plexUsername = pu.username; // Use username casing from Plex
+        existing.isHomeUser = true;
       } else {
         mergedUsersMap.set(key, {
           plexUsername: pu.username,
@@ -50,20 +54,51 @@ export class UserService {
           plexUserId: pu.id,
           discordUserId: undefined,
           isSourceUser: false,
-          isTypicalCowatcher: true,
-          enabled: true
+          isTypicalCowatcher: false,
+          enabled: true,
+          isHomeUser: true
         });
       }
     }
 
-    // 2b. If plexUsers was provided, disable configured users not present in Plex library
-    if (plexUsers.length > 0) {
-      const plexUsernamesLower = new Set(plexUsers.map(pu => pu.username.toLowerCase()));
+    // 3. Merge users from Tautulli
+    for (const tu of tautulliUsers) {
+      const key = String(tu.username || tu.friendly_name || "").toLowerCase();
+      if (!key) continue;
+
+      const isHome = tu.is_home_user === 1;
+      const existing = mergedUsersMap.get(key);
+      if (existing) {
+        if (!existing.plexUserId && tu.user_id) {
+          existing.plexUserId = String(tu.user_id);
+        }
+        existing.isHomeUser = isHome || existing.isHomeUser;
+      } else {
+        mergedUsersMap.set(key, {
+          plexUsername: tu.username || tu.friendly_name,
+          displayName: tu.friendly_name || tu.username,
+          plexUserId: tu.user_id ? String(tu.user_id) : undefined,
+          discordUserId: undefined,
+          isSourceUser: false,
+          isTypicalCowatcher: false,
+          enabled: true,
+          isHomeUser: isHome
+        });
+      }
+    }
+
+    // 2b. If plexUsers or tautulliUsers was provided, disable configured users not present
+    if (plexUsers.length > 0 || tautulliUsers.length > 0) {
+      const activeUsernames = new Set([
+        ...plexUsers.map(pu => pu.username.toLowerCase()),
+        ...tautulliUsers.map(tu => String(tu.username || tu.friendly_name || "").toLowerCase())
+      ]);
       for (const [key, user] of mergedUsersMap.entries()) {
-        if (!plexUsernamesLower.has(key)) {
+        if (!activeUsernames.has(key)) {
           user.enabled = false;
           user.isSourceUser = false;
           user.isTypicalCowatcher = false;
+          user.isHomeUser = false;
         }
       }
     }
@@ -71,8 +106,8 @@ export class UserService {
     const upsert = this.db.prepare(`
       INSERT INTO users (
         plex_user_id, plex_username, display_name, discord_user_id,
-        is_source_user, is_typical_cowatcher, enabled, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        is_source_user, is_typical_cowatcher, enabled, is_home_user, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(plex_username) DO UPDATE SET
         plex_user_id = excluded.plex_user_id,
         display_name = excluded.display_name,
@@ -80,6 +115,7 @@ export class UserService {
         is_source_user = excluded.is_source_user,
         is_typical_cowatcher = excluded.is_typical_cowatcher,
         enabled = excluded.enabled,
+        is_home_user = excluded.is_home_user,
         updated_at = excluded.updated_at
     `);
 
@@ -146,6 +182,7 @@ export class UserService {
           user.isSourceUser ? 1 : 0,
           user.isTypicalCowatcher ? 1 : 0,
           user.enabled ? 1 : 0,
+          user.isHomeUser ? 1 : 0,
           now,
           now
         );
@@ -153,9 +190,15 @@ export class UserService {
       }
 
       // 5. Remove or disable users not present in the active merged list
-      const updatedDbUsers = this.db.prepare("SELECT id, plex_username FROM users").all() as { id: number; plex_username: string }[];
+      const updatedDbUsers = this.db.prepare("SELECT id, plex_username, is_source_user, is_typical_cowatcher FROM users").all() as { id: number; plex_username: string; is_source_user: number; is_typical_cowatcher: number }[];
       for (const dbUser of updatedDbUsers) {
         if (!activeUsernames.has(dbUser.plex_username.toLowerCase())) {
+          // If we are only doing a config-based sync (no Plex/Tautulli user lists provided),
+          // do NOT delete or disable non-config library users.
+          if (plexUsers.length === 0 && tautulliUsers.length === 0 && dbUser.is_source_user === 0 && dbUser.is_typical_cowatcher === 0) {
+            continue;
+          }
+
           try {
             this.db.prepare("DELETE FROM users WHERE id = ?").run(dbUser.id);
           } catch (error) {

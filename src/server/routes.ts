@@ -32,10 +32,13 @@ export function buildRouter(db: Db): Router {
   users.syncConfiguredUsers();
   (async () => {
     try {
-      const plexUsers = await plex.listUsers();
-      users.syncConfiguredUsers(undefined, plexUsers);
+      const [plexUsers, tautulliUsers] = await Promise.all([
+        plex.listUsers().catch(() => []),
+        tautulli.getUsers().catch(() => [])
+      ]);
+      users.syncConfiguredUsers(undefined, plexUsers, tautulliUsers);
     } catch (error) {
-      console.warn("Failed to sync users with Plex at startup:", error instanceof Error ? error.message : error);
+      console.warn("Failed to sync users with Plex/Tautulli at startup:", error instanceof Error ? error.message : error);
     }
   })();
 

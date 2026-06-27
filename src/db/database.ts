@@ -24,6 +24,7 @@ export function migrateDatabase(db: Db): void {
   ensureColumn(db, "watch_events", "discord_prompt_message_id", "TEXT");
   ensureColumn(db, "watch_events", "discord_prompt_sent_at", "TEXT");
   ensureColumn(db, "copy_job_items", "plex_guid", "TEXT");
+  ensureColumn(db, "users", "is_home_user", "INTEGER NOT NULL DEFAULT 0");
 }
 
 function ensureColumn(db: Db, tableName: string, columnName: string, definition: string): void {
