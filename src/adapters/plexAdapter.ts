@@ -463,7 +463,8 @@ export class HttpPlexAdapter extends MockPlexAdapter {
       grandparentTitle: attr(tag, "grandparentTitle"),
       parentRatingKey: attr(tag, "parentRatingKey"),
       parentGuid: attr(tag, "parentGuid"),
-      parentTitle: attr(tag, "parentTitle")
+      parentTitle: attr(tag, "parentTitle"),
+      filePath: parsePartFilePath(xml)
     };
 
     if (mediaType === "show") {
@@ -538,7 +539,7 @@ export class HttpPlexAdapter extends MockPlexAdapter {
 }
 
 export function createPlexAdapter(): PlexAdapter {
-  return appConfig.PLEX_MUTATION_MODE === "live" ? new HttpPlexAdapter() : new MockPlexAdapter();
+  return appConfig.PLEX_TOKEN ? new HttpPlexAdapter() : new MockPlexAdapter();
 }
 
 async function plexFetch(pathname: string): Promise<Response> {
@@ -592,6 +593,11 @@ function parseGenres(xml: string): string[] {
 
 function firstMediaTag(xml: string): string | undefined {
   return xml.match(/<(?:Video|Directory|Track)\b[^>]*>/)?.[0];
+}
+
+export function parsePartFilePath(xml: string): string | undefined {
+  const partTag = xml.match(/<Part\b[^>]*>/i)?.[0];
+  return partTag ? attr(partTag, "file") : undefined;
 }
 
 function unescapeXml(str: string): string {

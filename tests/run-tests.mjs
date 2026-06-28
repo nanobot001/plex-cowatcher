@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { openMigratedDatabase } from "../dist/db/database.js";
+import { migrateDatabase, openMigratedDatabase } from "../dist/db/database.js";
 import { normalizeTautulliHistoryRow } from "../dist/adapters/tautulliAdapter.js";
 import { countsAsCompleted } from "../dist/watcher/watcher.js";
 import { WatcherService } from "../dist/watcher/watcher.js";
@@ -10,7 +10,7 @@ import { isDuplicateWithinWindow, watchEventKey } from "../dist/watcher/dedupe.j
 import { UserService } from "../dist/service/userService.js";
 import { CowatchService } from "../dist/service/cowatchService.js";
 import { SyncService } from "../dist/service/syncService.js";
-import { PlexAdapterError, MockPlexAdapter } from "../dist/adapters/plexAdapter.js";
+import { PlexAdapterError, MockPlexAdapter, parsePartFilePath } from "../dist/adapters/plexAdapter.js";
 import { AppError, errorResult } from "../dist/utils/errors.js";
 import { HistoryCopyService } from "../dist/service/historyCopyService.js";
 import { IngestionService } from "../dist/service/ingestionService.js";
@@ -19,6 +19,8 @@ import { QueryService } from "../dist/service/queryService.js";
 import { SummaryService } from "../dist/service/summaryService.js";
 import { SessionService } from "../dist/service/sessionService.js";
 import { CowatchingIntelligenceService } from "../dist/service/cowatchingIntelligenceService.js";
+import { AudiobookCatalogService, canonicalizeAudiobookSeriesTitle, isAudiobookMedia, parseAudiobookPath, parseAudnexusAsin, prepareAudiobookMetadata } from "../dist/service/audiobookService.js";
+import { AudiobookBackfillService } from "../dist/service/audiobookBackfillService.js";
 
 const tests = [];
 
@@ -131,7 +133,7 @@ function withTestDb(fn) {
   };
 
   try {
-    const result = fn(db);
+    const result = fn(db, dbPath);
     if (result && typeof result.then === "function") {
       return result.finally(cleanup);
     }
@@ -637,6 +639,34 @@ test("IngestionService polls recent history and writes to playback_observations 
   });
 });
 
+test("IngestionService creates a source watch event when Tautulli returns a display name", async () => {
+  await withTestDb(async (db) => {
+    new UserService(db).syncConfiguredUsers([
+      { plexUsername: "tonyhung", displayName: "Tony", isSourceUser: true, isTypicalCowatcher: false, enabled: true }
+    ]);
+    const tautulli = {
+      getUsers: async () => [],
+      getActivity: async () => ({ streamCount: 0 }),
+      getMetadata: async (ratingKey) => ({ ratingKey, title: "" }),
+      getRecentHistory: async ({ user }) => [{
+        user: user === "tonyhung" ? "Tony" : user,
+        ratingKey: "episode-display-name",
+        mediaType: "episode",
+        title: "Ted and Mary",
+        watchedAt: new Date().toISOString(),
+        percentComplete: 100
+      }]
+    };
+
+    const result = await new IngestionService(db, tautulli).pollRecentHistory();
+
+    assert.equal(result.inserted, 1);
+    const event = db.prepare("SELECT rating_key, prompt_status FROM watch_events").get();
+    assert.equal(event.rating_key, "episode-display-name");
+    assert.equal(event.prompt_status, "pending");
+  });
+});
+
 test("IngestionService backfillHistory paginated is idempotent", async () => {
   await withTestDb(async (db) => {
     seedUsers(db);
@@ -1070,6 +1100,213 @@ test("CowatchingIntelligenceService respects explicit Discord confirmations", as
   });
 });
 
+test("Plex audiobook metadata extracts and unescapes the first Part file path", () => {
+  const xml = '<Track title="Chapter"><Media><Part file="F:\\Audiobooks\\Tom &amp; Jerry\\Book\\01.mp3" /></Media></Track>';
+  assert.equal(parsePartFilePath(xml), "F:\\Audiobooks\\Tom & Jerry\\Book\\01.mp3");
+  assert.equal(parsePartFilePath('<Track title="No media" />'), undefined);
+});
+
+test("audiobook path parsing handles author/book, series, separators, and malformed paths", () => {
+  const series = parseAudiobookPath("F:\\Media\\Audiobooks\\Robert Jordan\\The Wheel of Time\\2021 - The Eye of the World\\pt01.mp3");
+  assert.equal(series.author, "Robert Jordan");
+  assert.equal(series.seriesTitle, "The Wheel of Time");
+  assert.equal(series.bookTitle, "2021 - The Eye of the World");
+
+  const standalone = parseAudiobookPath("/media/Audiobooks/James Clear/Atomic Habits/01.mp3");
+  assert.equal(standalone.author, "James Clear");
+  assert.equal(standalone.seriesTitle, undefined);
+  assert.equal(parseAudiobookPath("/media/music/loose.mp3"), undefined);
+});
+
+
+
+test("Wheel of Time series labels normalize to one canonical title", async () => {
+  await withTestDb(async (db) => {
+    const catalog = new AudiobookCatalogService(db);
+    const base = {
+      mediaType: "track",
+      duration: 1_200_000,
+      librarySectionTitle: "Audiobooks",
+      genres: []
+    };
+    catalog.ensureLocalBook({
+      metadata: {
+        ratingKey: "book-1",
+        title: "Book 1",
+        mediaType: "audiobook",
+        parentTitle: "Book 1",
+        grandparentTitle: "Wheel of Time"
+      },
+      identity: {
+        folderKey: "key-1",
+        author: "Robert Jordan",
+        seriesTitle: "Wheel of Time",
+        bookTitle: "Book 1",
+        folderPathHint: "F:\Audiobooks\Robert Jordan\Wheel of Time\Book 1"
+      }
+    });
+    catalog.ensureLocalBook({
+      metadata: {
+        ratingKey: "book-2",
+        title: "Book 2",
+        mediaType: "audiobook",
+        parentTitle: "Book 2",
+        grandparentTitle: "The Wheel of Time"
+      },
+      identity: {
+        folderKey: "key-2",
+        author: "Robert Jordan",
+        seriesTitle: "The Wheel of Time",
+        bookTitle: "Book 2",
+        folderPathHint: "F:\Audiobooks\Robert Jordan\The Wheel of Time\Book 2"
+      }
+    });
+
+    const rows = db.prepare("SELECT DISTINCT series_title FROM audiobook_books ORDER BY series_title").all();
+    assert.deepEqual(rows.map((row) => row.series_title), ["Wheel of Time"]);
+    assert.equal(canonicalizeAudiobookSeriesTitle("The Wheel of Time"), "Wheel of Time");
+    assert.equal(canonicalizeAudiobookSeriesTitle("Wheel of Time"), "Wheel of Time");
+  });
+});
+test("audiobook classification normalizes duration units and parses exact Audnexus ASINs", () => {
+  assert.equal(isAudiobookMedia({ mediaType: "track", duration: 1_200_000 }), true);
+  assert.equal(isAudiobookMedia({ mediaType: "track", duration: 240_000 }), false);
+  assert.equal(isAudiobookMedia({ mediaType: "track", libraryName: "Audiobooks" }), true);
+  assert.equal(isAudiobookMedia({ mediaType: "movie", duration: 7_200_000 }), false);
+  assert.equal(parseAudnexusAsin("com.plexapp.agents.audnexus://B07286JWD3_ca/item"), "B07286JWD3");
+  assert.equal(parseAudnexusAsin("local://123"), undefined);
+});
+
+test("MetadataService overrides audiobook hierarchy and reuses one canonical folder book", async () => {
+  await withTestDb(async (db) => {
+    const paths = {
+      "track-1": "F:\\Media\\Audiobooks\\Robert Jordan\\Wheel of Time\\The Eye of the World\\01.mp3",
+      "track-2": "F:\\Media\\Audiobooks\\Robert Jordan\\Wheel of Time\\The Eye of the World\\02.mp3"
+    };
+    const plex = {
+      getRichMetadataByRatingKey: async (ratingKey) => ({
+        ratingKey,
+        guid: `local://${ratingKey}`,
+        mediaType: "track",
+        title: ratingKey,
+        duration: 1_200_000,
+        librarySectionTitle: "Audiobooks",
+        genres: [],
+        parentTitle: "Mega Album",
+        grandparentTitle: "Various Artists",
+        filePath: paths[ratingKey]
+      })
+    };
+    const service = new MetadataService(db, plex);
+    const first = await service.refreshMetadata("track-1");
+    const second = await service.refreshMetadata("track-2");
+
+    assert.equal(first.parentTitle, "The Eye of the World");
+    assert.equal(first.grandparentTitle, "Wheel of Time");
+    assert.equal(first.audiobookId, second.audiobookId);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audiobook_books").get().count, 1);
+    assert.equal(db.prepare("SELECT file_path FROM content_catalog WHERE rating_key = 'track-1'").get().file_path, paths["track-1"]);
+    const aggregates = db.prepare("SELECT chapter_count, total_duration_seconds FROM audiobook_books WHERE id = ?").get(first.audiobookId);
+    assert.equal(aggregates.chapter_count, 2);
+    assert.equal(aggregates.total_duration_seconds, 2400);
+  });
+});
+
+test("audiobook enrichment accepts exact matches and rejects ambiguous Google results", async () => {
+  await withTestDb(async (db) => {
+    const prepared = prepareAudiobookMetadata({
+      ratingKey: "local-1",
+      mediaType: "track",
+      title: "Part 1",
+      duration: 1_200_000,
+      librarySectionTitle: "Audiobooks",
+      genres: [],
+      filePath: "F:\\Audiobooks\\James Clear\\Atomic Habits\\01.mp3"
+    });
+    const exactFetch = async () => new Response(JSON.stringify({
+      items: [{ id: "google-1", volumeInfo: { title: "Atomic Habits", authors: ["James Clear"], categories: ["Self-Help"], language: "en" } }]
+    }), { status: 200, headers: { "content-type": "application/json" } });
+    const catalog = new AudiobookCatalogService(db, exactFetch);
+    const id = catalog.ensureLocalBook(prepared);
+    const exact = await catalog.enrichBook(id, true);
+    assert.deepEqual(exact, { status: "enriched", provenance: "google_books" });
+    assert.equal(db.prepare("SELECT google_books_id FROM audiobook_books WHERE id = ?").get(id).google_books_id, "google-1");
+
+    const second = prepareAudiobookMetadata({ ...prepared.metadata, ratingKey: "local-2", filePath: "F:\\Audiobooks\\Someone Else\\Different Book\\01.mp3" });
+    const secondId = catalog.ensureLocalBook(second);
+    const ambiguous = await catalog.enrichBook(secondId, false);
+    assert.equal(ambiguous.status, "pending");
+  });
+});
+
+test("audiobook migration is repeatable and does not denormalize onto observations", () => {
+  return withTestDb((db) => {
+    migrateDatabase(db);
+    migrateDatabase(db);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 5").get().count, 1);
+    const catalogColumns = db.prepare("PRAGMA table_info(content_catalog)").all().map((column) => column.name);
+    const observationColumns = db.prepare("PRAGMA table_info(playback_observations)").all().map((column) => column.name);
+    assert.equal(catalogColumns.includes("file_path"), true);
+    assert.equal(catalogColumns.includes("audiobook_id"), true);
+    assert.equal(observationColumns.includes("audiobook_id"), false);
+    assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
+  });
+});
+
+
+test("audiobook backfill skips dead Plex references without failing the batch", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const userId = db.prepare("SELECT id FROM users WHERE plex_username = 'Tony'").get().id;
+    db.prepare("INSERT INTO playback_observations (user_id, rating_key, plex_guid, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at) VALUES (?, 'dead-1', 'plex://track/dead', 'track', 'Audiobooks', 'Dead Track', datetime('now'), 1, 1200000, datetime('now'), datetime('now'))").run(userId);
+
+    const plex = {
+      getRichMetadataByRatingKey: async () => {
+        throw new PlexAdapterError("PLEX_NO_MATCHING_MEDIA", "No matching Plex media was found for the rating key.", "no_matching_media");
+      }
+    };
+    const backfill = new AudiobookBackfillService(db, plex);
+    const result = await backfill.run({ mode: "local" });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.pending, 1);
+    assert.equal(result.errors.length, 0);
+    assert.equal(result.deadReferences.length, 1);
+    assert.equal(result.deadReferences[0].reason, "no_matching_media");
+  });
+});test("audiobook backfill dry-run is pure and apply creates a backup and resumable state", async () => {
+  await withTestDb(async (db, dbPath) => {
+    seedUsers(db);
+    const userId = db.prepare("SELECT id FROM users WHERE plex_username = 'Tony'").get().id;
+    db.prepare(`INSERT INTO playback_observations (
+      user_id, rating_key, plex_guid, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at
+    ) VALUES (?, 'audio-1', 'com.plexapp.agents.audnexus://B07286JWD3_ca/item', 'track', 'Music', 'Part 1', datetime('now'), 1, 1200000, datetime('now'), datetime('now'))`).run(userId);
+    const plex = {
+      getRichMetadataByRatingKey: async () => ({
+        ratingKey: "audio-1",
+        guid: "local://audio-1",
+        mediaType: "track",
+        title: "Part 1",
+        duration: 1_200_000,
+        librarySectionTitle: "Audiobooks",
+        genres: [],
+        filePath: "F:\\Audiobooks\\Author\\Series\\Book\\01.mp3"
+      })
+    };
+    const backfill = new AudiobookBackfillService(db, plex, dbPath);
+    const preview = await backfill.run({ mode: "local", batchSize: 10 });
+    assert.equal(preview.dryRun, true);
+    assert.equal(preview.matched, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM content_catalog").get().count, 0);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audit_log WHERE action LIKE 'audiobook_backfill_%'").get().count, 0);
+
+    const applied = await backfill.run({ mode: "local", apply: true, confirm: true, batchSize: 10 });
+    assert.equal(applied.backupCreated, true);
+    assert.equal(applied.linked, 1);
+    assert.equal(db.prepare("SELECT value FROM app_settings WHERE key = 'audiobook_backfill_cursor_local'").get().value, "audio-1");
+    assert.equal(fs.readdirSync(path.join(path.dirname(dbPath), "backups")).length, 1);
+  });
+});
 let passed = 0;
 for (const { name, fn } of tests) {
   try {

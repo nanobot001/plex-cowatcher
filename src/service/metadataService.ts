@@ -2,6 +2,7 @@ import type { Db } from "../db/database.js";
 import type { PlexAdapter } from "../adapters/plexAdapter.js";
 import type { PlexRichMetadata } from "../types/index.js";
 import { nowIso } from "../utils/time.js";
+import { AudiobookCatalogService, prepareAudiobookMetadata } from "./audiobookService.js";
 
 export interface CatalogEntry {
   ratingKey: string;
@@ -21,13 +22,18 @@ export interface CatalogEntry {
   leafCount: number | null;
   sourceProvenance: string;
   refreshedAt: string;
+  filePath?: string | null;
+  audiobookId?: number | null;
 }
 
 export class MetadataService {
+  private readonly audiobooks: AudiobookCatalogService;
   constructor(
     private readonly db: Db,
     private readonly plex: PlexAdapter
-  ) {}
+  ) {
+    this.audiobooks = new AudiobookCatalogService(db);
+  }
 
   async getMetadata(ratingKey: string, plexGuid?: string): Promise<CatalogEntry | null> {
     const cached = this.getCached(ratingKey);
@@ -108,6 +114,9 @@ export class MetadataService {
   }
 
   private savePlexMetadata(plexMeta: PlexRichMetadata): CatalogEntry {
+    const prepared = prepareAudiobookMetadata(plexMeta);
+    plexMeta = prepared.metadata;
+    const audiobookId = this.audiobooks.ensureLocalBook(prepared);
     const now = nowIso();
     const entry: CatalogEntry = {
       ratingKey: plexMeta.ratingKey,
@@ -125,11 +134,16 @@ export class MetadataService {
       parentGuid: plexMeta.parentGuid ?? null,
       parentTitle: plexMeta.parentTitle ?? null,
       leafCount: plexMeta.leafCount ?? null,
-      sourceProvenance: "plex",
+      sourceProvenance: prepared.identity ? "folder_path" : "plex",
+      filePath: plexMeta.filePath ?? null,
+      audiobookId,
       refreshedAt: now
     };
     
     this.saveCatalogEntry(entry);
+    if (audiobookId) {
+      this.audiobooks.refreshAggregates(audiobookId);
+    }
     return entry;
   }
 
@@ -138,8 +152,8 @@ export class MetadataService {
       INSERT INTO content_catalog (
         rating_key, guid, media_type, title, duration, library_id, library_title, genres_json,
         grandparent_rating_key, grandparent_guid, grandparent_title,
-        parent_rating_key, parent_guid, parent_title, leaf_count, source_provenance, refreshed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        parent_rating_key, parent_guid, parent_title, leaf_count, source_provenance, refreshed_at, file_path, audiobook_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(rating_key) DO UPDATE SET
         guid = excluded.guid,
         media_type = excluded.media_type,
@@ -156,7 +170,9 @@ export class MetadataService {
         parent_title = excluded.parent_title,
         leaf_count = excluded.leaf_count,
         source_provenance = excluded.source_provenance,
-        refreshed_at = excluded.refreshed_at
+        refreshed_at = excluded.refreshed_at,
+        file_path = excluded.file_path,
+        audiobook_id = excluded.audiobook_id
     `).run(
       entry.ratingKey,
       entry.guid,
@@ -174,7 +190,9 @@ export class MetadataService {
       entry.parentTitle,
       entry.leafCount,
       entry.sourceProvenance,
-      entry.refreshedAt
+      entry.refreshedAt,
+      entry.filePath ?? null,
+      entry.audiobookId ?? null
     );
   }
 
@@ -203,7 +221,9 @@ export class MetadataService {
       parentTitle: row.parent_title,
       leafCount: row.leaf_count,
       sourceProvenance: row.source_provenance,
-      refreshedAt: row.refreshed_at
+      refreshedAt: row.refreshed_at,
+      filePath: row.file_path,
+      audiobookId: row.audiobook_id
     };
   }
 }

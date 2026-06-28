@@ -1,32 +1,70 @@
 # Event Log Schema
 
-This project should record meaningful domain events in structured state.
+This project records meaningful domain events in structured SQLite state.
 
 Do not rely on human text logs as the source of truth for bot queries.
 
-Use `kv_store` only for non-secret lightweight state such as cursors, pause flags, and last-seen IDs. Do not store raw tokens, API keys, session cookies, OAuth credentials, or private secrets in `kv_store` unless this project has an explicit local secret-storage policy.
+Use `app_settings` only for non-secret lightweight state such as cursors, toggles, pause flags, and last-seen IDs. Do not store raw tokens, API keys, session cookies, OAuth credentials, or private secrets in local state.
 
 ## Generic Event Shape
 
+Audit records are stored in `audit_log` and should preserve:
+
 ```json
 {
-  "eventType": "example_event",
-  "source": "project-name",
-  "title": "Human-readable title",
-  "summary": "Short summary",
-  "entityType": "optional-domain-entity",
-  "entityId": "optional-id",
-  "status": "completed",
-  "severity": "info",
-  "occurredAt": "2026-05-26T00:00:00-04:00",
-  "data": {}
+  "action": "example_event",
+  "actor": "cli",
+  "status": "ok",
+  "metadata": {}
 }
 ```
 
 ## Existing Event Sources
 
-For existing projects, document whether events are derived from an existing database, structured files, API responses, logs, or new event capture added by the adapter.
+- watch-event prompt lifecycle writes
+- copy preview/apply writes
+- Discord resolution writes
+- Plex sync result writes
+- audiobook backfill start/completion writes
 
 ## Project-Specific Events
 
-Add project-specific examples here.
+### `audiobook_backfill_started`
+
+Recorded when `project.audiobook_backfill` runs in apply mode.
+
+```json
+{
+  "action": "audiobook_backfill_started",
+  "actor": "cli",
+  "status": "started",
+  "metadata": {
+    "mode": "all",
+    "batchSize": 100,
+    "resume": false
+  }
+}
+```
+
+### `audiobook_backfill_completed`
+
+Recorded when apply mode completes, including partial runs.
+
+```json
+{
+  "action": "audiobook_backfill_completed",
+  "actor": "cli",
+  "status": "ok",
+  "metadata": {
+    "mode": "all",
+    "scanned": 12,
+    "matched": 10,
+    "linked": 10,
+    "enriched": 7,
+    "pending": 2,
+    "errors": 0
+  }
+}
+```
+
+Metadata for these events must not include private local file paths.

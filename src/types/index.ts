@@ -59,6 +59,34 @@ export interface PlexRichMetadata {
   parentGuid?: string;
   parentTitle?: string;
   leafCount?: number;
+  /** Trusted local data. Never expose through public-read tool responses. */
+  filePath?: string;
+}
+
+export type AudiobookProvenance = "audnexus" | "google_books" | "folder_path" | "manual";
+export type AudiobookEnrichmentStatus = "enriched" | "partial" | "pending";
+
+export interface AudiobookBook {
+  id?: number;
+  folderKey: string;
+  asin?: string;
+  isbn?: string;
+  googleBooksId?: string;
+  title: string;
+  subtitle?: string;
+  authors: string[];
+  narrators: string[];
+  seriesTitle?: string;
+  seriesIndex?: number;
+  year?: number;
+  description?: string;
+  coverUrl?: string;
+  genres: string[];
+  language?: string;
+  totalDurationSeconds?: number;
+  chapterCount?: number;
+  sourceProvenance: AudiobookProvenance;
+  enrichmentStatus: AudiobookEnrichmentStatus;
 }
 
 export interface WatchedState {

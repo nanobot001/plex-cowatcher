@@ -7,6 +7,7 @@ import { nowIso } from "../utils/time.js";
 import { countsAsCompleted } from "../watcher/watcher.js";
 import { isDuplicateWithinWindow } from "../watcher/dedupe.js";
 import type { MetadataService } from "./metadataService.js";
+import { isAudiobookMedia } from "./audiobookService.js";
 
 export class IngestionService {
   private readonly users: UserService;
@@ -126,6 +127,8 @@ export class IngestionService {
     const now = nowIso();
     const completedVal = (row.completed || countsAsCompleted(row)) ? 1 : 0;
 
+    const mediaType = isAudiobookMedia(row) ? "audiobook" : row.mediaType;
+
     // Check if the record already exists to determine if we should count it as inserted/skipped
     const existing = this.db.prepare(
       "SELECT id FROM playback_observations WHERE user_id = ? AND rating_key = ? AND watched_at = ?"
@@ -135,6 +138,7 @@ export class IngestionService {
       this.db.prepare(
         `UPDATE playback_observations SET
           tautulli_row_id = ?,
+          media_type = ?,
           percent_complete = ?,
           percent_complete_provenance = ?,
           view_offset = ?,
@@ -144,6 +148,7 @@ export class IngestionService {
         WHERE id = ?`
       ).run(
         row.rowId ?? null,
+        mediaType,
         row.percentComplete ?? null,
         row.percentCompleteProvenance ?? null,
         row.viewOffset ?? null,
@@ -171,7 +176,7 @@ export class IngestionService {
       row.grandparentRatingKey ?? null,
       row.parentRatingKey ?? null,
       row.plexGuid ?? null,
-      row.mediaType,
+      mediaType,
       row.libraryName ?? null,
       row.title,
       row.showTitle ?? null,
@@ -199,13 +204,22 @@ export class IngestionService {
     }
 
     let watchEventId: number | undefined;
-    const sourceUser = this.users.findSourceByUsername(row.user);
+    // Tautulli may return a display name instead of the configured Plex username.
+    // The polling loop has already resolved this row to a configured user ID.
+    const sourceUser = this.users.findSourceById(userId);
     
-    if (sourceUser && sourceUser.id === userId && countsAsCompleted(row)) {
+    if (sourceUser && countsAsCompleted(row)) {
       if (!this.hasNearbyWatchEventDuplicate(userId, row.ratingKey, row.watchedAt)) {
         const eventDate = new Date(row.watchedAt).getTime();
         const twoDaysAgo = Date.now() - 48 * 60 * 60 * 1000;
-        const initialPromptStatus = eventDate > twoDaysAgo ? "pending" : "dismissed";
+        let initialPromptStatus = eventDate > twoDaysAgo ? "pending" : "dismissed";
+
+        if (initialPromptStatus === "pending" && mediaType === "audiobook") {
+          const settingRow = this.db.prepare("SELECT value FROM app_settings WHERE key = 'prompt_for_audiobooks'").get() as { value: string } | undefined;
+          if (!settingRow || settingRow.value !== 'true') {
+            initialPromptStatus = 'dismissed';
+          }
+        }
 
         const watchEventResult = this.db.prepare(
           `INSERT OR IGNORE INTO watch_events (
@@ -220,7 +234,7 @@ export class IngestionService {
           row.grandparentRatingKey ?? null,
           row.parentRatingKey ?? null,
           row.plexGuid ?? null,
-          row.mediaType,
+          mediaType,
           row.libraryName ?? null,
           row.title,
           row.showTitle ?? null,
@@ -238,7 +252,7 @@ export class IngestionService {
             watchEventId,
             sourceUserId: userId,
             ratingKey: row.ratingKey,
-            mediaType: row.mediaType,
+            mediaType,
             watchedAt: row.watchedAt
           });
         }

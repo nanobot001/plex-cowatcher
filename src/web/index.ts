@@ -587,6 +587,53 @@ export function registerWebRoutes(router: Router): void {
       </script>
     `));
   });
+  router.get("/settings", (_req, res) => {
+    res.type("html").send(renderPage("Settings", `
+      <section class="band">
+        <h2>Application Settings</h2>
+        <form id="settings-form" class="job-form">
+          <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="prompt_for_audiobooks" name="prompt_for_audiobooks">
+            <label for="prompt_for_audiobooks" style="margin: 0; font-weight: normal;">Enable Discord Prompts for Audiobooks</label>
+          </div>
+          <button type="submit">Save Settings</button>
+        </form>
+        <div id="settings-message" style="margin-top: 1rem;"></div>
+      </section>
+      <script>
+        const form = document.getElementById('settings-form');
+        const checkbox = document.getElementById('prompt_for_audiobooks');
+        const message = document.getElementById('settings-message');
+
+        fetch('/api/settings').then(r => r.json()).then(data => {
+          if (data.ok && data.settings) {
+            checkbox.checked = data.settings.prompt_for_audiobooks === 'true';
+          }
+        });
+
+        form.addEventListener('submit', (e) => {
+          e.preventDefault();
+          message.textContent = 'Saving...';
+          fetch('/api/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt_for_audiobooks: checkbox.checked ? 'true' : 'false' })
+          }).then(r => r.json()).then(data => {
+            if (data.ok) {
+              message.textContent = 'Settings saved successfully!';
+              message.style.color = 'green';
+            } else {
+              message.textContent = 'Error: ' + data.error;
+              message.style.color = 'red';
+            }
+          }).catch(err => {
+            message.textContent = 'Error saving settings';
+            message.style.color = 'red';
+          });
+        });
+      </script>
+    `));
+  });
 }
 
 function renderPage(title: string, body: string): string {
@@ -610,7 +657,7 @@ function renderPage(title: string, body: string): string {
       </script>
     </head>
     <body>
-      <nav><strong>Plex Co-Watch Sync</strong><a href="/">Dashboard</a><a href="/copy">Copy History</a><a href="/audit">Audit</a></nav>
+      <nav><strong>Plex Co-Watch Sync</strong><a href="/">Dashboard</a><a href="/copy">Copy History</a><a href="/audit">Audit</a><a href="/settings">Settings</a></nav>
       <main><h1>${title}</h1>${body}</main>
     </body>
   </html>`;

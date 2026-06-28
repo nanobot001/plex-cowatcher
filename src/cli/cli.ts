@@ -27,7 +27,9 @@ function print(value: unknown): void {
 
 async function main(): Promise<void> {
   const users = new UserService(db);
-  users.syncConfiguredUsers();
+  if (command !== "audiobook-backfill") {
+    users.syncConfiguredUsers();
+  }
   const plex = createPlexAdapter();
   const tautulli = createTautulliAdapter();
   const sync = new SyncService(plex);
@@ -56,7 +58,8 @@ async function main(): Promise<void> {
           break;
         }
         const result = await metadataService.refreshMetadata(ratingKey);
-        print({ ok: true, metadata: result });
+        const { filePath: _privatePath, ...publicMetadata } = result ?? {};
+        print({ ok: true, metadata: publicMetadata });
       }
       break;
     case "watch-history":
@@ -138,6 +141,29 @@ async function main(): Promise<void> {
           print({ ok: true, events: results });
         } catch (error) {
           print({ ok: false, message: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      break;
+    case "audiobook-backfill":
+      {
+        const { AudiobookBackfillService } = await import("../service/audiobookBackfillService.js");
+        const mode = arg("mode") ?? "all";
+        if (!(["local", "enrich", "all"] as string[]).includes(mode)) {
+          print({ ok: false, tool: "project.audiobook_backfill", timestamp: new Date().toISOString(), error: { code: "INVALID_MODE", message: "Use --mode local, enrich, or all.", retryable: false, severity: "error" } });
+          break;
+        }
+        try {
+          const data = await new AudiobookBackfillService(db, plex).run({
+            mode: mode as "local" | "enrich" | "all",
+            apply: args.includes("--apply"),
+            confirm: args.includes("--confirm"),
+            resume: args.includes("--resume"),
+            batchSize: arg("batch-size") ? Number(arg("batch-size")) : undefined
+          });
+          print({ ok: data.ok, tool: "project.audiobook_backfill", timestamp: new Date().toISOString(), data });
+        } catch (error) {
+          print({ ok: false, tool: "project.audiobook_backfill", timestamp: new Date().toISOString(), error: { code: error instanceof Error ? error.message : "AUDIOBOOK_BACKFILL_FAILED", message: "Audiobook backfill could not run.", retryable: false, severity: "error" } });
+          process.exitCode = 1;
         }
       }
       break;
@@ -273,7 +299,7 @@ async function main(): Promise<void> {
       }
       break;
     default:
-      print({ ok: true, commands: ["health", "users", "recent", "pending", "preview-copy", "apply-copy", "audit", "retry-failed", "verify-plex-watched-state", "test-discord-prompt"] });
+      print({ ok: true, commands: ["health", "users", "recent", "pending", "preview-copy", "apply-copy", "audiobook-backfill", "audit", "retry-failed", "verify-plex-watched-state", "test-discord-prompt"] });
   }
 }
 

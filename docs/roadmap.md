@@ -112,11 +112,29 @@ Group playback observations into deterministic, explainable per-user viewing ses
 
 Combine explicit Discord confirmation with cautious time-based session correlation, returning provenance, supporting evidence, and confidence without mutating Plex from inference.
 
-### Deferred Beyond The Phase 2 MVP
+## Phase 3: Post-MVP Features (Customization & Reporting)
 
-- Richer browser UI with pagination, search, CSV export, and more review controls.
+Phase 3 introduces domain-specific features, system settings, and reporting to refine the user experience beyond the core watch history intelligence.
+
+### Block 3-1: Audiobook Differentiation & Settings
+
+Introduce robust heuristics and deep metadata parsing to classify audiobooks and separate them from standard music tracks. Implement a foundational application settings store to configure rules like disabling Discord prompts for solo audiobook sessions.
+
+### Block 3-2: Richer Browser UI
+
+Upgrade the local web dashboard to support pagination, deep history search, CSV export, and richer controls for reviewing co-watch history and modifying application settings.
+
+### Block 3-3: Household Watch Reports
+
+Automate and schedule the delivery of daily or weekly household watch reports to Discord, summarizing what was watched, by whom, and what co-watching sessions occurred.
+
+### Block 3-4: Hierarchical Audiobook Series Modeling
+
+Extend the audiobook catalog so top-level series and subseries can be represented separately, backfilled safely, and surfaced through existing tool-friendly service layers without breaking current audiobook workflows.
+
+### Deferred Beyond The Phase 3 MVP
+
 - Per-user Discord DM prompts.
-- Daily or weekly household watch reports and scheduled delivery.
 - Advanced matching across renamed or migrated libraries.
-- Natural-language query parsing or recommendation features.
+- Natural-language query parsing or recommendation features (e.g., dedicated Media Bot).
 - Multi-server support.

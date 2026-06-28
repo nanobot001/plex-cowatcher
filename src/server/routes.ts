@@ -44,6 +44,40 @@ export function buildRouter(db: Db): Router {
 
   router.get("/api/health", (_req, res) => res.json(health.getHealth()));
   router.get("/api/status", (_req, res) => res.json(health.getHealth()));
+
+  router.get("/api/settings", (_req, res) => {
+    try {
+      const rows = db.prepare("SELECT key, value FROM app_settings").all() as { key: string, value: string }[];
+      const settings = rows.reduce((acc, row) => ({ ...acc, [row.key]: row.value }), {});
+      res.json({ ok: true, settings });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: String(error) });
+    }
+  });
+
+  router.put("/api/settings", express.json(), (req, res) => {
+    try {
+      const updates = req.body;
+      const stmt = db.prepare("INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)");
+      const now = new Date().toISOString();
+      try {
+        db.exec('BEGIN IMMEDIATE');
+        for (const [key, value] of Object.entries(updates)) {
+          if (typeof value === 'string') {
+            stmt.run(key, value, now);
+          }
+        }
+        db.exec('COMMIT');
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+      }
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: String(error) });
+    }
+  });
+
   router.get("/api/users", (_req, res) => res.json({ ok: true, users: users.listConfigured() }));
   router.get("/api/users/plex", async (_req, res, next) => {
     try {

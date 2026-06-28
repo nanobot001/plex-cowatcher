@@ -20,3 +20,18 @@ Current statuses:
 - `failed`: legacy fallback for unexpected failures.
 
 Discord prompt resolution includes `plexSyncStatus`, optional `errorCode`, and optional `error` for each selected target. History-copy apply stores failed item reasons using the structured error code when one is available.
+
+## Audiobook Data Contract
+
+Audiobook support adds two linked layers:
+
+- `content_catalog` remains one row per Plex track and now stores private `file_path` plus nullable `audiobook_id`.
+- `audiobook_books` stores one canonical row per local folder-derived book or exact-ASIN match.
+
+Rules to preserve:
+
+- `file_path` and `folder_path_hint` are trusted local-only data and must never be exposed through public-read tools, API responses, or tool-facing logs.
+- `playback_observations` does not store `audiobook_id`. Queries must join observations through `content_catalog` so rematching a book does not leave stale denormalized IDs behind.
+- `source_provenance` identifies whether the current book metadata came from `folder_path`, `audnexus`, or `google_books`.
+- `enrichment_status` records whether canonical enrichment is still `pending` or already `enriched`.
+- Low-confidence or unmatched books remain usable via folder metadata and must not be silently assigned guessed canonical metadata.

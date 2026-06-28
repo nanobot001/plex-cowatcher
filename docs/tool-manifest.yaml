@@ -1,10 +1,10 @@
 project:
-  name: replace-me
-  classification: new_tool_friendly_project
-  runtime_model: replace-me
+  name: plex-cowatcher
+  classification: existing_local_service_with_tool_contracts
+  runtime_model: pm2_managed_windows_local_node_service
   state:
     type: sqlite
-    path: state/project.sqlite
+    path: state/plex-cowatcher.sqlite
 
 tools:
   - name: project.status
@@ -130,5 +130,33 @@ tools:
       properties:
         days:
           type: integer
+    output_schema:
+      type: object
+
+  - name: project.audiobook_backfill
+    risk: write_action
+    description: Preview or apply resumable audiobook metadata linking and enrichment.
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+          enum: [local, enrich, all]
+          default: all
+        apply:
+          type: boolean
+          default: false
+        confirm:
+          type: boolean
+          default: false
+        resume:
+          type: boolean
+          default: false
+        batch_size:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
     output_schema:
       type: object
