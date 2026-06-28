@@ -2,23 +2,24 @@
 
 ## Current State
 
-- Initial seed scaffold and TypeScript MVP service skeleton are in place for `plex-cowatch-sync` in `C:\Users\antho\Code\plex-cowatcher`.
-- The project has Express API routes, server-rendered browser pages, a CLI, Discord prompt builders, SQLite schema, mock-safe Plex/Tautulli adapter seams, and PM2 config.
-- The MVP is now defined as a real local co-watch workflow, not merely the scaffold: Discord confirmation plus preview-first history copy, both backed by the shared service layer and audited SQLite state.
-- The MVP has been collapsed into Phase 1, represented by block files `block-1-1` through `block-1-6`.
+- Block 3-1 audiobook differentiation is completed in code and the live database, with canonical local grouping, private path storage, conservative external enrichment, and a guarded CLI backfill flow.
+- Build/test/tool verification already passed for the audiobook rollout; any future audiobook work now belongs in the hierarchy-follow-up block.
+- The runtime remains a PM2-managed Windows-local service with shared CLI, HTTP, browser, and Discord service layers.
 
 ## Key Links
 
 - Project charter: `docs/project-charter.md`
 - Roadmap: `docs/roadmap.md`
 - Block index: `docs/blocks/README.md`
-- Project definition block: `docs/blocks/completed/block-00-project-definition.md`
-- Next MVP block: `docs/blocks/block-1-6-mvp-operations-and-acceptance.md`
+- Current block: `docs/blocks/block-3-1-audiobook-differentiation.md`
+- Next likely block: `docs/blocks/block-3-4-hierarchical-audiobook-series-modeling.md`
 
 ## Next Recommended Step
 
-- Implement `docs/blocks/block-1-6-mvp-operations-and-acceptance.md` to establish Windows service restart strategies, document operations, restart commands, and verify full end-to-end MVP operations.
+- Implement `docs/blocks/block-3-4-hierarchical-audiobook-series-modeling.md` to add parent-series, subseries, and related-work support for audiobook summaries and backfill.
+- After hierarchy modeling is in place, revisit `docs/blocks/block-3-2-richer-browser-ui.md` if richer browsing or controls are still the next priority.
 
 ## Open Questions
 
-- Which Windows restart-after-reboot strategy should be documented: Task Scheduler or Windows service wrapper?
+- Whether the local Plex environment is ready for a live audiobook backfill dry-run and later apply.
+- How broad the initial normalization catalog should be beyond the known Discworld-style hierarchy cases.

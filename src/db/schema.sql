@@ -156,6 +156,41 @@ CREATE TABLE IF NOT EXISTS playback_observations (
 INSERT OR IGNORE INTO schema_migrations (version, name)
 VALUES (2, 'playback_evidence_initial');
 
+CREATE TABLE IF NOT EXISTS audiobook_books (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  folder_key TEXT NOT NULL UNIQUE,
+  asin TEXT,
+  isbn TEXT,
+  google_books_id TEXT,
+  title TEXT NOT NULL,
+  subtitle TEXT,
+  authors_json TEXT NOT NULL DEFAULT '[]',
+  narrators_json TEXT NOT NULL DEFAULT '[]',
+  series_title TEXT,
+  series_index REAL,
+  year INTEGER,
+  description TEXT,
+  cover_url TEXT,
+  genres_json TEXT NOT NULL DEFAULT '[]',
+  language TEXT,
+  total_duration_seconds INTEGER,
+  chapter_count INTEGER,
+  source_provenance TEXT NOT NULL,
+  folder_path_hint TEXT,
+  enrichment_status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_audiobook_books_asin
+  ON audiobook_books(asin) WHERE asin IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_audiobook_books_google_id
+  ON audiobook_books(google_books_id) WHERE google_books_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_audiobook_books_series
+  ON audiobook_books(series_title) WHERE series_title IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_audiobook_books_enrichment
+  ON audiobook_books(enrichment_status);
+
 CREATE TABLE IF NOT EXISTS content_catalog (
   rating_key TEXT PRIMARY KEY,
   guid TEXT,
@@ -173,8 +208,22 @@ CREATE TABLE IF NOT EXISTS content_catalog (
   parent_title TEXT,
   leaf_count INTEGER,
   source_provenance TEXT NOT NULL,
-  refreshed_at TEXT NOT NULL
+  refreshed_at TEXT NOT NULL,
+  file_path TEXT,
+  audiobook_id INTEGER REFERENCES audiobook_books(id)
 );
 
 INSERT OR IGNORE INTO schema_migrations (version, name)
 VALUES (3, 'content_catalog_initial');
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+INSERT OR IGNORE INTO schema_migrations (version, name)
+VALUES (4, 'app_settings_initial');
+
+INSERT OR IGNORE INTO app_settings (key, value, updated_at)
+VALUES ('prompt_for_audiobooks', 'false', datetime('now'));

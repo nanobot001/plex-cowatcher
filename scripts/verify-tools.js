@@ -23,7 +23,8 @@ const expectedTools = [
   "project.watch_history",
   "project.watch_summary",
   "project.viewing_sessions",
-  "project.cowatching"
+  "project.cowatching",
+  "project.audiobook_backfill"
 ];
 
 for (const tool of expectedTools) {
@@ -44,7 +45,8 @@ const expectedCliCommands = [
   "watch-history",
   "watch-summary",
   "viewing-sessions",
-  "cowatching"
+  "cowatching",
+  "audiobook-backfill"
 ];
 
 for (const cmd of expectedCliCommands) {

@@ -265,4 +265,10 @@ export class UserService {
       | { id: number; plex_username: string; plex_user_id: string | null }
       | undefined;
   }
+
+  findSourceById(id: number): { id: number; plex_username: string; plex_user_id: string | null } | undefined {
+    return this.db.prepare("SELECT id, plex_username, plex_user_id FROM users WHERE id = ? AND enabled = 1 AND is_source_user = 1").get(id) as
+      | { id: number; plex_username: string; plex_user_id: string | null }
+      | undefined;
+  }
 }
