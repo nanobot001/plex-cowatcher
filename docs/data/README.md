@@ -26,7 +26,13 @@ Discord prompt resolution includes `plexSyncStatus`, optional `errorCode`, and o
 Audiobook support adds two linked layers:
 
 - `content_catalog` remains one row per Plex track and now stores private `file_path` plus nullable `audiobook_id`.
-- `audiobook_books` stores one canonical row per local folder-derived book or exact-ASIN match.
+- `audiobook_books` stores one canonical row per local folder-derived book or exact-ASIN match, and tracks hierarchical series relationships.
+
+Hierarchical Modeling Columns on `audiobook_books`:
+- `parent_series_title`: Standardized top-level series name (e.g., `"Discworld"` or `"Mistborn"`).
+- `subseries_title`: Optional subseries name (e.g., `"Ankh-Morpork City Watch"` or `"Wax and Wayne"`).
+- `related_work_classification`: Optional classification for related companion works (e.g., `"companion"` for `"Secret History"`).
+- `hierarchy_provenance`: Indication of how the hierarchy was resolved (`"metadata"`, `"mapping"`, `"pattern"`, or `"none"`).
 
 Rules to preserve:
 
@@ -35,3 +41,5 @@ Rules to preserve:
 - `source_provenance` identifies whether the current book metadata came from `folder_path`, `audnexus`, or `google_books`.
 - `enrichment_status` records whether canonical enrichment is still `pending` or already `enriched`.
 - Low-confidence or unmatched books remain usable via folder metadata and must not be silently assigned guessed canonical metadata.
+- Precedence for hierarchy updates: `metadata` (highest) > `mapping` > `pattern` > `none`. Updates are only applied when the new provenance has higher precedence or equal (and identical). Disputed classifications of equal authority generate a conflict and are ignored.
+- Mappings: Discworld subseries (Guards, Witches, Death, Rincewind, Tiffany, Moist), Mistborn subseries (Era 1, Era 2/Wax and Wayne, companion classification), and Wheel of Time (parent series only) are resolved deterministically.

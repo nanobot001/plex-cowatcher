@@ -9,6 +9,7 @@ The project is currently in the Phase 3 refinement set. The next planned blocks 
 - `block-3-2-richer-browser-ui.md`
 - `block-3-3-household-watch-reports.md`
 - `block-3-4-hierarchical-audiobook-series-modeling.md`
+- `block-3-5-proactive-audiobook-scanner.md`
 
 Phase 3 builds on the completed playback-intelligence foundation with domain-specific refinement, richer operator ergonomics, and reporting.
 

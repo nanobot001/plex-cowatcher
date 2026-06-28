@@ -142,7 +142,7 @@ tools:
       properties:
         mode:
           type: string
-          enum: [local, enrich, all]
+          enum: [local, enrich, all, hierarchy]
           default: all
         apply:
           type: boolean
@@ -158,5 +158,18 @@ tools:
           minimum: 1
           maximum: 500
           default: 100
+    output_schema:
+      type: object
+
+  - name: project.audiobook_scan
+    risk: write_action
+    description: Proactively crawl Plex library tracks or receive Plex webhook triggers to index and enrich audiobooks.
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        library:
+          type: string
+          default: Audiobooks
     output_schema:
       type: object

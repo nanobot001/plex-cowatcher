@@ -9,6 +9,7 @@ export interface PlexAdapter {
   markWatched(userId: string, ratingKey: string, plexGuid?: string): Promise<MarkWatchedResult>;
   listLibraries(): Promise<Array<{ key: string; title: string; type: string }>>;
   listShows(libraryKey: string): Promise<string[]>;
+  listLibraryTracks(libraryKey: string): Promise<PlexRichMetadata[]>;
 }
 
 export class PlexAdapterError extends Error {
@@ -33,6 +34,24 @@ export class MockPlexAdapter implements PlexAdapter {
   }
 
   async getRichMetadataByRatingKey(ratingKey: string, _plexGuid?: string): Promise<PlexRichMetadata> {
+    if (ratingKey === "mock-track-1") {
+      return {
+        ratingKey: "mock-track-1",
+        mediaType: "track",
+        title: "Part 1",
+        duration: 1200000,
+        librarySectionID: "5",
+        librarySectionTitle: "Audiobooks",
+        grandparentRatingKey: "author-1",
+        grandparentGuid: "local://author-1",
+        grandparentTitle: "Terry Pratchett",
+        parentRatingKey: "book-1",
+        parentGuid: "local://book-1",
+        parentTitle: "Guards! Guards!",
+        genres: [],
+        filePath: "F:\\Media\\Audio\\Audiobooks\\Terry Pratchett   Narrated by\\2023 - Guards! Guards!\\01.mp3"
+      };
+    }
     if (ratingKey.startsWith("show-")) {
       return {
         ratingKey,
@@ -82,7 +101,8 @@ export class MockPlexAdapter implements PlexAdapter {
       { key: "1", title: "Movies", type: "movie" },
       { key: "2", title: "TV Shows", type: "show" },
       { key: "3", title: "Anime", type: "show" },
-      { key: "4", title: "Classic TV", type: "show" }
+      { key: "4", title: "Classic TV", type: "show" },
+      { key: "5", title: "Audiobooks", type: "artist" }
     ];
   }
 
@@ -97,6 +117,27 @@ export class MockPlexAdapter implements PlexAdapter {
       return ["I Love Lucy", "The Twilight Zone", "M*A*S*H"];
     }
     return [];
+  }
+
+  async listLibraryTracks(libraryKey: string): Promise<PlexRichMetadata[]> {
+    return [
+      {
+        ratingKey: "mock-track-1",
+        mediaType: "track",
+        title: "Part 1",
+        duration: 1200000,
+        librarySectionID: libraryKey,
+        librarySectionTitle: "Audiobooks",
+        grandparentRatingKey: "author-1",
+        grandparentGuid: "local://author-1",
+        grandparentTitle: "Terry Pratchett",
+        parentRatingKey: "book-1",
+        parentGuid: "local://book-1",
+        parentTitle: "Guards! Guards!",
+        genres: [],
+        filePath: "F:\\Media\\Audio\\Audiobooks\\Terry Pratchett   Narrated by\\2023 - Guards! Guards!\\01.mp3"
+      }
+    ];
   }
 }
 
@@ -535,6 +576,47 @@ export class HttpPlexAdapter extends MockPlexAdapter {
       }
     }
     return Array.from(showsSet).sort();
+  }
+
+  async listLibraryTracks(libraryKey: string): Promise<PlexRichMetadata[]> {
+    if (!appConfig.PLEX_TOKEN) {
+      throw new PlexAdapterError("PLEX_TOKEN_MISSING", "Plex token is not configured.", "missing_permission", false);
+    }
+    const response = await plexFetch(`/library/sections/${encodeURIComponent(libraryKey)}/all?type=10`);
+    if (!response.ok) {
+      throw plexErrorFromResponse(response, "PLEX_LIBRARY_TRACKS_FAILED", "Failed to retrieve tracks from Plex library.");
+    }
+    const xml = await response.text();
+    const trackMatches = xml.match(/<Track\b[^>]*>([\s\S]*?)<\/Track>/g) ?? 
+                         xml.match(/<Track\b[^>]*\/>/g) ?? [];
+    const tracks: PlexRichMetadata[] = [];
+    for (const match of trackMatches) {
+      const tag = match.match(/<Track\b[^>]*>/)?.[0] ?? match;
+      const ratingKey = attr(tag, "ratingKey");
+      if (!ratingKey) continue;
+
+      const genres = parseGenres(match);
+      const filePath = parsePartFilePath(match);
+
+      tracks.push({
+        ratingKey,
+        guid: attr(tag, "guid"),
+        mediaType: "track",
+        title: attr(tag, "title") ?? ratingKey,
+        duration: attr(tag, "duration") ? Number(attr(tag, "duration")) : undefined,
+        librarySectionID: libraryKey,
+        librarySectionTitle: attr(tag, "librarySectionTitle"),
+        genres,
+        grandparentRatingKey: attr(tag, "grandparentRatingKey"),
+        grandparentGuid: attr(tag, "grandparentGuid"),
+        grandparentTitle: attr(tag, "grandparentTitle"),
+        parentRatingKey: attr(tag, "parentRatingKey"),
+        parentGuid: attr(tag, "parentGuid"),
+        parentTitle: attr(tag, "parentTitle"),
+        filePath
+      });
+    }
+    return tracks;
   }
 }
 

@@ -19,8 +19,9 @@ import { QueryService } from "../dist/service/queryService.js";
 import { SummaryService } from "../dist/service/summaryService.js";
 import { SessionService } from "../dist/service/sessionService.js";
 import { CowatchingIntelligenceService } from "../dist/service/cowatchingIntelligenceService.js";
-import { AudiobookCatalogService, canonicalizeAudiobookSeriesTitle, isAudiobookMedia, parseAudiobookPath, parseAudnexusAsin, prepareAudiobookMetadata } from "../dist/service/audiobookService.js";
+import { AudiobookCatalogService, canonicalizeAudiobookSeriesTitle, isAudiobookMedia, parseAudiobookPath, parseAudnexusAsin, prepareAudiobookMetadata, normalizeAudiobookHierarchy } from "../dist/service/audiobookService.js";
 import { AudiobookBackfillService } from "../dist/service/audiobookBackfillService.js";
+import { AudiobookScannerService } from "../dist/service/audiobookScannerService.js";
 
 const tests = [];
 
@@ -589,7 +590,7 @@ test("HistoryCopyService resolves stale rating keys using plexGuid when checking
 test("PlexAdapter listLibraries and listShows mock implementations", async () => {
   const adapter = new MockPlexAdapter();
   const libraries = await adapter.listLibraries();
-  assert.equal(libraries.length, 4);
+  assert.equal(libraries.length, 5);
   assert.equal(libraries[0].title, "Movies");
   assert.equal(libraries[1].type, "show");
 
@@ -1244,10 +1245,16 @@ test("audiobook migration is repeatable and does not denormalize onto observatio
     migrateDatabase(db);
     migrateDatabase(db);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 5").get().count, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 7").get().count, 1);
     const catalogColumns = db.prepare("PRAGMA table_info(content_catalog)").all().map((column) => column.name);
+    const bookColumns = db.prepare("PRAGMA table_info(audiobook_books)").all().map((column) => column.name);
     const observationColumns = db.prepare("PRAGMA table_info(playback_observations)").all().map((column) => column.name);
     assert.equal(catalogColumns.includes("file_path"), true);
     assert.equal(catalogColumns.includes("audiobook_id"), true);
+    assert.equal(bookColumns.includes("parent_series_title"), true);
+    assert.equal(bookColumns.includes("subseries_title"), true);
+    assert.equal(bookColumns.includes("related_work_classification"), true);
+    assert.equal(bookColumns.includes("hierarchy_provenance"), true);
     assert.equal(observationColumns.includes("audiobook_id"), false);
     assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
   });
@@ -1307,6 +1314,177 @@ test("audiobook backfill skips dead Plex references without failing the batch", 
     assert.equal(fs.readdirSync(path.join(path.dirname(dbPath), "backups")).length, 1);
   });
 });
+
+test("audiobook hierarchy normalizer correctly maps Discworld, Mistborn, and Wheel of Time", () => {
+  // Discworld
+  const watch = normalizeAudiobookHierarchy("Guards! Guards!", "Terry Pratchett");
+  assert.equal(watch.parentSeriesTitle, "Discworld");
+  assert.equal(watch.subseriesTitle, "Ankh-Morpork City Watch");
+  assert.equal(watch.hierarchyProvenance, "mapping");
+
+  const death = normalizeAudiobookHierarchy("Mort (Audiobook)", "Terry Pratchett");
+  assert.equal(death.parentSeriesTitle, "Discworld");
+  assert.equal(death.subseriesTitle, "Death");
+
+  const standaloneDiscworld = normalizeAudiobookHierarchy("Small Gods", "Terry Pratchett");
+  assert.equal(standaloneDiscworld.parentSeriesTitle, "Discworld");
+  assert.equal(standaloneDiscworld.subseriesTitle, undefined);
+
+  // Mistborn
+  const era1 = normalizeAudiobookHierarchy("The Final Empire", "Brandon Sanderson");
+  assert.equal(era1.parentSeriesTitle, "Mistborn");
+  assert.equal(era1.subseriesTitle, "Era 1");
+  assert.equal(era1.relatedWorkClassification, undefined);
+
+  const era2 = normalizeAudiobookHierarchy("The Alloy of Law", "Brandon Sanderson");
+  assert.equal(era2.parentSeriesTitle, "Mistborn");
+  assert.equal(era2.subseriesTitle, "Wax and Wayne");
+
+  const companion = normalizeAudiobookHierarchy("Mistborn: Secret History", "Brandon Sanderson");
+  assert.equal(companion.parentSeriesTitle, "Mistborn");
+  assert.equal(companion.subseriesTitle, undefined);
+  assert.equal(companion.relatedWorkClassification, "companion");
+
+  // Wheel of Time
+  const wot = normalizeAudiobookHierarchy("The Eye of the World", "Robert Jordan", "The Wheel of Time");
+  assert.equal(wot.parentSeriesTitle, "Wheel of Time");
+  assert.equal(wot.subseriesTitle, undefined);
+
+  // Conservative Pattern Fallback
+  const pattern = normalizeAudiobookHierarchy("Some Random Book", "Some Author", "My Cool Series");
+  assert.equal(pattern.parentSeriesTitle, "My Cool Series");
+  assert.equal(pattern.hierarchyProvenance, "pattern");
+
+  // Unset
+  const none = normalizeAudiobookHierarchy("Some Random Book", "Some Author");
+  assert.equal(none.hierarchyProvenance, "none");
+});
+
+test("audiobook hierarchy backfill dry-run proposes changes and apply writes transactionally", async () => {
+  await withTestDb(async (db, dbPath) => {
+    migrateDatabase(db);
+    seedUsers(db);
+
+    const now = new Date().toISOString();
+    // Seed books with hierarchy_provenance = 'none'
+    db.prepare(`
+      INSERT INTO audiobook_books (folder_key, title, authors_json, narrators_json, series_title, genres_json, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES 
+        ('disc-1', 'Guards! Guards!', '["Terry Pratchett"]', '[]', 'Discworld', '[]', 'folder_path', 'pending', ?, ?),
+        ('mist-1', 'The Final Empire', '["Brandon Sanderson"]', '[]', 'Mistborn', '[]', 'folder_path', 'pending', ?, ?),
+        ('wot-1', 'The Eye of the World', '["Robert Jordan"]', '[]', 'Wheel of Time', '[]', 'folder_path', 'pending', ?, ?)
+    `).run(now, now, now, now, now, now);
+
+    const plex = {};
+    const backfill = new AudiobookBackfillService(db, plex, dbPath);
+
+    // Dry Run
+    const preview = await backfill.run({ mode: "hierarchy" });
+    assert.equal(preview.dryRun, true);
+    assert.equal(preview.matched, 3); // 3 proposed
+    assert.equal(preview.linked, 0);   // 0 unchanged
+    assert.equal(preview.hierarchyDetails.length, 3);
+    assert.equal(preview.hierarchyDetails.every(d => d.status === "proposed"), true);
+
+    // Ensure DB is not updated
+    const countNone = db.prepare("SELECT COUNT(*) as count FROM audiobook_books WHERE hierarchy_provenance IS NULL OR hierarchy_provenance = 'none'").get().count;
+    assert.equal(countNone, 3);
+
+    // Apply Run
+    const applied = await backfill.run({ mode: "hierarchy", apply: true, confirm: true });
+    assert.equal(applied.matched, 3);
+    assert.equal(applied.dryRun, false);
+
+    // Ensure DB is updated
+    const countMapping = db.prepare("SELECT COUNT(*) as count FROM audiobook_books WHERE hierarchy_provenance = 'mapping'").get().count;
+    assert.equal(countMapping, 3);
+
+    const discDetail = db.prepare("SELECT * FROM audiobook_books WHERE folder_key = 'disc-1'").get();
+    assert.equal(discDetail.parent_series_title, "Discworld");
+    assert.equal(discDetail.subseries_title, "Ankh-Morpork City Watch");
+
+    // Re-run should report as unchanged (linked)
+    const rerun = await backfill.run({ mode: "hierarchy" });
+    assert.equal(rerun.matched, 0);
+    assert.equal(rerun.linked, 3); // 3 unchanged
+  });
+});
+
+test("AudiobookScannerService scans library and indexes tracks", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    
+    // We will pass MockPlexAdapter
+    const plex = new MockPlexAdapter();
+    const scanner = new AudiobookScannerService(db, plex);
+    
+    const result = await scanner.scanLibrary("Audiobooks");
+    assert.equal(result.ok, true);
+    assert.equal(result.scanned, 1);
+    assert.equal(result.added, 1);
+    
+    // Verify book is created in db
+    const book = db.prepare("SELECT * FROM audiobook_books WHERE title LIKE '%Guards! Guards%'").get();
+    assert.ok(book);
+    assert.equal(book.parent_series_title, "Discworld");
+    assert.equal(book.subseries_title, "Ankh-Morpork City Watch");
+  });
+});
+
+test("Plex webhook endpoint accepts multipart/form-data and processes tracks in background", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    
+    // Import server createApp
+    const { createApp } = await import("../dist/server/app.js");
+    const app = createApp(db, new MockPlexAdapter());
+    
+    // Start local server on random port
+    const server = await new Promise((resolve) => {
+      const s = app.listen(0, "127.0.0.1", () => resolve(s));
+    });
+    const port = server.address().port;
+    
+    try {
+      const payload = {
+        event: "library.new",
+        Metadata: {
+          librarySectionTitle: "Audiobooks",
+          type: "track",
+          ratingKey: "mock-track-1",
+          guid: "plex://track/123"
+        }
+      };
+      
+      const response = await fetch(`http://127.0.0.1:${port}/webhooks/plex`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      
+      assert.equal(response.status, 202);
+      const resJson = await response.json();
+      assert.equal(resJson.ok, true);
+      
+      // Poll database for up to 2 seconds to wait for async processing to complete
+      let row;
+      for (let i = 0; i < 20; i++) {
+        row = db.prepare("SELECT * FROM content_catalog WHERE rating_key = 'mock-track-1'").get();
+        if (row) break;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      assert.ok(row);
+      assert.equal(row.title, "Part 1");
+      
+      // Verify book is created
+      const book = db.prepare("SELECT * FROM audiobook_books WHERE title LIKE '%Guards! Guards%'").get();
+      assert.ok(book);
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+});
+
 let passed = 0;
 for (const { name, fn } of tests) {
   try {

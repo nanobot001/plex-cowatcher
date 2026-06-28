@@ -6,10 +6,10 @@ import type { Db } from "../db/database.js";
 import { appConfig } from "../utils/config.js";
 import { nowIso } from "../utils/time.js";
 import { AuditService } from "./auditService.js";
-import { AudiobookCatalogService, prepareAudiobookMetadata } from "./audiobookService.js";
+import { AudiobookCatalogService, prepareAudiobookMetadata, normalizeAudiobookHierarchy, PROVENANCE_PRECEDENCE } from "./audiobookService.js";
 import { MetadataService } from "./metadataService.js";
 
-export type AudiobookBackfillMode = "local" | "enrich" | "all";
+export type AudiobookBackfillMode = "local" | "enrich" | "all" | "hierarchy";
 
 export interface AudiobookBackfillOptions {
   mode?: AudiobookBackfillMode;
@@ -34,6 +34,15 @@ export interface AudiobookBackfillResult {
   provenance: Record<string, number>;
   backupCreated: boolean;
   resumable: boolean;
+  hierarchyDetails?: Array<{
+    id: number;
+    title: string;
+    parentSeriesTitle?: string;
+    subseriesTitle?: string;
+    relatedWorkClassification?: string;
+    status: "proposed" | "unchanged" | "skipped" | "conflicted";
+    reason: string;
+  }>;
 }
 
 export class AudiobookBackfillService {
@@ -86,6 +95,9 @@ export class AudiobookBackfillService {
     }
     if (mode === "enrich" || mode === "all") {
       await this.runEnrichment(result, batchSize, apply, options.resume === true);
+    }
+    if (mode === "hierarchy" || mode === "all") {
+      await this.runHierarchy(result, batchSize, apply, options.resume === true);
     }
 
     result.ok = result.errors.length === 0;
@@ -183,12 +195,126 @@ export class AudiobookBackfillService {
     }
   }
 
-  private getCursor(kind: "local" | "enrich"): string {
+  private async runHierarchy(result: AudiobookBackfillResult, batchSize: number, apply: boolean, resume: boolean): Promise<void> {
+    const cursor = resume ? Number(this.getCursor("hierarchy") || 0) : 0;
+    const rows = this.db.prepare(`
+      SELECT * FROM audiobook_books
+      WHERE id > ?
+      ORDER BY id
+      LIMIT ?
+    `).all(cursor, batchSize) as any[];
+
+    if (!result.hierarchyDetails) {
+      result.hierarchyDetails = [];
+    }
+
+    for (const row of rows) {
+      result.scanned++;
+      let authors: string[] = [];
+      try {
+        authors = JSON.parse(row.authors_json);
+      } catch {}
+      const hierarchy = normalizeAudiobookHierarchy(row.title, authors[0] ?? "", row.series_title);
+
+      const oldProv = row.hierarchy_provenance ?? "none";
+      const newProv = hierarchy.hierarchyProvenance;
+
+      const oldPrec = PROVENANCE_PRECEDENCE[oldProv as keyof typeof PROVENANCE_PRECEDENCE] ?? 0;
+      const newPrec = PROVENANCE_PRECEDENCE[newProv as keyof typeof PROVENANCE_PRECEDENCE] ?? 0;
+
+      let shouldUpdate = false;
+      let conflict = false;
+
+      if (newPrec > oldPrec) {
+        shouldUpdate = true;
+      } else if (newPrec === oldPrec && newPrec > 0) {
+        const sameParent = row.parent_series_title === (hierarchy.parentSeriesTitle ?? null);
+        const sameSub = row.subseries_title === (hierarchy.subseriesTitle ?? null);
+        const sameClass = row.related_work_classification === (hierarchy.relatedWorkClassification ?? null);
+        if (!sameParent || !sameSub || !sameClass) {
+          conflict = true;
+        }
+      }
+
+      if (conflict) {
+        result.hierarchyDetails.push({
+          id: row.id,
+          title: row.title,
+          parentSeriesTitle: hierarchy.parentSeriesTitle,
+          subseriesTitle: hierarchy.subseriesTitle,
+          relatedWorkClassification: hierarchy.relatedWorkClassification,
+          status: "conflicted",
+          reason: `conflict_equal_authority: ${oldProv} vs ${newProv}`
+        });
+        result.errors.push({
+          entity: "book",
+          id: String(row.id),
+          code: "HIERARCHY_CONFLICT"
+        });
+      } else if (shouldUpdate) {
+        result.matched++;
+        result.hierarchyDetails.push({
+          id: row.id,
+          title: row.title,
+          parentSeriesTitle: hierarchy.parentSeriesTitle,
+          subseriesTitle: hierarchy.subseriesTitle,
+          relatedWorkClassification: hierarchy.relatedWorkClassification,
+          status: "proposed",
+          reason: `update: ${oldProv} -> ${newProv}`
+        });
+        if (apply) {
+          const now = nowIso();
+          this.db.prepare(`
+            UPDATE audiobook_books SET
+              parent_series_title = ?,
+              subseries_title = ?,
+              related_work_classification = ?,
+              hierarchy_provenance = ?,
+              updated_at = ?
+            WHERE id = ?
+          `).run(
+            hierarchy.parentSeriesTitle ?? null,
+            hierarchy.subseriesTitle ?? null,
+            hierarchy.relatedWorkClassification ?? null,
+            hierarchy.hierarchyProvenance,
+            now,
+            row.id
+          );
+        }
+      } else {
+        if (hierarchy.hierarchyProvenance === "none") {
+          result.hierarchyDetails.push({
+            id: row.id,
+            title: row.title,
+            status: "skipped",
+            reason: "no_hierarchy_resolved"
+          });
+        } else {
+          result.linked++;
+          result.hierarchyDetails.push({
+            id: row.id,
+            title: row.title,
+            parentSeriesTitle: row.parent_series_title,
+            subseriesTitle: row.subseries_title,
+            relatedWorkClassification: row.related_work_classification,
+            status: "unchanged",
+            reason: "already_correct"
+          });
+        }
+      }
+
+      if (apply) {
+        this.setCursor("hierarchy", String(row.id));
+      }
+    }
+  }
+
+  private getCursor(kind: "local" | "enrich" | "hierarchy"): string {
     const row = this.db.prepare("SELECT value FROM app_settings WHERE key = ?").get(`audiobook_backfill_cursor_${kind}`) as { value: string } | undefined;
     return row?.value ?? "";
   }
 
-  private setCursor(kind: "local" | "enrich", value: string): void {
+  private setCursor(kind: "local" | "enrich" | "hierarchy", value: string): void {
     this.db.prepare(`
       INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at

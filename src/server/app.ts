@@ -1,6 +1,6 @@
 import express from "express";
 import path from "node:path";
-import { createPlexAdapter } from "../adapters/plexAdapter.js";
+import { createPlexAdapter, type PlexAdapter } from "../adapters/plexAdapter.js";
 import { createTautulliAdapter } from "../adapters/tautulliAdapter.js";
 import { openMigratedDatabase } from "../db/database.js";
 import { DiscordBot } from "../discord/bot.js";
@@ -12,15 +12,17 @@ import { WatcherService } from "../watcher/watcher.js";
 import { registerWebRoutes } from "../web/index.js";
 import { buildRouter } from "./routes.js";
 
-export function createApp() {
-  const db = openMigratedDatabase();
+export function createApp(
+  db = openMigratedDatabase(),
+  plex: PlexAdapter = createPlexAdapter()
+) {
   const app = express();
   app.locals.db = db;
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
   app.use("/static", express.static(path.resolve("src/web/static")));
   registerWebRoutes(app);
-  app.use(buildRouter(db));
+  app.use(buildRouter(db, plex));
   app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     log("error", { action: "http_error", message: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ ok: false, errorCode: "HTTP_ERROR", message: error instanceof Error ? error.message : "HTTP error" });

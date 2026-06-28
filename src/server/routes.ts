@@ -1,6 +1,6 @@
 import express, { type Router } from "express";
 import type { Db } from "../db/database.js";
-import { createPlexAdapter } from "../adapters/plexAdapter.js";
+import { createPlexAdapter, type PlexAdapter } from "../adapters/plexAdapter.js";
 import { createTautulliAdapter } from "../adapters/tautulliAdapter.js";
 import { AuditService } from "../service/auditService.js";
 import { CowatchService } from "../service/cowatchService.js";
@@ -14,9 +14,8 @@ import { SessionService } from "../service/sessionService.js";
 import { CowatchingIntelligenceService } from "../service/cowatchingIntelligenceService.js";
 import { parseDays } from "../utils/time.js";
 
-export function buildRouter(db: Db): Router {
+export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Router {
   const router = express.Router();
-  const plex = createPlexAdapter();
   const tautulli = createTautulliAdapter();
   const sync = new SyncService(plex);
   const audit = new AuditService(db);
@@ -205,6 +204,78 @@ export function buildRouter(db: Db): Router {
         res.status(400).json({ ok: false, errorCode: "VALIDATION_ERROR", message: error.message });
       } else {
         next(error);
+      }
+    }
+  });
+
+  router.post("/webhooks/plex", (req, res) => {
+    const contentType = req.headers["content-type"] ?? "";
+    
+    if (contentType.includes("multipart/form-data")) {
+      let rawBody = "";
+      req.on("data", (chunk) => {
+        rawBody += chunk.toString();
+      });
+      req.on("end", async () => {
+        try {
+          let payload: any;
+          const match = rawBody.match(/Content-Disposition:\s*form-data;\s*name="payload"[\r\n]+[\r\n]+([\s\S]*?)[\r\n]+---+/i);
+          if (match && match[1]) {
+            payload = JSON.parse(match[1].trim());
+          } else {
+            payload = JSON.parse(rawBody);
+          }
+          await processWebhookPayload(payload);
+          if (!res.headersSent) {
+            res.status(202).json({ ok: true, message: "Webhook accepted for background processing" });
+          }
+        } catch (err) {
+          console.error("[Webhook] Failed to parse Plex webhook multipart payload:", err);
+          if (!res.headersSent) {
+            res.status(400).json({ ok: false, errorCode: "WEBHOOK_PARSE_FAILED", message: "Failed to parse webhook" });
+          }
+        }
+      });
+    } else {
+      try {
+        const payload = typeof req.body.payload === "string" ? JSON.parse(req.body.payload) : req.body;
+        void processWebhookPayload(payload).catch((err) => {
+          console.error("[Webhook] Background webhook processing failed:", err);
+        });
+        res.status(202).json({ ok: true, message: "Webhook accepted for background processing" });
+      } catch (err) {
+        res.status(400).json({ ok: false, errorCode: "WEBHOOK_PARSE_FAILED", message: "Failed to parse webhook" });
+      }
+    }
+
+    async function processWebhookPayload(payload: any) {
+      if (!payload) return;
+      const event = payload.event;
+      const metadata = payload.Metadata;
+      if (!metadata) return;
+
+      const libraryTitle = metadata.librarySectionTitle ?? "";
+      const isAudiobook = libraryTitle.toLowerCase().includes("audiobook") ||
+                          metadata.type === "track" && (metadata.guid?.includes("audnexus") || metadata.guid?.includes("audiobook"));
+
+      if (!isAudiobook) return;
+
+      if (event === "library.new" || event === "media.play") {
+        const ratingKey = metadata.ratingKey;
+        if (!ratingKey) return;
+
+        console.log(`[Webhook] Ingesting track ${ratingKey} for library '${libraryTitle}'`);
+        const { MetadataService } = await import("../service/metadataService.js");
+        const { AudiobookCatalogService } = await import("../service/audiobookService.js");
+
+        const metadataService = new MetadataService(db, plex);
+        const catalogService = new AudiobookCatalogService(db);
+
+        const entry = await metadataService.refreshMetadata(ratingKey);
+        if (entry?.audiobookId) {
+          await catalogService.enrichBook(entry.audiobookId, true);
+          console.log(`[Webhook] Enriched bookId ${entry.audiobookId} via webhook`);
+        }
       }
     }
   });

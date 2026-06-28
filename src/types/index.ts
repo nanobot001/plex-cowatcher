@@ -87,6 +87,10 @@ export interface AudiobookBook {
   chapterCount?: number;
   sourceProvenance: AudiobookProvenance;
   enrichmentStatus: AudiobookEnrichmentStatus;
+  parentSeriesTitle?: string;
+  subseriesTitle?: string;
+  relatedWorkClassification?: string;
+  hierarchyProvenance?: string;
 }
 
 export interface WatchedState {

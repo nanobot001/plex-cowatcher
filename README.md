@@ -87,6 +87,10 @@ node dist/cli/cli.js watch-history --user Tony --limit 5 --pretty
 node dist/cli/cli.js watch-summary --user Tony --days 7 --pretty
 node dist/cli/cli.js viewing-sessions --user Tony --days 7 --pretty
 node dist/cli/cli.js cowatching --days 7 --pretty
+
+# Phase 3 audiobook support
+node dist/cli/cli.js audiobook-backfill --mode hierarchy --pretty
+node dist/cli/cli.js scan-audiobooks --library "Audiobooks" --pretty
 ```
 
 `verify-plex-watched-state` is the guided Block 1-4 check for Plex user listing, metadata lookup, and watched-state lookup. Add `--mark-watched` only with a known safe media item after confirming the target account/token model. The current live mutation path returns `unsupported_mutation` instead of writing watched state because per-target Plex mutation has not been verified for this household setup.

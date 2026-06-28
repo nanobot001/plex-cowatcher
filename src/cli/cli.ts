@@ -148,13 +148,13 @@ async function main(): Promise<void> {
       {
         const { AudiobookBackfillService } = await import("../service/audiobookBackfillService.js");
         const mode = arg("mode") ?? "all";
-        if (!(["local", "enrich", "all"] as string[]).includes(mode)) {
-          print({ ok: false, tool: "project.audiobook_backfill", timestamp: new Date().toISOString(), error: { code: "INVALID_MODE", message: "Use --mode local, enrich, or all.", retryable: false, severity: "error" } });
+        if (!(["local", "enrich", "all", "hierarchy"] as string[]).includes(mode)) {
+          print({ ok: false, tool: "project.audiobook_backfill", timestamp: new Date().toISOString(), error: { code: "INVALID_MODE", message: "Use --mode local, enrich, hierarchy, or all.", retryable: false, severity: "error" } });
           break;
         }
         try {
           const data = await new AudiobookBackfillService(db, plex).run({
-            mode: mode as "local" | "enrich" | "all",
+            mode: mode as "local" | "enrich" | "all" | "hierarchy",
             apply: args.includes("--apply"),
             confirm: args.includes("--confirm"),
             resume: args.includes("--resume"),
@@ -298,8 +298,25 @@ async function main(): Promise<void> {
         print({ ok: true, data: result });
       }
       break;
+    case "scan-audiobooks":
+      {
+        const libraryName = arg("library") ?? "Audiobooks";
+        const { AudiobookScannerService } = await import("../service/audiobookScannerService.js");
+        const scanner = new AudiobookScannerService(db, plex);
+        try {
+          const result = await scanner.scanLibrary(libraryName);
+          print(result);
+        } catch (error) {
+          print({
+            ok: false,
+            errorCode: "SCAN_AUDIOBOOKS_FAILED",
+            message: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+      break;
     default:
-      print({ ok: true, commands: ["health", "users", "recent", "pending", "preview-copy", "apply-copy", "audiobook-backfill", "audit", "retry-failed", "verify-plex-watched-state", "test-discord-prompt"] });
+      print({ ok: true, commands: ["health", "users", "recent", "pending", "preview-copy", "apply-copy", "audiobook-backfill", "scan-audiobooks", "audit", "retry-failed", "verify-plex-watched-state", "test-discord-prompt"] });
   }
 }
 

@@ -51,6 +51,203 @@ export function normalizeBookText(value: string): string {
     .trim();
 }
 
+export const PROVENANCE_PRECEDENCE = {
+  metadata: 3,
+  mapping: 2,
+  pattern: 1,
+  none: 0
+};
+
+export interface AudiobookHierarchyResult {
+  parentSeriesTitle?: string;
+  subseriesTitle?: string;
+  relatedWorkClassification?: string;
+  hierarchyProvenance: "metadata" | "mapping" | "pattern" | "none";
+}
+
+export function normalizeAudiobookHierarchy(
+  title: string,
+  author: string,
+  currentSeries?: string
+): AudiobookHierarchyResult {
+  const normTitle = normalizeBookText(title);
+  const normAuthor = normalizeBookText(author);
+  const normSeries = currentSeries ? normalizeBookText(currentSeries) : "";
+
+  // 1. Declarative Mappings (Discworld & Mistborn)
+  const isDiscworld =
+    normSeries === "discworld" ||
+    normTitle.includes("discworld") ||
+    normAuthor.includes("terry pratchett");
+
+  if (isDiscworld) {
+    let subseries: string | undefined = undefined;
+
+    const cityWatch = [
+      "guards guards",
+      "men at arms",
+      "feet of clay",
+      "jingo",
+      "the fifth elephant",
+      "night watch",
+      "thud",
+      "snuff"
+    ];
+    const death = [
+      "mort",
+      "reaper man",
+      "soul music",
+      "hogfather",
+      "thief of time"
+    ];
+    const witches = [
+      "equal rites",
+      "wyrd sisters",
+      "witches abroad",
+      "lords and ladies",
+      "maskerade",
+      "carpe jugulum"
+    ];
+    const rincewind = [
+      "the colour of magic",
+      "the light fantastic",
+      "sourcery",
+      "eric",
+      "interesting times",
+      "the last continent",
+      "unseen academicals"
+    ];
+    const tiffany = [
+      "the wee free men",
+      "a hat full of sky",
+      "wintersmith",
+      "i shall wear midnight",
+      "the shepherd s crown",
+      "the shepherds crown"
+    ];
+    const moist = [
+      "going postal",
+      "making money",
+      "raising steam"
+    ];
+
+    if (cityWatch.some(t => normTitle.includes(t))) {
+      subseries = "Ankh-Morpork City Watch";
+    } else if (death.some(t => normTitle.includes(t))) {
+      subseries = "Death";
+    } else if (witches.some(t => normTitle.includes(t))) {
+      subseries = "Witches";
+    } else if (rincewind.some(t => normTitle.includes(t))) {
+      subseries = "Rincewind";
+    } else if (tiffany.some(t => normTitle.includes(t))) {
+      subseries = "Tiffany Aching";
+    } else if (moist.some(t => normTitle.includes(t))) {
+      subseries = "Moist von Lipwig";
+    }
+
+    return {
+      parentSeriesTitle: "Discworld",
+      subseriesTitle: subseries,
+      hierarchyProvenance: "mapping"
+    };
+  }
+
+  const isMistborn =
+    normSeries === "mistborn" ||
+    normTitle.includes("mistborn") ||
+    (normAuthor.includes("brandon sanderson") && (
+      normTitle.includes("alloy of law") ||
+      normTitle.includes("shadows of self") ||
+      normTitle.includes("bands of mourning") ||
+      normTitle.includes("lost metal") ||
+      normTitle.includes("final empire") ||
+      normTitle.includes("well of ascension") ||
+      normTitle.includes("hero of ages") ||
+      normTitle.includes("secret history")
+    ));
+
+  if (isMistborn) {
+    const era1 = [
+      "the final empire",
+      "the well of ascension",
+      "the hero of ages",
+      "mistborn 1",
+      "mistborn 2",
+      "mistborn 3"
+    ];
+    const era2 = [
+      "the alloy of law",
+      "shadows of self",
+      "the bands of mourning",
+      "the lost metal",
+      "mistborn 4",
+      "mistborn 5",
+      "mistborn 6",
+      "mistborn 7"
+    ];
+    const companion = [
+      "secret history"
+    ];
+
+    let subseries: string | undefined = undefined;
+    let classification: string | undefined = undefined;
+
+    if (era1.some(t => normTitle.includes(t))) {
+      subseries = "Era 1";
+    } else if (era2.some(t => normTitle.includes(t))) {
+      subseries = "Wax and Wayne";
+    } else if (companion.some(t => normTitle.includes(t))) {
+      classification = "companion";
+    }
+
+    return {
+      parentSeriesTitle: "Mistborn",
+      subseriesTitle: subseries,
+      relatedWorkClassification: classification,
+      hierarchyProvenance: "mapping"
+    };
+  }
+
+  const isWoT =
+    normSeries === "wheel of time" ||
+    normTitle.includes("wheel of time") ||
+    normTitle.includes("eye of the world") ||
+    normTitle.includes("great hunt") ||
+    normTitle.includes("dragon reborn") ||
+    normTitle.includes("shadow rising") ||
+    normTitle.includes("fires of heaven") ||
+    normTitle.includes("lord of chaos") ||
+    normTitle.includes("a crown of swords") ||
+    normTitle.includes("path of daggers") ||
+    normTitle.includes("winter s heart") ||
+    normTitle.includes("winters heart") ||
+    normTitle.includes("crossroads of twilight") ||
+    normTitle.includes("knife of dreams") ||
+    normTitle.includes("the gathering storm") ||
+    normTitle.includes("towers of midnight") ||
+    normTitle.includes("a memory of light") ||
+    normTitle.includes("new spring");
+
+  if (isWoT) {
+    return {
+      parentSeriesTitle: "Wheel of Time",
+      hierarchyProvenance: "mapping"
+    };
+  }
+
+  // 3. Conservative patterns
+  if (currentSeries) {
+    return {
+      parentSeriesTitle: currentSeries.trim(),
+      hierarchyProvenance: "pattern"
+    };
+  }
+
+  return {
+    hierarchyProvenance: "none"
+  };
+}
+
 export function canonicalizeAudiobookSeriesTitle(value?: string): string | undefined {
   const normalized = normalizeBookText(value ?? "");
   if (!normalized) return undefined;
@@ -112,47 +309,125 @@ export class AudiobookCatalogService {
   ensureLocalBook(prepared: PreparedAudiobookMetadata): number | null {
     const { identity, asin, metadata } = prepared;
     if (!identity && !asin) return null;
-    if (asin) {
-      const existing = this.db.prepare("SELECT id FROM audiobook_books WHERE asin = ?").get(asin) as { id: number } | undefined;
-      if (existing) return existing.id;
-    }
 
     const folderKey = identity?.folderKey ?? `asin:${asin}`;
     const title = identity?.bookTitle ?? metadata.parentTitle ?? metadata.title;
     const authors = identity?.author ? [identity.author] : [];
     const seriesTitle = canonicalizeAudiobookSeriesTitle(identity?.seriesTitle ?? metadata.grandparentTitle);
     const now = nowIso();
-    this.db.prepare(`
-      INSERT INTO audiobook_books (
-        folder_key, asin, title, authors_json, narrators_json, series_title,
-        genres_json, source_provenance, folder_path_hint, enrichment_status,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, '[]', ?, '[]', 'folder_path', ?, 'pending', ?, ?)
-      ON CONFLICT(folder_key) DO UPDATE SET
-        asin = COALESCE(audiobook_books.asin, excluded.asin),
-        title = CASE WHEN audiobook_books.source_provenance = 'folder_path' THEN excluded.title ELSE audiobook_books.title END,
-        authors_json = CASE WHEN audiobook_books.source_provenance = 'folder_path' THEN excluded.authors_json ELSE audiobook_books.authors_json END,
-        series_title = CASE WHEN audiobook_books.source_provenance = 'folder_path' THEN excluded.series_title ELSE audiobook_books.series_title END,
-        folder_path_hint = COALESCE(audiobook_books.folder_path_hint, excluded.folder_path_hint),
-        updated_at = excluded.updated_at
-    `).run(
-      folderKey,
-      asin ?? null,
-      title,
-      JSON.stringify(authors),
-      seriesTitle ?? null,
-      identity?.folderPathHint ?? null,
-      now,
-      now
-    );
-    const row = this.db.prepare("SELECT id FROM audiobook_books WHERE folder_key = ?").get(folderKey) as { id: number };
-    return row.id;
+
+    const hierarchy = normalizeAudiobookHierarchy(title, authors[0] ?? "", seriesTitle);
+
+    let existing = null;
+    if (asin) {
+      existing = this.db.prepare("SELECT * FROM audiobook_books WHERE asin = ?").get(asin) as any;
+    }
+    if (!existing) {
+      existing = this.db.prepare("SELECT * FROM audiobook_books WHERE folder_key = ?").get(folderKey) as any;
+    }
+
+    if (existing) {
+      const oldProv = existing.hierarchy_provenance ?? "none";
+      const newProv = hierarchy.hierarchyProvenance;
+
+      const oldPrec = PROVENANCE_PRECEDENCE[oldProv as keyof typeof PROVENANCE_PRECEDENCE] ?? 0;
+      const newPrec = PROVENANCE_PRECEDENCE[newProv as keyof typeof PROVENANCE_PRECEDENCE] ?? 0;
+
+      let shouldUpdateHierarchy = false;
+      if (newPrec > oldPrec) {
+        shouldUpdateHierarchy = true;
+      } else if (newPrec === oldPrec && newPrec > 0) {
+        const sameParent = existing.parent_series_title === (hierarchy.parentSeriesTitle ?? null);
+        const sameSub = existing.subseries_title === (hierarchy.subseriesTitle ?? null);
+        const sameClass = existing.related_work_classification === (hierarchy.relatedWorkClassification ?? null);
+        if (sameParent && sameSub && sameClass) {
+          shouldUpdateHierarchy = true;
+        }
+      }
+
+      const updatedTitle = existing.source_provenance === 'folder_path' ? title : existing.title;
+      const updatedAuthors = existing.source_provenance === 'folder_path' ? JSON.stringify(authors) : existing.authors_json;
+      const updatedSeries = existing.source_provenance === 'folder_path' ? seriesTitle : existing.series_title;
+
+      if (shouldUpdateHierarchy) {
+        this.db.prepare(`
+          UPDATE audiobook_books SET
+            asin = COALESCE(asin, ?),
+            title = ?,
+            authors_json = ?,
+            series_title = ?,
+            folder_path_hint = COALESCE(folder_path_hint, ?),
+            parent_series_title = ?,
+            subseries_title = ?,
+            related_work_classification = ?,
+            hierarchy_provenance = ?,
+            updated_at = ?
+          WHERE id = ?
+        `).run(
+          asin ?? null,
+          updatedTitle,
+          updatedAuthors,
+          updatedSeries,
+          identity?.folderPathHint ?? null,
+          hierarchy.parentSeriesTitle ?? null,
+          hierarchy.subseriesTitle ?? null,
+          hierarchy.relatedWorkClassification ?? null,
+          hierarchy.hierarchyProvenance,
+          now,
+          existing.id
+        );
+      } else {
+        this.db.prepare(`
+          UPDATE audiobook_books SET
+            asin = COALESCE(asin, ?),
+            title = ?,
+            authors_json = ?,
+            series_title = ?,
+            folder_path_hint = COALESCE(folder_path_hint, ?),
+            updated_at = ?
+          WHERE id = ?
+        `).run(
+          asin ?? null,
+          updatedTitle,
+          updatedAuthors,
+          updatedSeries,
+          identity?.folderPathHint ?? null,
+          now,
+          existing.id
+        );
+      }
+      return existing.id;
+    } else {
+      this.db.prepare(`
+        INSERT INTO audiobook_books (
+          folder_key, asin, title, authors_json, narrators_json, series_title,
+          genres_json, source_provenance, folder_path_hint, enrichment_status,
+          parent_series_title, subseries_title, related_work_classification, hierarchy_provenance,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, '[]', ?, '[]', 'folder_path', ?, 'pending', ?, ?, ?, ?, ?, ?)
+      `).run(
+        folderKey,
+        asin ?? null,
+        title,
+        JSON.stringify(authors),
+        seriesTitle ?? null,
+        identity?.folderPathHint ?? null,
+        hierarchy.parentSeriesTitle ?? null,
+        hierarchy.subseriesTitle ?? null,
+        hierarchy.relatedWorkClassification ?? null,
+        hierarchy.hierarchyProvenance,
+        now,
+        now
+      );
+      const row = this.db.prepare("SELECT id FROM audiobook_books WHERE folder_key = ?").get(folderKey) as { id: number };
+      return row.id;
+    }
   }
 
   refreshAggregates(id: number): void {
     this.db.prepare(`
       UPDATE audiobook_books SET
-        total_duration_seconds = (SELECT CAST(COALESCE(SUM(CASE WHEN duration > 100000 THEN duration / 1000 ELSE duration END), 0) AS INTEGER) FROM content_catalog WHERE audiobook_id = ?),
+        total_duration_seconds = (SELECT CAST(COALESCE(SUM(duration) / 1000, 0) AS INTEGER) FROM content_catalog WHERE audiobook_id = ?),
         chapter_count = (SELECT COUNT(*) FROM content_catalog WHERE audiobook_id = ?),
         updated_at = ?
       WHERE id = ?
@@ -249,19 +524,70 @@ export class AudiobookCatalogService {
   }
 
   private applyEnrichment(id: number, data: EnrichmentData): void {
-    this.db.prepare(`
-      UPDATE audiobook_books SET
-        asin = COALESCE(?, asin), isbn = COALESCE(?, isbn), google_books_id = COALESCE(?, google_books_id),
-        title = ?, subtitle = ?, authors_json = ?, narrators_json = ?, series_title = COALESCE(?, series_title),
-        series_index = COALESCE(?, series_index), year = ?, description = ?, cover_url = ?, genres_json = ?,
-        language = ?, source_provenance = ?, enrichment_status = 'enriched', updated_at = ?
-      WHERE id = ?
-    `).run(
-      data.asin ?? null, data.isbn ?? null, data.googleBooksId ?? null, data.title, data.subtitle ?? null,
-      JSON.stringify(data.authors), JSON.stringify(data.narrators), data.seriesTitle ?? null, data.seriesIndex ?? null,
-      data.year ?? null, data.description ?? null, data.coverUrl ?? null, JSON.stringify(data.genres),
-      data.language ?? null, data.sourceProvenance, nowIso(), id
+    const existing = this.db.prepare("SELECT * FROM audiobook_books WHERE id = ?").get(id) as any;
+    if (!existing) return;
+
+    const authors = data.authors;
+    const hierarchy = normalizeAudiobookHierarchy(
+      data.title,
+      authors[0] ?? "",
+      data.seriesTitle
     );
+
+    const oldProv = existing.hierarchy_provenance ?? "none";
+    const newProv = hierarchy.hierarchyProvenance;
+
+    const oldPrec = PROVENANCE_PRECEDENCE[oldProv as keyof typeof PROVENANCE_PRECEDENCE] ?? 0;
+    const newPrec = PROVENANCE_PRECEDENCE[newProv as keyof typeof PROVENANCE_PRECEDENCE] ?? 0;
+
+    let shouldUpdateHierarchy = false;
+    if (newPrec > oldPrec) {
+      shouldUpdateHierarchy = true;
+    } else if (newPrec === oldPrec && newPrec > 0) {
+      const sameParent = existing.parent_series_title === (hierarchy.parentSeriesTitle ?? null);
+      const sameSub = existing.subseries_title === (hierarchy.subseriesTitle ?? null);
+      const sameClass = existing.related_work_classification === (hierarchy.relatedWorkClassification ?? null);
+      if (sameParent && sameSub && sameClass) {
+        shouldUpdateHierarchy = true;
+      }
+    }
+
+    const now = nowIso();
+    if (shouldUpdateHierarchy) {
+      this.db.prepare(`
+        UPDATE audiobook_books SET
+          asin = COALESCE(?, asin), isbn = COALESCE(?, isbn), google_books_id = COALESCE(?, google_books_id),
+          title = ?, subtitle = ?, authors_json = ?, narrators_json = ?, series_title = COALESCE(?, series_title),
+          series_index = COALESCE(?, series_index), year = ?, description = ?, cover_url = ?, genres_json = ?,
+          language = ?, source_provenance = ?, enrichment_status = 'enriched',
+          parent_series_title = ?, subseries_title = ?, related_work_classification = ?, hierarchy_provenance = ?,
+          updated_at = ?
+        WHERE id = ?
+      `).run(
+        data.asin ?? null, data.isbn ?? null, data.googleBooksId ?? null, data.title, data.subtitle ?? null,
+        JSON.stringify(data.authors), JSON.stringify(data.narrators), data.seriesTitle ?? null, data.seriesIndex ?? null,
+        data.year ?? null, data.description ?? null, data.coverUrl ?? null, JSON.stringify(data.genres),
+        data.language ?? null, data.sourceProvenance,
+        hierarchy.parentSeriesTitle ?? null, hierarchy.subseriesTitle ?? null, hierarchy.relatedWorkClassification ?? null, hierarchy.hierarchyProvenance,
+        now, id
+      );
+    } else {
+      this.db.prepare(`
+        UPDATE audiobook_books SET
+          asin = COALESCE(?, asin), isbn = COALESCE(?, isbn), google_books_id = COALESCE(?, google_books_id),
+          title = ?, subtitle = ?, authors_json = ?, narrators_json = ?, series_title = COALESCE(?, series_title),
+          series_index = COALESCE(?, series_index), year = ?, description = ?, cover_url = ?, genres_json = ?,
+          language = ?, source_provenance = ?, enrichment_status = 'enriched',
+          updated_at = ?
+        WHERE id = ?
+      `).run(
+        data.asin ?? null, data.isbn ?? null, data.googleBooksId ?? null, data.title, data.subtitle ?? null,
+        JSON.stringify(data.authors), JSON.stringify(data.narrators), data.seriesTitle ?? null, data.seriesIndex ?? null,
+        data.year ?? null, data.description ?? null, data.coverUrl ?? null, JSON.stringify(data.genres),
+        data.language ?? null, data.sourceProvenance,
+        now, id
+      );
+    }
   }
 }
 
@@ -310,3 +636,27 @@ function yearFrom(value: unknown): number | undefined {
   const match = String(value ?? "").match(/\b(\d{4})\b/);
   return match ? Number(match[1]) : undefined;
 }
+
+export interface AudiobookProviderCandidate {
+  asin?: string;
+  isbn?: string;
+  title: string;
+  authors: string[];
+  narrators: string[];
+  seriesTitle?: string;
+  seriesIndex?: number;
+  year?: number;
+  description?: string;
+  coverUrl?: string;
+  genres: string[];
+  language?: string;
+  sourceProvenance: string;
+  confidence: number;
+}
+
+export interface AudiobookProvider {
+  name: string;
+  searchBook(title: string, author: string): Promise<AudiobookProviderCandidate[]>;
+  getBookByAsin?(asin: string): Promise<AudiobookProviderCandidate | null>;
+}
+

@@ -28,6 +28,7 @@ export function migrateDatabase(db: Db): void {
   ensureColumn(db, "users", "is_home_user", "INTEGER NOT NULL DEFAULT 0");
   migrateAudiobooks(db);
   normalizeAudiobookSeriesTitles(db);
+  migrateAudiobookHierarchy(db);
 }
 
 function migrateAudiobooks(db: Db): void {
@@ -105,6 +106,26 @@ function normalizeAudiobookSeriesTitles(db: Db): void {
       `).run(canonicalSeries, canonicalSeries);
     }
     db.prepare("INSERT INTO schema_migrations (version, name) VALUES (6, ?)").run("audiobook_series_title_normalization");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrateAudiobookHierarchy(db: Db): void {
+  const applied = db.prepare("SELECT 1 FROM schema_migrations WHERE version = 7").get();
+  if (applied) return;
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    ensureColumn(db, "audiobook_books", "parent_series_title", "TEXT");
+    ensureColumn(db, "audiobook_books", "subseries_title", "TEXT");
+    ensureColumn(db, "audiobook_books", "related_work_classification", "TEXT");
+    ensureColumn(db, "audiobook_books", "hierarchy_provenance", "TEXT");
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_audiobook_books_parent_series
+      ON audiobook_books(parent_series_title) WHERE parent_series_title IS NOT NULL`);
+    db.prepare("INSERT INTO schema_migrations (version, name) VALUES (7, ?)").run("audiobook_hierarchy");
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");

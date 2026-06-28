@@ -178,6 +178,10 @@ CREATE TABLE IF NOT EXISTS audiobook_books (
   source_provenance TEXT NOT NULL,
   folder_path_hint TEXT,
   enrichment_status TEXT NOT NULL DEFAULT 'pending',
+  parent_series_title TEXT,
+  subseries_title TEXT,
+  related_work_classification TEXT,
+  hierarchy_provenance TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
