@@ -120,9 +120,15 @@ Phase 3 introduces domain-specific features, system settings, and reporting to r
 
 Introduce robust heuristics and deep metadata parsing to classify audiobooks and separate them from standard music tracks. Implement a foundational application settings store to configure rules like disabling Discord prompts for solo audiobook sessions.
 
-### Block 3-2: Richer Browser UI
+### Block 3-2 Umbrella Specification: Customizable Household Media Dashboard MVP
 
-Upgrade the local web dashboard to support pagination, deep history search, CSV export, and richer controls for reviewing co-watch history and modifying application settings.
+Implemented 2026-06-28 through Blocks 3-2a to 3-2e. Together, the completed children create a highly customizable, media-neutral window into what every configured user is consuming.
+
+- **3-2a - Usable Dashboard MVP Foundation:** Real household overview, mixed-media activity, shared filters, initial drill-downs, safe Plex artwork, and saved display preferences.
+- **3-2b - Activity Timeline And Layout System:** Persistent layout switching and a chronological, provenance-aware activity view.
+- **3-2c - Media Explorer And Rich Drill-Downs:** Searchable artwork browsing plus media-, person-, session-, episodic-, and audiobook-aware detail.
+- **3-2d - People And Co-Watching Workspace:** Per-person intelligence, Discord prompt lifecycle visibility, and safe audited co-watch actions.
+- **3-2e - Progress, Export, Accessibility And Hardening:** Progress and collections, streamed CSV export, responsive accessibility, performance, and regression coverage.
 
 ### Block 3-3: Household Watch Reports
 

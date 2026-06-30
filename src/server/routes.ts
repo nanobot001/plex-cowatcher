@@ -77,6 +77,39 @@ export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Ro
     }
   });
 
+  router.get("/api/settings/users", (_req, res) => {
+    try {
+      const rows = db.prepare("SELECT id, plex_username, display_name, enabled FROM users ORDER BY plex_username ASC").all();
+      res.json({ ok: true, users: rows });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: String(error) });
+    }
+  });
+
+  router.post("/api/settings/users", express.json(), (req, res) => {
+    try {
+      const { users: updatedUsers } = req.body;
+      if (!Array.isArray(updatedUsers)) {
+        return res.status(400).json({ ok: false, message: "Invalid users payload." });
+      }
+      const stmt = db.prepare("UPDATE users SET display_name = ?, enabled = ?, updated_at = ? WHERE id = ?");
+      const now = new Date().toISOString();
+      try {
+        db.exec('BEGIN IMMEDIATE');
+        for (const u of updatedUsers) {
+          stmt.run(u.display_name || null, u.enabled ? 1 : 0, now, u.id);
+        }
+        db.exec('COMMIT');
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+      }
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: String(error) });
+    }
+  });
+
   router.get("/api/users", (_req, res) => res.json({ ok: true, users: users.listConfigured() }));
   router.get("/api/users/plex", async (_req, res, next) => {
     try {

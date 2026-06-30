@@ -128,6 +128,10 @@ export class IngestionService {
     const completedVal = (row.completed || countsAsCompleted(row)) ? 1 : 0;
 
     const mediaType = isAudiobookMedia(row) ? "audiobook" : row.mediaType;
+    const sourceUser = this.users.findSourceById(userId);
+    const watchEventId = sourceUser && countsAsCompleted(row)
+      ? this.maybeInsertWatchEvent(userId, row, mediaType, now)
+      : undefined;
 
     // Check if the record already exists to determine if we should count it as inserted/skipped
     const existing = this.db.prepare(
@@ -157,8 +161,8 @@ export class IngestionService {
         now,
         (existing as { id: number }).id
       );
-      
-      return { inserted: false };
+
+      return { inserted: false, watchEventId };
     }
 
     // Insert new playback observation
@@ -197,66 +201,19 @@ export class IngestionService {
       return { inserted: false };
     }
 
+    if (this.metadata && (mediaType === "movie" || mediaType === "episode")) {
+      const catalogKey = mediaType === "episode" ? row.grandparentRatingKey : row.ratingKey;
+      if (catalogKey) {
+        this.metadata.getMetadata(catalogKey, mediaType === "movie" ? row.plexGuid : undefined).catch(err => {
+          console.warn(`[IngestionService] Failed to cache metadata for ${catalogKey}:`, err);
+        });
+      }
+    }
+
     if (row.grandparentRatingKey && this.metadata) {
       this.metadata.checkAndAutoHealShow(row.grandparentRatingKey).catch(err => {
         console.warn(`[IngestionService] Failed to auto-heal show ${row.grandparentRatingKey}:`, err);
       });
-    }
-
-    let watchEventId: number | undefined;
-    // Tautulli may return a display name instead of the configured Plex username.
-    // The polling loop has already resolved this row to a configured user ID.
-    const sourceUser = this.users.findSourceById(userId);
-    
-    if (sourceUser && countsAsCompleted(row)) {
-      if (!this.hasNearbyWatchEventDuplicate(userId, row.ratingKey, row.watchedAt)) {
-        const eventDate = new Date(row.watchedAt).getTime();
-        const twoDaysAgo = Date.now() - 48 * 60 * 60 * 1000;
-        let initialPromptStatus = eventDate > twoDaysAgo ? "pending" : "dismissed";
-
-        if (initialPromptStatus === "pending" && mediaType === "audiobook") {
-          const settingRow = this.db.prepare("SELECT value FROM app_settings WHERE key = 'prompt_for_audiobooks'").get() as { value: string } | undefined;
-          if (!settingRow || settingRow.value !== 'true') {
-            initialPromptStatus = 'dismissed';
-          }
-        }
-
-        const watchEventResult = this.db.prepare(
-          `INSERT OR IGNORE INTO watch_events (
-            source_user_id, tautulli_row_id, rating_key, grandparent_rating_key, parent_rating_key,
-            plex_guid, media_type, library_name, title, show_title, season_number, episode_number,
-            watched_at, prompt_status, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        ).run(
-          userId,
-          row.rowId ?? null,
-          row.ratingKey,
-          row.grandparentRatingKey ?? null,
-          row.parentRatingKey ?? null,
-          row.plexGuid ?? null,
-          mediaType,
-          row.libraryName ?? null,
-          row.title,
-          row.showTitle ?? null,
-          row.seasonNumber ?? null,
-          row.episodeNumber ?? null,
-          row.watchedAt,
-          initialPromptStatus,
-          now,
-          now
-        );
-
-        if (watchEventResult.changes > 0) {
-          watchEventId = Number(watchEventResult.lastInsertRowid);
-          this.audit.record("detect_watch_event", "ingestion", "ok", {
-            watchEventId,
-            sourceUserId: userId,
-            ratingKey: row.ratingKey,
-            mediaType,
-            watchedAt: row.watchedAt
-          });
-        }
-      }
     }
 
     return { inserted: true, watchEventId };
@@ -268,5 +225,68 @@ export class IngestionService {
       .all(sourceUserId, ratingKey) as { watched_at: string }[];
 
     return existingRows.some((existing) => isDuplicateWithinWindow(existing.watched_at, watchedAt));
+  }
+
+  private maybeInsertWatchEvent(
+    sourceUserId: number,
+    row: TautulliHistoryRow,
+    mediaType: string,
+    now: string
+  ): number | undefined {
+    // Tautulli may return a display name instead of the configured Plex username.
+    // The polling loop has already resolved this row to a configured user ID.
+    if (this.hasNearbyWatchEventDuplicate(sourceUserId, row.ratingKey, row.watchedAt)) {
+      return undefined;
+    }
+
+    const eventDate = new Date(row.watchedAt).getTime();
+    const twoDaysAgo = Date.now() - 48 * 60 * 60 * 1000;
+    let initialPromptStatus = eventDate > twoDaysAgo ? "pending" : "dismissed";
+
+    if (initialPromptStatus === "pending" && mediaType === "audiobook") {
+      const settingRow = this.db.prepare("SELECT value FROM app_settings WHERE key = 'prompt_for_audiobooks'").get() as { value: string } | undefined;
+      if (!settingRow || settingRow.value !== "true") {
+        initialPromptStatus = "dismissed";
+      }
+    }
+
+    const watchEventResult = this.db.prepare(
+      `INSERT OR IGNORE INTO watch_events (
+        source_user_id, tautulli_row_id, rating_key, grandparent_rating_key, parent_rating_key,
+        plex_guid, media_type, library_name, title, show_title, season_number, episode_number,
+        watched_at, prompt_status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      sourceUserId,
+      row.rowId ?? null,
+      row.ratingKey,
+      row.grandparentRatingKey ?? null,
+      row.parentRatingKey ?? null,
+      row.plexGuid ?? null,
+      mediaType,
+      row.libraryName ?? null,
+      row.title,
+      row.showTitle ?? null,
+      row.seasonNumber ?? null,
+      row.episodeNumber ?? null,
+      row.watchedAt,
+      initialPromptStatus,
+      now,
+      now
+    );
+
+    if (watchEventResult.changes > 0) {
+      const watchEventId = Number(watchEventResult.lastInsertRowid);
+      this.audit.record("detect_watch_event", "ingestion", "ok", {
+        watchEventId,
+        sourceUserId,
+        ratingKey: row.ratingKey,
+        mediaType,
+        watchedAt: row.watchedAt
+      });
+      return watchEventId;
+    }
+
+    return undefined;
   }
 }

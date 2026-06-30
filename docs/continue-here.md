@@ -2,22 +2,17 @@
 
 ## Current State
 
-- Block 3-1, 3-4, and 3-5 are fully implemented. We now have robust audiobook folder-path ingestion, Audnexus/Google Books API fallback enrichment, canonical grouping, Discworld/Mistborn/Wheel of Time series/subseries hierarchy normalization, a CLI backfill runner, a proactive Plex library scanner, and automated webhook triggers.
-- Build, test, and tool verification suites all pass successfully.
+- **Block 3-2f (Premium Dashboard Redesign)**: Fully implemented and verified. The dashboard features 5 premium layout panels (Overview, Day-Grouped Gantt Timeline, Library Grid, People & Co-Watching Workspace, Progress Dot Grids) with category color coding and accurate duration/activity metrics.
+- **Backend Testing & Build**: TypeScript compilation is clean, and the entire test suite passes successfully (53/53 tests). The service is supervised by PM2 and runs with zero issues.
+- **Previous Blocks**: Blocks 3-1, 3-4, and 3-5 are fully implemented, providing robust audiobook folder-path ingestion, hierarchical series modeling, and a proactive Plex library scanner.
 
 ## Key Links
 
-- Project charter: `docs/project-charter.md`
-- Roadmap: `docs/roadmap.md`
-- Block index: `docs/blocks/README.md`
-- Completed block: `docs/blocks/block-3-4-hierarchical-audiobook-series-modeling.md`
-- Completed block: `docs/blocks/block-3-5-proactive-audiobook-scanner.md`
-- Next likely block: `docs/blocks/block-3-2-richer-browser-ui.md`
+- Project charter: [project-charter.md](file:///c:/Users/antho/Code/plex-cowatcher/docs/project-charter.md)
+- Roadmap: [roadmap.md](file:///c:/Users/antho/Code/plex-cowatcher/docs/roadmap.md)
+- Block index: [README.md](file:///c:/Users/antho/Code/plex-cowatcher/docs/blocks/README.md)
+- Completed block: [block-3-2f-premium-dashboard-redesign.md](file:///c:/Users/antho/Code/plex-cowatcher/docs/blocks/completed/block-3-2f-premium-dashboard-redesign.md)
 
 ## Next Recommended Step
 
-- Start on `docs/blocks/block-3-2-richer-browser-ui.md` to implement a richer web dashboard that displays the subseries breakdowns and aggregates for audiobooks, helping users review what they've finished and what is coming next in their series.
-
-## Open Questions
-
-- What specific visual layouts or sorting preferences the household wants for viewing audiobook series vs. individual books in the web UI.
+- Start on **Block 3-3: Household Watch Reports** ([block-3-3-household-watch-reports.md](file:///c:/Users/antho/Code/plex-cowatcher/docs/blocks/block-3-3-household-watch-reports.md)) to implement automated weekly reports summarizing the synchronized viewing habits, top-watched categories, and co-watching trends.
