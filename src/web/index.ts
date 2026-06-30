@@ -24,29 +24,32 @@ export function registerWebRoutes(router: Router): void {
         <div class="dashboard-main">
           <header class="dashboard-header">
             <div class="header-titles">
-              <p id="view-subtitle">Everything everyone is enjoying.</p>
+              <h2 id="view-title" style="margin:0; font-size:1.8rem;">Overview</h2>
+              <p id="view-subtitle" style="margin:4px 0 0; color:var(--text-muted); font-size:0.95rem;">Everything everyone is enjoying.</p>
             </div>
-            <form id="dashboard-filters" class="dashboard-filters">
-              <input type="search" name="search" placeholder="Search title...">
-              <select name="user"><option value="">All Users</option></select>
-              <select name="category">
-                <option value="">All Categories</option>
-                <option value="movie">Movies</option>
-                <option value="tv">TV</option>
-                <option value="classic_tv">Classic TV</option>
-                <option value="anime">Anime</option>
-                <option value="audiobook">Audiobooks</option>
-                <option value="other">Other</option>
-              </select>
-              <button type="submit" class="btn">Apply</button>
-              <button type="button" class="btn" id="export-csv">CSV</button>
-            </form>
+            <div id="stat-ribbon" class="stat-ribbon"></div>
           </header>
+          <form id="dashboard-filters" class="dashboard-filters">
+            <input type="search" name="search" placeholder="Search title...">
+            <select name="user"><option value="">All Users</option></select>
+            <select name="category">
+              <option value="">All Categories</option>
+              <option value="movie">Movies</option>
+              <option value="tv">TV</option>
+              <option value="classic_tv">Classic TV</option>
+              <option value="anime">Anime</option>
+              <option value="audiobook">Audiobooks</option>
+              <option value="other">Other</option>
+            </select>
+            <button type="submit" class="btn">Apply</button>
+            <a id="csv-export" href="/api/dashboard/export.csv" class="btn" download>CSV</a>
+          </form>
+          <p id="active-filters" class="active-filters"></p>
           <div id="dashboard-content"></div>
         </div>
       </div>
       <dialog id="detail-dialog">
-        <button class="dialog-close" formmethod="dialog">×</button>
+        <button class="dialog-close" formmethod="dialog">&times;</button>
         <div id="detail-content"></div>
       </dialog>
       <script src="/static/dashboard.js"></script>
