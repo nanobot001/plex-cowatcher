@@ -22,6 +22,8 @@ Provide fast, honest progress exploration for episodic media and audiobooks whil
 - Keep Movies as completion/repeat summaries without artificial collection hierarchy.
 - Separate distinct items, plays/repeats, completed items, partial items, observed time, and known totals.
 - Lazy-load expanded hierarchy and reuse the 3-2k detail workspace for deeper evidence.
+- Use canonical show posters and canonical audiobook book covers on all progress cards/nodes that display artwork; never use author/artist imagery as an audiobook cover.
+- Apply hidden-user exclusion before progress calculation and use aliases for all visible per-person context.
 - Provide explicit unknown-total and incomplete-metadata states.
 
 ## Out Of Scope
@@ -46,6 +48,7 @@ Provide fast, honest progress exploration for episodic media and audiobooks whil
 - Unknown totals are not displayed as zero, 100%, or completed.
 - Expanding one hierarchy does not fetch or render unrelated hierarchies.
 - Person/category filters preserve selection and browser-history context.
+- Poster and user-preference fixtures verify book-cover identity, custom alias, username fallback, and hidden-user exclusion without changing underlying progress evidence.
 
 ## Verification And Exit Gate
 

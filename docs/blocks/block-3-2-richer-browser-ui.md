@@ -38,6 +38,10 @@ Blocks 3-2b through 3-2e extend that usable core with alternate layouts, deeper 
 - Layout and display preferences stay client-local unless a future multi-device requirement justifies server persistence.
 - CSV is generated on demand and streamed to the browser; exports are not retained by default.
 - Plex artwork is reused, not copied into a new permanent library. Tokens and private upstream URLs never reach browser markup or public-read responses.
+- Every visual media card uses the canonical top-level poster or cover when Plex provides one: movie poster for movies, show poster for episodic media, and the specific book cover for audiobooks. Audiobook cards must never substitute author/artist artwork for the book cover. Category artwork is only a fallback when the canonical poster/cover is genuinely unavailable.
+- Dashboard Settings provides a per-user `Show on dashboard` control and an optional display alias. Every configured enabled user is shown by default; the default and fallback display name is the exact Plex username.
+- Hiding a user is dashboard-presentation configuration only: exclude that user from dashboard people lists, filters, timelines, cards, and household aggregates, while preserving ingestion, stored history, Discord mappings, copy-history eligibility, audit history, and other service behavior.
+- Aliases affect dashboard labels only. They never rewrite Plex usernames, user IDs, evidence, Discord mappings, exports, audit records, or adapter calls.
 - Inference never mutates Plex watched state.
 - Scheduled reports and Discord report delivery remain Block 3-3.
 
@@ -65,6 +69,7 @@ Blocks 3-2b through 3-2e extend that usable core with alternate layouts, deeper 
 - Mockup 1 guides Overview composition; Mockup 2 guides Library; Mockup 3 guides Timeline; Mockup 4 guides rich detail and hierarchy; Mockup 5 contributes only evidence-backed operations and analytics concepts.
 - Mockups are hierarchy references, not authority to invent ratings, recommendations, downloads, watchlists, live presence, playback controls, or unsupported external integrations.
 - Block 3-2g creates the durable dashboard redesign/data contract. Blocks 3-2h through 3-2o must cite and preserve it.
+- Canonical poster/cover selection and dashboard user visibility/alias semantics are non-negotiable parts of that contract and must be tested in every later block that renders media or people.
 - Each block owns a narrow outcome and an explicit exit gate. Failure reopens the owning block; work must not drift forward.
 
 ## Overall Acceptance Criteria

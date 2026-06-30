@@ -17,6 +17,9 @@ Establish a measured, bounded foundation for the redesign so every later dashboa
 ## Scope
 
 - Create a durable dashboard design/data contract covering the five supported categories, exclusion of `other` from household-facing views, media identity levels, filter semantics, selected-item context, evidence labels, and unknown-data treatment.
+- Define one canonical artwork contract: media cards resolve artwork from the displayed top-level identity; movies use movie posters, episodic cards use show posters, and audiobook cards use the canonical book cover rather than author, artist, album, series, or chapter artwork. Define the category fallback used only when that poster/cover is unavailable.
+- Define dashboard presentation preferences for each configured user: `shown` defaults to true for enabled users and `alias` defaults/falls back to the exact Plex username. Hidden users are excluded from all dashboard results and aggregates but remain untouched in ingestion, history, Discord, copy, audit, and adapter domains.
+- Define aliases as presentation-only values keyed by stable internal user identity, never as replacements for usernames or external IDs.
 - Inventory every dashboard endpoint and document its consumer, default window, maximum page size, ordering, and expected response shape.
 - Bound Timeline to one day by default and one week maximum per request; separate chart sessions from paginated activity-feed rows.
 - Replace Progress all-history loading with bounded summary results and lazy hierarchy/detail retrieval.
@@ -41,6 +44,8 @@ Establish a measured, bounded foundation for the redesign so every later dashboa
 ## Acceptance Criteria
 
 - A single durable contract defines supported categories, units of display, filter behavior, route bounds, selection state, evidence vocabulary, and exclusions.
+- The contract includes an explicit artwork-resolution table for movie, episodic, and audiobook identities and prohibits author/artist artwork on audiobook cards.
+- Dashboard API fixtures prove default username labels, custom aliases, hidden-user exclusion, and preservation of underlying user/history records.
 - No household-facing dashboard summary or collection contains category `other`.
 - Timeline responses cannot return more than the documented day/week and item limits.
 - Progress first paint does not calculate or serialize every title hierarchy.
@@ -62,3 +67,5 @@ Establish a measured, bounded foundation for the redesign so every later dashboa
 - Later blocks may extend this contract only by explicitly updating it and their own acceptance criteria.
 - Do not add fields “for future use”; every new response field must have a named current consumer and test.
 - Unknown data remains unknown and must never be converted into a recommendation, rating, completion, or inferred watched-state mutation.
+- Artwork resolution must follow canonical media identity rather than whichever observation or metadata image is easiest to retrieve.
+- User aliases and visibility must be applied through the shared dashboard read model, not independently in each renderer.

@@ -136,8 +136,8 @@ A live Playwright review after 3-2f found that the dashboard had real data but f
 
 The corrective sequence is mandatory and ordered:
 
-1. **3-2g - Dashboard Contract And Performance Baseline:** Freeze vocabulary, bounds, response contracts, realistic fixtures, and measurable budgets.
-2. **3-2h - Dashboard Shell And Design System:** Build visible navigation, shared filters, responsive shell, and reusable accessible primitives.
+1. **3-2g - Dashboard Contract And Performance Baseline:** Freeze vocabulary, bounds, response contracts, canonical poster/cover rules, dashboard user preference semantics, realistic fixtures, and measurable budgets.
+2. **3-2h - Dashboard Shell And Design System:** Build visible navigation, shared filters, responsive shell, reusable accessible primitives, and Settings controls for dashboard user visibility and aliases.
 3. **3-2i - Overview Decision Surface:** Deliver mixed-media summary, continue consumption, household activity, and evidence-backed attention work.
 4. **3-2j - Library Category Browser:** Replace the undifferentiated alphabetical grid with bounded category-led consumed-title browsing.
 5. **3-2k - Rich Media Detail Workspace:** Add one shared movie, episodic, and audiobook hierarchy/evidence detail system.

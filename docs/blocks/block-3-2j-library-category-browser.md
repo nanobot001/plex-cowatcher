@@ -22,6 +22,8 @@ Let the operator browse consumed household titles by media family without audiob
 - Add section-level counts and View All navigation with deterministic pagination.
 - Show category-appropriate secondary text: episodes for episodic media, chapters/books for audiobooks, and plays for movies.
 - Use top-level show/book/movie artwork and a deliberate category fallback when Plex artwork is unavailable.
+- Resolve audiobook artwork from the canonical audiobook/book identity; explicitly reject author, artist, album, series, and chapter artwork as the card poster.
+- Apply hidden-user exclusion before category counts, recent ordering, progress, and play totals; render aliases through the shared resolver where people are shown.
 - Establish selected-title state and a reserved desktop detail region for 3-2k without implementing rich detail yet.
 
 ## Out Of Scope
@@ -46,6 +48,8 @@ Let the operator browse consumed household titles by media family without audiob
 - Sorting and pagination are stable for equal titles and multiple libraries.
 - A user can reach all results for any category without loading all categories in one response.
 - Artwork failure preserves layout and accessible title/category context.
+- Poster fixtures prove movie cards use movie posters, episodic cards use show posters, and audiobook cards use book covers even when author/artist artwork is also available.
+- Hiding a user removes that user's sole-consumption titles and contribution to shared-title counts without deleting stored evidence.
 
 ## Verification And Exit Gate
 

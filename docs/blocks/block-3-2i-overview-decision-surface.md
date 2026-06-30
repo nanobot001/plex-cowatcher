@@ -22,6 +22,8 @@ Make Overview answer, within one screen, what the household consumed, what is in
 - Add a Needs Attention lane restricted to unresolved prompts, failed Discord delivery, failed Plex synchronization, missing metadata, and uncertain classification.
 - Move service readiness to a compact operations indicator; retain detailed health through an expandable secondary surface.
 - Make every title, person, category, and attention item navigate to a defined filtered view or detail context.
+- Render canonical posters/covers on every media card; audiobook cards must show the book cover and never the author/artist image.
+- Apply dashboard visibility and aliases to every person label, activity item, active-user count, and household aggregate.
 
 ## Out Of Scope
 
@@ -45,6 +47,8 @@ Make Overview answer, within one screen, what the household consumed, what is in
 - Needs Attention contains only actionable, evidence-backed states and links to their resolution context.
 - Empty and partial-data states explain why a section is absent without fabricating content.
 - Overview first paint meets the 3-2g performance budget.
+- Hidden users contribute neither visible rows nor aggregate totals; custom aliases appear consistently and username fallback remains exact.
+- Every media card with available canonical artwork shows the correct movie/show/book poster or cover, including an audiobook fixture with distinct author and book images.
 
 ## Verification And Exit Gate
 

@@ -17,6 +17,8 @@ Replace the generic modal with a reusable detail workspace that explains hierarc
 
 - Implement a persistent right-side detail pane on desktop and an accessible full-screen sheet on narrow screens.
 - Add shared hero data: top-level artwork, canonical title, category, library, people, first/last consumed, total observed time, distinct items, repeats, and evidence summary.
+- Use the canonical poster/cover in the detail hero. For audiobooks, the hero and all book nodes use the specific book cover and must not fall back to author/artist artwork while a book cover exists.
+- Resolve participant labels through dashboard aliases and omit hidden users and their evidence from dashboard detail aggregates while retaining the underlying records.
 - For TV, Classic TV, and Anime, expose show -> season -> episode hierarchy with watched, partial, repeated, and unknown states per person.
 - For Audiobooks, expose parent series -> subseries -> series -> book -> chapter hierarchy using canonical audiobook data.
 - For Movies, expose plays, completion, participants, co-watch evidence, and repeat history without inventing seasons or collections.
@@ -46,6 +48,7 @@ Replace the generic modal with a reusable detail workspace that explains hierarc
 - Detail payloads are bounded and hierarchy children load progressively.
 - Detail is keyboard operable, focus trapped while modal on narrow screens, and focus restored on close.
 - Direct URL/reload restores the selected item or shows a clear unavailable state.
+- Detail artwork and participant tests cover canonical book-versus-author imagery, custom alias, username fallback, and hidden-user exclusion.
 
 ## Verification And Exit Gate
 
