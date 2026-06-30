@@ -1606,6 +1606,23 @@ test("dashboard preferences survive identity resyncs and drive dashboard visibil
   });
 });
 
+test("dashboard preference lists expose only visible users and preserve aliases", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const users = db.prepare("SELECT id, plex_username FROM users ORDER BY plex_username ASC").all();
+    const byName = Object.fromEntries(users.map((user) => [user.plex_username, user]));
+    const prefs = new DashboardPreferenceService(db);
+    prefs.saveUsers([
+      { id: byName.Tony.id, alias: "Big T", shown: true },
+      { id: byName.Viewer.id, alias: "Hidden Viewer", shown: false }
+    ]);
+
+    const visible = prefs.listVisibleUsers();
+    assert.deepEqual(visible.map((user) => user.plex_username), ["Tony"]);
+    assert.equal(visible[0].alias, "Big T");
+  });
+});
+
 test("dashboard service falls back to catalog libraries and groups explorer cards", () => {
   withTestDb((db) => {
     seedUsers(db);
@@ -1695,6 +1712,10 @@ test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed promp
       const page = await (await fetch(base+"/")).text();
       assert.match(page,/Everything everyone is enjoying/);
       assert.match(page,/dashboard\.js/);
+      const copyPage = await (await fetch(base+"/copy")).text();
+      assert.match(copyPage,/api\/dashboard\/users/);
+      assert.match(copyPage,/<th>Select<\/th>/);
+      assert.match(copyPage,/row-select/);
       const overview = await (await fetch(base+"/api/dashboard/overview")).json();
       assert.equal(overview.ok,true);
       assert.equal(overview.data.totals.plays,1);

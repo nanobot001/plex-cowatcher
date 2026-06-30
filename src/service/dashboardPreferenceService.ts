@@ -8,6 +8,13 @@ export interface DashboardPreferenceUserRow {
   shown: boolean;
 }
 
+export interface DashboardPreferenceVisibleUserRow {
+  id: number;
+  plex_username: string;
+  alias: string | null;
+  shown: true;
+}
+
 export interface DashboardPreferenceUpdateRow {
   id: number;
   alias: string | null;
@@ -32,6 +39,23 @@ export class DashboardPreferenceService {
       alias: row.alias == null || String(row.alias).trim() === "" ? null : String(row.alias),
       shown: Number(row.shown) === 1
     })) as DashboardPreferenceUserRow[];
+  }
+
+  listVisibleUsers(): DashboardPreferenceVisibleUserRow[] {
+    return this.db.prepare(`
+      SELECT
+        id,
+        plex_username,
+        dashboard_alias AS alias
+      FROM users
+      WHERE COALESCE(dashboard_shown, enabled) = 1
+      ORDER BY COALESCE(NULLIF(dashboard_alias, ''), plex_username) ASC, id ASC
+    `).all().map((row) => ({
+      id: Number(row.id),
+      plex_username: String(row.plex_username),
+      alias: row.alias == null || String(row.alias).trim() === "" ? null : String(row.alias),
+      shown: true as const
+    })) as DashboardPreferenceVisibleUserRow[];
   }
 
   saveUsers(updatedUsers: DashboardPreferenceUpdateRow[]): void {

@@ -177,6 +177,7 @@ export function registerWebRoutes(router: Router): void {
             <table class="preview-table">
               <thead>
                 <tr>
+                  <th>Select</th>
                   <th>Target User</th>
                   <th>Media Type</th>
                   <th>Title</th>
@@ -196,6 +197,10 @@ export function registerWebRoutes(router: Router): void {
       <script>
         // Fetch and populate users
         let usersList = [];
+
+        function userLabel(user) {
+          return (user && (user.alias || user.plex_username)) || '';
+        }
         
         function renderTargets(selectedSource) {
           const targetContainer = document.getElementById('targetUsersContainer');
@@ -210,8 +215,8 @@ export function registerWebRoutes(router: Router): void {
             targetContainer.innerHTML = '<p class="text-muted">No other Plex library users available.</p>';
           } else {
             targetContainer.innerHTML = targets.map(u => {
-              const displayNameText = u.display_name && u.display_name !== u.plex_username ? ' (' + u.display_name + ')' : '';
-              return '<label class="checkbox-label"><input type="checkbox" name="targetUsers" value="' + u.plex_username + '"> ' + u.plex_username + displayNameText + '</label>';
+              const displayName = userLabel(u);
+              return '<label class="checkbox-label"><input type="checkbox" name="targetUsers" value="' + u.plex_username + '"> ' + displayName + '</label>';
             }).join('');
           }
         }
@@ -225,18 +230,18 @@ export function registerWebRoutes(router: Router): void {
                     .replace(/'/g, '&#039;');
         }
 
-        fetch('/api/users')
+        fetch('/api/dashboard/users')
           .then(r => r.json())
           .then(data => {
             if (data.ok && data.users) {
               usersList = data.users;
               const sourceSelect = document.getElementById('sourceUser');
               
-              // Populate source users dropdown with all users
+              // Populate source users dropdown with visible dashboard users
               usersList.forEach(u => {
                 const opt = document.createElement('option');
                 opt.value = u.plex_username;
-                opt.textContent = u.plex_username + (u.display_name && u.display_name !== u.plex_username ? ' (' + u.display_name + ')' : '');
+                opt.textContent = userLabel(u);
                 sourceSelect.appendChild(opt);
               });
               
@@ -376,7 +381,7 @@ export function registerWebRoutes(router: Router): void {
               // Populate Items Table
               const tbody = document.getElementById('preview-items-body');
               if (data.items.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="text-center">No history items matched the criteria.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center">No history items matched the criteria.</td></tr>';
                 document.getElementById('apply-action-bar').classList.add('hidden');
               } else {
                 tbody.innerHTML = data.items.map(item => {
@@ -388,18 +393,22 @@ export function registerWebRoutes(router: Router): void {
                   }
 
                   const targetUserObj = usersList.find(u => u.id === item.targetUserId);
-                  const targetName = targetUserObj ? targetUserObj.plex_username : 'User ' + item.targetUserId;
+                  const targetName = targetUserObj ? userLabel(targetUserObj) : 'User ' + item.targetUserId;
                   const seasonEpisode = item.mediaType === 'episode' ? 'S' + String(item.seasonNumber).padStart(2, '0') + 'E' + String(item.episodeNumber).padStart(2, '0') : '-';
                   const cleanTitle = item.mediaType === 'episode' ? (item.showTitle || '') + ': ' + item.title : item.title;
 
                   const rowClass = item.status === 'eligible' ? 'class="row-eligible"' : '';
                   const dataIdAttr = item.status === 'eligible' ? ' data-id="' + item.id + '"' : '';
+                  const selectCell = item.status === 'eligible'
+                    ? '<td class="row-select-cell"><input type="checkbox" class="row-select" aria-label="Select eligible row for ' + escapeHtml(cleanTitle) + '" /></td>'
+                    : '<td></td>';
 
                   return '<tr ' + rowClass + dataIdAttr + '>' +
-                    '<td>' + targetName + '</td>' +
+                    selectCell +
+                    '<td>' + escapeHtml(targetName) + '</td>' +
                     '<td><span class="media-type-icon ' + item.mediaType + '">' + item.mediaType + '</span></td>' +
-                    '<td>' + cleanTitle + '</td>' +
-                    '<td>' + seasonEpisode + '</td>' +
+                    '<td>' + escapeHtml(cleanTitle) + '</td>' +
+                    '<td>' + escapeHtml(seasonEpisode) + '</td>' +
                     '<td>' + new Date(item.watchedAt).toLocaleString() + '</td>' +
                     '<td><span class="badge ' + statusClass + '">' + (item.reason || item.status) + '</span></td>' +
                     '</tr>';
@@ -432,9 +441,12 @@ export function registerWebRoutes(router: Router): void {
         document.getElementById('preview-items-body').addEventListener('click', (e) => {
           const row = e.target.closest('tr');
           if (!row || !row.classList.contains('row-eligible')) return;
+          if (e.target.closest('input.row-select')) return;
 
           const eligibleRows = Array.from(document.querySelectorAll('.row-eligible'));
           const clickedIndex = eligibleRows.indexOf(row);
+          const checkbox = row.querySelector('input.row-select');
+          if (!checkbox) return;
 
           if (e.shiftKey && lastClickedIndex !== -1) {
             // Prevent text selection while shift-clicking
@@ -446,33 +458,48 @@ export function registerWebRoutes(router: Router): void {
             const end = Math.max(lastClickedIndex, clickedIndex);
             
             // Toggle the row to determine the target selection state
-            row.classList.toggle('selected');
-            const targetState = row.classList.contains('selected');
+            checkbox.checked = !checkbox.checked;
+            row.classList.toggle('selected', checkbox.checked);
+            const targetState = checkbox.checked;
 
             for (let i = start; i <= end; i++) {
+              const itemCheckbox = eligibleRows[i].querySelector('input.row-select');
+              if (!itemCheckbox) continue;
               if (targetState) {
+                itemCheckbox.checked = true;
                 eligibleRows[i].classList.add('selected');
               } else {
+                itemCheckbox.checked = false;
                 eligibleRows[i].classList.remove('selected');
               }
             }
           } else {
-            row.classList.toggle('selected');
+            checkbox.checked = !checkbox.checked;
+            row.classList.toggle('selected', checkbox.checked);
           }
 
           lastClickedIndex = clickedIndex;
+        });
+
+        document.getElementById('preview-items-body').addEventListener('change', (e) => {
+          const checkbox = e.target.closest('input.row-select');
+          if (!checkbox) return;
+          const row = checkbox.closest('tr');
+          if (row) {
+            row.classList.toggle('selected', checkbox.checked);
+          }
         });
 
         // Apply Copy Job
         document.getElementById('apply-btn').addEventListener('click', async () => {
           if (!currentJobId) return;
 
-          const selectedRows = Array.from(document.querySelectorAll('.row-eligible.selected'));
+          const selectedRows = Array.from(document.querySelectorAll('.row-select:checked'));
           if (selectedRows.length === 0) {
             alert('Please select at least one row to copy by clicking on it.');
             return;
           }
-          const selectedItemIds = selectedRows.map(row => Number(row.getAttribute('data-id')));
+          const selectedItemIds = selectedRows.map(row => Number(row.closest('tr').getAttribute('data-id')));
 
           const applyBtn = document.getElementById('apply-btn');
           const feedback = document.getElementById('status-feedback');
@@ -515,15 +542,16 @@ export function registerWebRoutes(router: Router): void {
                   }
 
                   const targetUserObj = usersList.find(u => u.id === item.target_user_id);
-                  const targetName = targetUserObj ? targetUserObj.plex_username : 'User ' + item.target_user_id;
+                  const targetName = targetUserObj ? userLabel(targetUserObj) : 'User ' + item.target_user_id;
                   const seasonEpisode = item.media_type === 'episode' ? 'S' + String(item.season_number).padStart(2, '0') + 'E' + String(item.episode_number).padStart(2, '0') : '-';
                   const cleanTitle = item.media_type === 'episode' ? (item.show_title || '') + ': ' + item.title : item.title;
 
                   return '<tr>' +
-                    '<td>' + targetName + '</td>' +
+                    '<td></td>' +
+                    '<td>' + escapeHtml(targetName) + '</td>' +
                     '<td><span class="media-type-icon ' + item.media_type + '">' + item.media_type + '</span></td>' +
-                    '<td>' + cleanTitle + '</td>' +
-                    '<td>' + seasonEpisode + '</td>' +
+                    '<td>' + escapeHtml(cleanTitle) + '</td>' +
+                    '<td>' + escapeHtml(seasonEpisode) + '</td>' +
                     '<td>' + new Date(item.watched_at).toLocaleString() + '</td>' +
                     '<td><span class="badge ' + statusClass + '">' + (item.reason || item.status) + '</span></td>' +
                     '</tr>';

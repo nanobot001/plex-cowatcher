@@ -90,6 +90,15 @@ export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Ro
     }
   });
 
+  router.get("/api/dashboard/users", (_req, res) => {
+    try {
+      const rows = dashboardPreferences.listVisibleUsers();
+      res.json({ ok: true, users: rows });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: String(error) });
+    }
+  });
+
   router.post("/api/settings/users", express.json(), (req, res) => {
     try {
       const { users: updatedUsers } = req.body;
