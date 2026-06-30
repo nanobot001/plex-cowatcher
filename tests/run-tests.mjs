@@ -1623,6 +1623,54 @@ test("dashboard preference lists expose only visible users and preserve aliases"
   });
 });
 
+test("dashboard audiobook titles prefer the book title and artwork routes return images", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const user = db.prepare("SELECT id FROM users ORDER BY id LIMIT 1").get();
+    const now = new Date().toISOString();
+    const coverUrl = "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900"><rect width="600" height="900" fill="#0f172a"/><text x="50%" y="50%" fill="#f59e0b" font-size="44" text-anchor="middle">The Final Empire</text></svg>`);
+
+    db.prepare(`
+      INSERT INTO audiobook_books (folder_key, title, authors_json, narrators_json, cover_url, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("book-folder", "The Final Empire", JSON.stringify(["Brandon Sanderson"]), JSON.stringify([]), coverUrl, "manual", "enriched", now, now);
+    const book = db.prepare("SELECT id FROM audiobook_books WHERE folder_key = 'book-folder'").get();
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, audiobook_id, source_provenance, refreshed_at)
+      VALUES (?, 'audiobook', ?, ?, ?, ?)
+    `).run("book-track-1", "Brandon Sanderson", book.id, "plex", now);
+    db.prepare(`
+      INSERT INTO playback_observations
+        (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(user.id, "book-track-1", "audiobook", "Audiobooks", "Brandon Sanderson", "Brandon Sanderson", now, 25, 1200000, 0, now, now);
+
+    const service = new DashboardService(db);
+    const overview = service.getOverview({});
+    assert.equal(overview.continueWatching[0].displayTitle, "The Final Empire");
+    assert.equal(overview.activity.items[0].displayTitle, "The Final Empire");
+
+    const { createApp } = await import("../dist/server/app.js");
+    const app = createApp(db, new MockPlexAdapter());
+    const server = await new Promise((resolve) => {
+      const s = app.listen(0, "127.0.0.1", () => resolve(s));
+    });
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const audiobookArt = await fetch(base + overview.activity.items[0].artworkUrl);
+      assert.equal(audiobookArt.status, 200);
+      assert.match(audiobookArt.headers.get("content-type"), /image\/svg\+xml/);
+      assert.match(await audiobookArt.text(), /The Final Empire/);
+
+      const movieArt = await fetch(base + "/api/artwork/movie-1");
+      assert.equal(movieArt.status, 200);
+      assert.match(movieArt.headers.get("content-type"), /image\/svg\+xml/);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
 test("dashboard service falls back to catalog libraries and groups explorer cards", () => {
   withTestDb((db) => {
     seedUsers(db);

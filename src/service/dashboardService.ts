@@ -71,10 +71,18 @@ function resolveDashboardAlias(alias?: string | null, plexUsername?: string | nu
   return plexUsername?.trim() || "";
 }
 
+function resolveDashboardDisplayTitle(item: Pick<DashboardActivityItem, "category" | "showTitle" | "title" | "audiobookTitle">): string {
+  if (item.category === "audiobook") {
+    return item.audiobookTitle?.trim() || item.title.trim() || item.showTitle?.trim() || "";
+  }
+  if (item.category === "tv" || item.category === "classic_tv" || item.category === "anime") {
+    return item.showTitle?.trim() || item.title.trim() || "";
+  }
+  return item.title.trim();
+}
+
 function explorerTitle(item: Pick<DashboardActivityItem, "category" | "showTitle" | "title" | "audiobookTitle">): string {
-  if (item.category === "audiobook") return item.audiobookTitle ?? item.showTitle ?? item.title;
-  if (item.category === "tv" || item.category === "classic_tv" || item.category === "anime") return item.showTitle ?? item.title;
-  return item.title;
+  return resolveDashboardDisplayTitle(item);
 }
 
 function explorerGroupKey(item: DashboardActivityItem): string {
@@ -244,11 +252,11 @@ export class DashboardService {
             ? item.grandparentRatingKey ?? item.ratingKey
             : item.ratingKey;
         const group = groups.get(key) ?? { ...item, title, showTitle: undefined, displayTitle: title, groupRatingKey, plays: 0, distinctItems: new Set<string>(), people: new Set<number>(), latestWatchedAt: item.watchedAt, artworkUrl: this.resolveArtworkUrl(item, groupRatingKey) };
-        group.plays += 1;
-        group.distinctItems.add(item.ratingKey);
-        group.people.add(item.userId);
-        if (item.watchedAt >= group.latestWatchedAt) {
-          group.latestWatchedAt = item.watchedAt;
+      group.plays += 1;
+      group.distinctItems.add(item.ratingKey);
+      group.people.add(item.userId);
+      if (item.watchedAt >= group.latestWatchedAt) {
+        group.latestWatchedAt = item.watchedAt;
           group.ratingKey = item.ratingKey;
           group.displayTitle = title;
           group.title = title;
@@ -473,6 +481,12 @@ export class DashboardService {
       userId: row.user_id, 
       username: row.plex_username, 
       displayName: resolveDashboardAlias(row.dashboard_alias, row.plex_username), 
+      displayTitle: resolveDashboardDisplayTitle({
+        category: category.category,
+        title: row.title,
+        showTitle: row.show_title ?? undefined,
+        audiobookTitle: row.audiobook_title ?? undefined
+      }),
       ratingKey: row.rating_key, 
       title: row.title, 
       showTitle: row.show_title ?? undefined, 

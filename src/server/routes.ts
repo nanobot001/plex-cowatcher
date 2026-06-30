@@ -14,6 +14,7 @@ import { SessionService } from "../service/sessionService.js";
 import { CowatchingIntelligenceService } from "../service/cowatchingIntelligenceService.js";
 import { DashboardService } from "../service/dashboardService.js";
 import { DashboardPreferenceService } from "../service/dashboardPreferenceService.js";
+import { appConfig } from "../utils/config.js";
 import { parseDays } from "../utils/time.js";
 
 export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Router {
@@ -151,6 +152,13 @@ export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Ro
   router.get("/api/dashboard/detail/:ratingKey", (req, res, next) => {
     try { res.json({ ok: true, data: dashboardService.getDetail(req.params.ratingKey) }); }
     catch (e) { next(e); }
+  });
+  router.get("/api/artwork/:key", async (req, res, next) => {
+    try {
+      await serveArtwork(req.params.key, res);
+    } catch (error) {
+      next(error);
+    }
   });
   router.get("/api/dashboard/prompts", (_req, res) => {
     const rows = db.prepare("SELECT * FROM watch_events WHERE prompt_status IN ('pending','prompted','failed') ORDER BY watched_at DESC LIMIT 50").all();
@@ -396,6 +404,103 @@ export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Ro
       }
     }
   });
+
+  async function serveArtwork(rawKey: string, res: express.Response): Promise<void> {
+    const decodedKey = decodeURIComponent(rawKey);
+    const localSource = await resolveLocalArtworkSource(decodedKey);
+    if (localSource) {
+      await proxyArtworkSource(localSource, res);
+      return;
+    }
+
+    const remoteSource = await resolvePlexArtworkSource(decodedKey);
+    if (remoteSource) {
+      await proxyArtworkSource(remoteSource, res);
+      return;
+    }
+
+    res.status(404).end();
+  }
+
+  async function resolveLocalArtworkSource(artworkKey: string): Promise<string | null> {
+    const catalogRow = db.prepare(`
+      SELECT rating_key, media_type, audiobook_id
+      FROM content_catalog
+      WHERE rating_key = ?
+    `).get(artworkKey) as { rating_key: string; media_type: string; audiobook_id: number | null } | undefined;
+
+    let audiobookId: number | null = null;
+    if (artworkKey.startsWith("audiobook:")) {
+      const raw = artworkKey.slice("audiobook:".length);
+      if (/^\d+$/.test(raw)) {
+        const directBook = db.prepare("SELECT cover_url FROM audiobook_books WHERE id = ?").get(Number(raw)) as { cover_url: string | null } | undefined;
+        if (directBook?.cover_url) return directBook.cover_url;
+        const catalogByRatingKey = db.prepare(`
+          SELECT audiobook_id
+          FROM content_catalog
+          WHERE rating_key = ?
+        `).get(raw) as { audiobook_id: number | null } | undefined;
+        audiobookId = catalogByRatingKey?.audiobook_id ?? null;
+      } else if (catalogRow?.audiobook_id) {
+        audiobookId = Number(catalogRow.audiobook_id);
+      }
+    } else if (catalogRow?.media_type === "audiobook" && catalogRow.audiobook_id != null) {
+      audiobookId = Number(catalogRow.audiobook_id);
+    }
+
+    if (audiobookId != null) {
+      const book = db.prepare("SELECT cover_url FROM audiobook_books WHERE id = ?").get(audiobookId) as { cover_url: string | null } | undefined;
+      if (book?.cover_url) return book.cover_url;
+    }
+
+    return null;
+  }
+
+  async function resolvePlexArtworkSource(artworkKey: string): Promise<string | null> {
+    const key = artworkKey.startsWith("audiobook:") ? artworkKey.slice("audiobook:".length) : artworkKey;
+    let metadata: Awaited<ReturnType<PlexAdapter["getRichMetadataByRatingKey"]>> | null = null;
+
+    try {
+      metadata = await plex.getRichMetadataByRatingKey(key);
+    } catch (error) {
+      console.warn("Failed to resolve Plex artwork:", error instanceof Error ? error.message : error);
+      return null;
+    }
+
+    const source = metadata.thumb ?? metadata.parentThumb ?? metadata.grandparentThumb ?? metadata.art ?? metadata.parentArt ?? metadata.grandparentArt;
+    if (!source) return null;
+    return normalizeArtworkSource(source);
+  }
+
+  function normalizeArtworkSource(source: string): string {
+    if (/^data:/i.test(source) || /^https?:\/\//i.test(source)) {
+      return source;
+    }
+    const url = new URL(source, appConfig.PLEX_BASE_URL);
+    if (appConfig.PLEX_TOKEN && !url.searchParams.has("X-Plex-Token")) {
+      url.searchParams.set("X-Plex-Token", appConfig.PLEX_TOKEN);
+    }
+    return url.toString();
+  }
+
+  async function proxyArtworkSource(sourceUrl: string, res: express.Response): Promise<void> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(normalizeArtworkSource(sourceUrl), { signal: controller.signal });
+      if (!response.ok) {
+        res.status(response.status === 404 ? 404 : 502).end();
+        return;
+      }
+      const contentType = response.headers.get("content-type") || "image/jpeg";
+      const body = Buffer.from(await response.arrayBuffer());
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      res.status(200).send(body);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
 
   return router;
 }

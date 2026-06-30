@@ -34,6 +34,7 @@ export class MockPlexAdapter implements PlexAdapter {
   }
 
   async getRichMetadataByRatingKey(ratingKey: string, _plexGuid?: string): Promise<PlexRichMetadata> {
+    const posterDataUrl = "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900" viewBox="0 0 600 900"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#1e293b"/></linearGradient></defs><rect width="600" height="900" rx="32" fill="url(#g)"/><rect x="48" y="48" width="504" height="804" rx="28" fill="#111827" stroke="#334155" stroke-width="6"/><circle cx="300" cy="420" r="170" fill="#f59e0b" opacity="0.15"/><path d="M250 310 L250 530 L420 420 Z" fill="#f59e0b"/></svg>`);
     if (ratingKey === "mock-track-1") {
       return {
         ratingKey: "mock-track-1",
@@ -48,6 +49,7 @@ export class MockPlexAdapter implements PlexAdapter {
         parentRatingKey: "book-1",
         parentGuid: "local://book-1",
         parentTitle: "Guards! Guards!",
+        thumb: posterDataUrl,
         genres: [],
         filePath: "F:\\Media\\Audio\\Audiobooks\\Terry Pratchett   Narrated by\\2023 - Guards! Guards!\\01.mp3"
       };
@@ -60,7 +62,9 @@ export class MockPlexAdapter implements PlexAdapter {
         genres: ["Comedy", "Drama"],
         leafCount: 24,
         librarySectionID: "2",
-        librarySectionTitle: "TV Shows"
+        librarySectionTitle: "TV Shows",
+        thumb: posterDataUrl,
+        art: posterDataUrl
       };
     }
     if (ratingKey.startsWith("episode-")) {
@@ -74,7 +78,9 @@ export class MockPlexAdapter implements PlexAdapter {
         librarySectionTitle: "TV Shows",
         grandparentRatingKey: "show-1",
         grandparentTitle: "Mock Show",
-        parentRatingKey: "season-1"
+        parentRatingKey: "season-1",
+        thumb: posterDataUrl,
+        grandparentThumb: posterDataUrl
       };
     }
     return {
@@ -84,7 +90,9 @@ export class MockPlexAdapter implements PlexAdapter {
       genres: ["Action", "Sci-Fi"],
       duration: 7200000,
       librarySectionID: "1",
-      librarySectionTitle: "Movies"
+      librarySectionTitle: "Movies",
+      thumb: posterDataUrl,
+      art: posterDataUrl
     };
   }
 
@@ -134,6 +142,7 @@ export class MockPlexAdapter implements PlexAdapter {
         parentRatingKey: "book-1",
         parentGuid: "local://book-1",
         parentTitle: "Guards! Guards!",
+        thumb: "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900"><rect width="600" height="900" fill="#111827"/><text x="50%" y="50%" fill="#f59e0b" font-size="48" text-anchor="middle">Audiobook</text></svg>`),
         genres: [],
         filePath: "F:\\Media\\Audio\\Audiobooks\\Terry Pratchett   Narrated by\\2023 - Guards! Guards!\\01.mp3"
       }
@@ -505,6 +514,12 @@ export class HttpPlexAdapter extends MockPlexAdapter {
       parentRatingKey: attr(tag, "parentRatingKey"),
       parentGuid: attr(tag, "parentGuid"),
       parentTitle: attr(tag, "parentTitle"),
+      thumb: attr(tag, "thumb"),
+      art: attr(tag, "art"),
+      parentThumb: attr(tag, "parentThumb"),
+      grandparentThumb: attr(tag, "grandparentThumb"),
+      parentArt: attr(tag, "parentArt"),
+      grandparentArt: attr(tag, "grandparentArt"),
       filePath: parsePartFilePath(xml)
     };
 

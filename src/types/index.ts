@@ -58,6 +58,12 @@ export interface PlexRichMetadata {
   parentRatingKey?: string;
   parentGuid?: string;
   parentTitle?: string;
+  thumb?: string;
+  art?: string;
+  parentThumb?: string;
+  grandparentThumb?: string;
+  parentArt?: string;
+  grandparentArt?: string;
   leafCount?: number;
   /** Trusted local data. Never expose through public-read tool responses. */
   filePath?: string;

@@ -13,7 +13,8 @@ const query=(extra={})=>{const p=new URLSearchParams();Object.entries({...state.
 const fetchJson=async url=>{const r=await fetch(url);const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.message||"Panel could not load.");return j.data;};
 const evidence=x=>{const e=x.evidence||{};return '<div class="evidence"><span class="proof observed">Observed</span>'+(e.confirmed?'<span class="proof confirmed">Confirmed</span>':'')+(e.promptStatus?'<span class="proof">Prompt '+esc(e.promptStatus)+'</span>':'')+(e.plexSyncStatus?'<span class="proof synced">Plex '+esc(e.plexSyncStatus)+'</span>':'')+'</div>';};
 const art=x=>'<img class="poster" src="'+esc(x.artworkUrl)+'" alt="" loading="lazy" onerror="this.src=\'/static/icon.svg\'">';
-const activityRow=x=>'<article class="activity-row" tabindex="0" data-item="'+encodeURIComponent(JSON.stringify(x))+'">'+art(x)+'<div class="activity-copy"><div class="activity-heading"><strong>'+esc(x.showTitle||x.title)+'</strong><span>'+esc(x.categoryLabel)+'</span></div>'+(x.showTitle?'<p>'+esc(x.title)+'</p>':'')+'<p>'+esc(x.displayName)+' &middot; '+fmtDate(x.watchedAt)+' &middot; '+fmtDuration(x.duration)+'</p>'+evidence(x)+'</div><div class="progress-ring">'+esc(x.percentComplete??"--")+'%</div></article>';
+const mediaTitle=x=>esc(x.displayTitle||x.title||x.showTitle||"");
+const activityRow=x=>'<article class="activity-row" tabindex="0" data-item="'+encodeURIComponent(JSON.stringify(x))+'">'+art(x)+'<div class="activity-copy"><div class="activity-heading"><strong>'+mediaTitle(x)+'</strong><span>'+esc(x.categoryLabel)+'</span></div>'+(x.category==="audiobook"&&x.showTitle?'<p>By '+esc(x.showTitle)+'</p>':x.showTitle&&x.showTitle!==x.displayTitle?'<p>'+esc(x.title)+'</p>':'')+'<p>'+esc(x.displayName)+' &middot; '+fmtDate(x.watchedAt)+' &middot; '+fmtDuration(x.duration)+'</p>'+evidence(x)+'</div><div class="progress-ring">'+esc(x.percentComplete??"--")+'%</div></article>';
 const empty=label=>'<div class="panel-state"><h3>No '+esc(label)+' here yet</h3><p>Try broadening the filters. Missing evidence stays unknown.</p></div>';
 function setButtons(){document.querySelectorAll("[data-layout]").forEach(b=>{b.classList.toggle("active",b.dataset.layout===state.layout);b.setAttribute("aria-pressed",String(b.dataset.layout===state.layout));});}
 
@@ -28,7 +29,11 @@ async function openDetail(x){
     : '';
 
   let headerHtml = '';
-  if (x.showTitle) {
+  if (x.category === "audiobook") {
+    const title = x.displayTitle || x.title;
+    const authorLine = x.showTitle ? '<p class="detail-episode-meta" style="margin-top: 8px; margin-bottom: 12px;"><span class="detail-episode-title">By '+esc(x.showTitle)+'</span></p>' : '';
+    headerHtml = '<p class="eyebrow">'+esc(x.categoryLabel)+'</p><h2 style="margin-bottom: 0;">'+esc(title)+'</h2>'+authorLine;
+  } else if (x.showTitle) {
     let epTitle = x.title;
     if (epTitle.toLowerCase().includes("episode") || x.showTitle === epTitle || epTitle.match(/^Season \d+/i)) {
       headerHtml = '<p class="eyebrow">'+esc(x.categoryLabel)+'</p><h2 style="margin-bottom: 0;">'+esc(x.showTitle)+'</h2><p class="detail-episode-meta" style="margin-top: 8px; margin-bottom: 12px;"><span class="detail-season-badge">'+esc(seasonEp || 'Episode')+'</span></p>';
@@ -317,7 +322,7 @@ async function renderExplorer() {
       <div class="panel-title"><h3>Household Library</h3><span>Categorized media explorer</span></div>
       ${catTabsHtml}
       <div class="poster-grid">
-        ${(d.items.length ? d.items.map(x=>'<article class="poster-card" tabindex="0" data-item="'+encodeURIComponent(JSON.stringify(x))+'">'+art(x)+'<strong>'+esc(x.displayTitle||x.title)+'</strong><span>'+esc(x.categoryLabel)+' &middot; '+x.distinctItems+' '+(x.category==="movie"?"title":x.category==="audiobook"?"chapter":"episode")+(x.distinctItems===1?"":"s")+' &middot; '+x.plays+' play'+(x.plays===1?"":"s")+'</span></article>').join("") : empty("consumed titles"))}
+                ${(d.items.length ? d.items.map(x=>'<article class="poster-card" tabindex="0" data-item="'+encodeURIComponent(JSON.stringify(x))+'">'+art(x)+'<strong>'+mediaTitle(x)+'</strong><span>'+esc(x.categoryLabel)+' &middot; '+x.distinctItems+' '+(x.category==="movie"?"title":x.category==="audiobook"?"chapter":"episode")+(x.distinctItems===1?"":"s")+' &middot; '+x.plays+' play'+(x.plays===1?"":"s")+'</span></article>').join("") : empty("consumed titles"))}
       </div>
       ${pager(d)}
     </section>
