@@ -7,84 +7,51 @@ export function registerWebRoutes(router: Router): void {
 
   router.get("/", (_req, res) => {
     res.type("html").send(renderPage("Dashboard", `
-      <section class="band">
-        <h2>Service Health</h2>
-        <div id="readiness" class="readiness-grid" aria-live="polite"></div>
-        <pre id="health">Loading...</pre>
-      </section>
-
-      <section class="band">
-        <h2>Configured Users</h2>
-        <div class="items-table-container">
-          <table class="preview-table">
-            <thead>
-              <tr>
-                <th>Username</th>
-                <th>Display Name</th>
-                <th>Plex User ID</th>
-                <th>Role</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody id="users-table-body">
-              <tr><td colspan="5" class="text-center">Loading users...</td></tr>
-            </tbody>
-          </table>
+      <div class="dashboard-shell">
+        <aside class="dashboard-sidebar">
+          <nav id="layout-switcher" class="sidebar-nav dashboard-views" aria-label="Dashboard views">
+            <button class="nav-btn" data-layout="overview">Overview</button>
+            <button class="nav-btn" data-layout="timeline">Activity Timeline</button>
+            <button class="nav-btn" data-layout="explorer">Media Explorer</button>
+            <button class="nav-btn" data-layout="people">People</button>
+            <button class="nav-btn" data-layout="progress">Progress</button>
+          </nav>
+          <div class="sidebar-section dashboard-members">
+            <h3>Household Members</h3>
+            <div id="sidebar-presence"></div>
+          </div>
+        </aside>
+        <div class="dashboard-main">
+          <header class="dashboard-header">
+            <div class="header-titles">
+              <h2 id="view-title" style="margin:0; font-size:1.8rem;">Overview</h2>
+              <p id="view-subtitle" style="margin:4px 0 0; color:var(--text-muted); font-size:0.95rem;">Everything everyone is enjoying.</p>
+            </div>
+            <div id="stat-ribbon" class="stat-ribbon"></div>
+          </header>
+          <form id="dashboard-filters" class="dashboard-filters">
+            <input type="search" name="search" placeholder="Search title...">
+            <select name="user"><option value="">All Users</option></select>
+            <select name="category">
+              <option value="">All Categories</option>
+              <option value="movie">Movies</option>
+              <option value="tv">TV</option>
+              <option value="classic_tv">Classic TV</option>
+              <option value="anime">Anime</option>
+              <option value="audiobook">Audiobooks</option>
+            </select>
+            <button type="submit" class="btn">Apply</button>
+            <a id="csv-export" href="/api/dashboard/export.csv" class="btn" download>CSV</a>
+          </form>
+          <p id="active-filters" class="active-filters"></p>
+          <div id="dashboard-content"></div>
         </div>
-      </section>
-
-      <section class="band">
-        <h2>Recent Activity</h2>
-        <p>Use the API, CLI, or Discord prompt flow while the richer history copy UI fills in.</p>
-      </section>
-
-      <script>
-        const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
-          '&': '&amp;',
-          '<': '&lt;',
-          '>': '&gt;',
-          '"': '&quot;',
-          "'": '&#39;'
-        })[character]);
-
-        fetch('/api/health').then(r => r.json()).then(data => {
-          const readiness = data.readiness || {};
-          const labels = {
-            database: 'Database',
-            plex: 'Plex',
-            tautulli: 'Tautulli',
-            discord: 'Discord',
-            watcher: 'Watcher',
-            plexMutation: 'Plex mutation'
-          };
-          document.getElementById('readiness').innerHTML = Object.entries(labels).map(([key, label]) => {
-            const item = readiness[key] || { status: 'unconfigured', message: 'No status reported.' };
-            return '<article class="readiness-item status-' + escapeHtml(item.status) + '">' +
-              '<div class="readiness-label">' + escapeHtml(label) + '</div>' +
-              '<div class="readiness-status">' + escapeHtml(item.status) + '</div>' +
-              '<p>' + escapeHtml(item.message) + '</p>' +
-            '</article>';
-          }).join('');
-          document.getElementById('health').textContent = JSON.stringify(data, null, 2);
-        });
-
-        fetch('/api/users').then(r => r.json()).then(data => {
-          if (data.ok && data.users) {
-            const tbody = document.getElementById('users-table-body');
-            tbody.innerHTML = data.users.map(u => {
-              const role = u.is_source_user ? 'Source' : 'Typical Target';
-              const status = u.enabled ? '<span class="badge badge-success">Enabled</span>' : '<span class="badge badge-failed">Disabled</span>';
-              return '<tr>' +
-                '<td>' + escapeHtml(u.plex_username) + '</td>' +
-                '<td>' + escapeHtml(u.display_name || '-') + '</td>' +
-                '<td>' + escapeHtml(u.plex_user_id || '-') + '</td>' +
-                '<td>' + role + '</td>' +
-                '<td>' + status + '</td>' +
-                '</tr>';
-            }).join('');
-          }
-        });
-      </script>
+      </div>
+      <dialog id="detail-dialog">
+        <button class="dialog-close" formmethod="dialog">&times;</button>
+        <div id="detail-content"></div>
+      </dialog>
+      <script src="/static/dashboard.js"></script>
     `));
   });
 
@@ -210,6 +177,7 @@ export function registerWebRoutes(router: Router): void {
             <table class="preview-table">
               <thead>
                 <tr>
+                  <th>Select</th>
                   <th>Target User</th>
                   <th>Media Type</th>
                   <th>Title</th>
@@ -229,6 +197,10 @@ export function registerWebRoutes(router: Router): void {
       <script>
         // Fetch and populate users
         let usersList = [];
+
+        function userLabel(user) {
+          return (user && (user.alias || user.plex_username)) || '';
+        }
         
         function renderTargets(selectedSource) {
           const targetContainer = document.getElementById('targetUsersContainer');
@@ -243,8 +215,8 @@ export function registerWebRoutes(router: Router): void {
             targetContainer.innerHTML = '<p class="text-muted">No other Plex library users available.</p>';
           } else {
             targetContainer.innerHTML = targets.map(u => {
-              const displayNameText = u.display_name && u.display_name !== u.plex_username ? ' (' + u.display_name + ')' : '';
-              return '<label class="checkbox-label"><input type="checkbox" name="targetUsers" value="' + u.plex_username + '"> ' + u.plex_username + displayNameText + '</label>';
+              const displayName = userLabel(u);
+              return '<label class="checkbox-label"><input type="checkbox" name="targetUsers" value="' + u.plex_username + '"> ' + displayName + '</label>';
             }).join('');
           }
         }
@@ -258,18 +230,18 @@ export function registerWebRoutes(router: Router): void {
                     .replace(/'/g, '&#039;');
         }
 
-        fetch('/api/users')
+        fetch('/api/dashboard/users')
           .then(r => r.json())
           .then(data => {
             if (data.ok && data.users) {
               usersList = data.users;
               const sourceSelect = document.getElementById('sourceUser');
               
-              // Populate source users dropdown with all users
+              // Populate source users dropdown with visible dashboard users
               usersList.forEach(u => {
                 const opt = document.createElement('option');
                 opt.value = u.plex_username;
-                opt.textContent = u.plex_username + (u.display_name && u.display_name !== u.plex_username ? ' (' + u.display_name + ')' : '');
+                opt.textContent = userLabel(u);
                 sourceSelect.appendChild(opt);
               });
               
@@ -409,7 +381,7 @@ export function registerWebRoutes(router: Router): void {
               // Populate Items Table
               const tbody = document.getElementById('preview-items-body');
               if (data.items.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="text-center">No history items matched the criteria.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center">No history items matched the criteria.</td></tr>';
                 document.getElementById('apply-action-bar').classList.add('hidden');
               } else {
                 tbody.innerHTML = data.items.map(item => {
@@ -421,18 +393,22 @@ export function registerWebRoutes(router: Router): void {
                   }
 
                   const targetUserObj = usersList.find(u => u.id === item.targetUserId);
-                  const targetName = targetUserObj ? targetUserObj.plex_username : 'User ' + item.targetUserId;
+                  const targetName = targetUserObj ? userLabel(targetUserObj) : 'User ' + item.targetUserId;
                   const seasonEpisode = item.mediaType === 'episode' ? 'S' + String(item.seasonNumber).padStart(2, '0') + 'E' + String(item.episodeNumber).padStart(2, '0') : '-';
                   const cleanTitle = item.mediaType === 'episode' ? (item.showTitle || '') + ': ' + item.title : item.title;
 
                   const rowClass = item.status === 'eligible' ? 'class="row-eligible"' : '';
                   const dataIdAttr = item.status === 'eligible' ? ' data-id="' + item.id + '"' : '';
+                  const selectCell = item.status === 'eligible'
+                    ? '<td class="row-select-cell"><input type="checkbox" class="row-select" aria-label="Select eligible row for ' + escapeHtml(cleanTitle) + '" /></td>'
+                    : '<td></td>';
 
                   return '<tr ' + rowClass + dataIdAttr + '>' +
-                    '<td>' + targetName + '</td>' +
+                    selectCell +
+                    '<td>' + escapeHtml(targetName) + '</td>' +
                     '<td><span class="media-type-icon ' + item.mediaType + '">' + item.mediaType + '</span></td>' +
-                    '<td>' + cleanTitle + '</td>' +
-                    '<td>' + seasonEpisode + '</td>' +
+                    '<td>' + escapeHtml(cleanTitle) + '</td>' +
+                    '<td>' + escapeHtml(seasonEpisode) + '</td>' +
                     '<td>' + new Date(item.watchedAt).toLocaleString() + '</td>' +
                     '<td><span class="badge ' + statusClass + '">' + (item.reason || item.status) + '</span></td>' +
                     '</tr>';
@@ -465,9 +441,12 @@ export function registerWebRoutes(router: Router): void {
         document.getElementById('preview-items-body').addEventListener('click', (e) => {
           const row = e.target.closest('tr');
           if (!row || !row.classList.contains('row-eligible')) return;
+          if (e.target.closest('input.row-select')) return;
 
           const eligibleRows = Array.from(document.querySelectorAll('.row-eligible'));
           const clickedIndex = eligibleRows.indexOf(row);
+          const checkbox = row.querySelector('input.row-select');
+          if (!checkbox) return;
 
           if (e.shiftKey && lastClickedIndex !== -1) {
             // Prevent text selection while shift-clicking
@@ -479,33 +458,48 @@ export function registerWebRoutes(router: Router): void {
             const end = Math.max(lastClickedIndex, clickedIndex);
             
             // Toggle the row to determine the target selection state
-            row.classList.toggle('selected');
-            const targetState = row.classList.contains('selected');
+            checkbox.checked = !checkbox.checked;
+            row.classList.toggle('selected', checkbox.checked);
+            const targetState = checkbox.checked;
 
             for (let i = start; i <= end; i++) {
+              const itemCheckbox = eligibleRows[i].querySelector('input.row-select');
+              if (!itemCheckbox) continue;
               if (targetState) {
+                itemCheckbox.checked = true;
                 eligibleRows[i].classList.add('selected');
               } else {
+                itemCheckbox.checked = false;
                 eligibleRows[i].classList.remove('selected');
               }
             }
           } else {
-            row.classList.toggle('selected');
+            checkbox.checked = !checkbox.checked;
+            row.classList.toggle('selected', checkbox.checked);
           }
 
           lastClickedIndex = clickedIndex;
+        });
+
+        document.getElementById('preview-items-body').addEventListener('change', (e) => {
+          const checkbox = e.target.closest('input.row-select');
+          if (!checkbox) return;
+          const row = checkbox.closest('tr');
+          if (row) {
+            row.classList.toggle('selected', checkbox.checked);
+          }
         });
 
         // Apply Copy Job
         document.getElementById('apply-btn').addEventListener('click', async () => {
           if (!currentJobId) return;
 
-          const selectedRows = Array.from(document.querySelectorAll('.row-eligible.selected'));
+          const selectedRows = Array.from(document.querySelectorAll('.row-select:checked'));
           if (selectedRows.length === 0) {
             alert('Please select at least one row to copy by clicking on it.');
             return;
           }
-          const selectedItemIds = selectedRows.map(row => Number(row.getAttribute('data-id')));
+          const selectedItemIds = selectedRows.map(row => Number(row.closest('tr').getAttribute('data-id')));
 
           const applyBtn = document.getElementById('apply-btn');
           const feedback = document.getElementById('status-feedback');
@@ -548,15 +542,16 @@ export function registerWebRoutes(router: Router): void {
                   }
 
                   const targetUserObj = usersList.find(u => u.id === item.target_user_id);
-                  const targetName = targetUserObj ? targetUserObj.plex_username : 'User ' + item.target_user_id;
+                  const targetName = targetUserObj ? userLabel(targetUserObj) : 'User ' + item.target_user_id;
                   const seasonEpisode = item.media_type === 'episode' ? 'S' + String(item.season_number).padStart(2, '0') + 'E' + String(item.episode_number).padStart(2, '0') : '-';
                   const cleanTitle = item.media_type === 'episode' ? (item.show_title || '') + ': ' + item.title : item.title;
 
                   return '<tr>' +
-                    '<td>' + targetName + '</td>' +
+                    '<td></td>' +
+                    '<td>' + escapeHtml(targetName) + '</td>' +
                     '<td><span class="media-type-icon ' + item.media_type + '">' + item.media_type + '</span></td>' +
-                    '<td>' + cleanTitle + '</td>' +
-                    '<td>' + seasonEpisode + '</td>' +
+                    '<td>' + escapeHtml(cleanTitle) + '</td>' +
+                    '<td>' + escapeHtml(seasonEpisode) + '</td>' +
                     '<td>' + new Date(item.watched_at).toLocaleString() + '</td>' +
                     '<td><span class="badge ' + statusClass + '">' + (item.reason || item.status) + '</span></td>' +
                     '</tr>';
@@ -600,6 +595,29 @@ export function registerWebRoutes(router: Router): void {
         </form>
         <div id="settings-message" style="margin-top: 1rem;"></div>
       </section>
+
+      <section class="band">
+        <h2>Dashboard Users</h2>
+        <p class="text-muted" style="margin-bottom: 1rem;">Manage dashboard-only aliases and visibility without changing synced Plex identity.</p>
+        <form id="users-form" class="job-form">
+          <div class="items-table-container">
+            <table class="preview-table">
+              <thead>
+                <tr>
+                  <th>Username</th>
+                  <th>Alias</th>
+                  <th>Show on Dashboard?</th>
+                </tr>
+              </thead>
+              <tbody id="settings-users-body">
+                <tr><td colspan="3">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <button type="submit" style="margin-top: 1rem;">Save Users</button>
+        </form>
+        <div id="users-message" style="margin-top: 1rem;"></div>
+      </section>
       <script>
         const form = document.getElementById('settings-form');
         const checkbox = document.getElementById('prompt_for_audiobooks');
@@ -631,12 +649,64 @@ export function registerWebRoutes(router: Router): void {
             message.style.color = 'red';
           });
         });
+
+        const usersForm = document.getElementById('users-form');
+        const usersBody = document.getElementById('settings-users-body');
+        const usersMessage = document.getElementById('users-message');
+        
+        fetch('/api/settings/users').then(r => r.json()).then(data => {
+          if (data.ok && data.users) {
+            usersBody.innerHTML = data.users.map(u => {
+              const safeAlias = (u.alias || '').replace(/"/g, '&quot;');
+              const safeUsername = (u.plex_username || '').replace(/"/g, '&quot;');
+              return '<tr data-id="' + u.id + '">' +
+                '<td>' + safeUsername + '</td>' +
+                '<td><input type="text" class="user-alias" value="' + safeAlias + '" placeholder="' + safeUsername + '" style="padding: 4px; width: 100%; box-sizing: border-box;" /></td>' +
+                '<td><input type="checkbox" class="user-shown" ' + (u.shown ? 'checked' : '') + ' /></td>' +
+              '</tr>';
+            }).join('');
+          }
+        });
+
+        usersForm.addEventListener('submit', (e) => {
+          e.preventDefault();
+          usersMessage.textContent = 'Saving...';
+          
+          const updatedUsers = Array.from(usersBody.querySelectorAll('tr')).map(tr => {
+            return {
+              id: Number(tr.getAttribute('data-id')),
+              alias: tr.querySelector('.user-alias').value,
+              shown: tr.querySelector('.user-shown').checked
+            };
+          });
+
+          fetch('/api/settings/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ users: updatedUsers })
+          }).then(r => r.json()).then(data => {
+            if (data.ok) {
+              usersMessage.textContent = 'Users saved successfully!';
+              usersMessage.style.color = 'green';
+            } else {
+              usersMessage.textContent = 'Error: ' + data.error;
+              usersMessage.style.color = 'red';
+            }
+          }).catch(err => {
+            usersMessage.textContent = 'Error saving users';
+            usersMessage.style.color = 'red';
+          });
+        });
       </script>
     `));
   });
 }
 
 function renderPage(title: string, body: string): string {
+  const navItem = (href: string, label: string): string => {
+    const active = label === title ? " active" : "";
+    return `<a class="topnav-link${active}" href="${href}">${label}</a>`;
+  };
   return `<!doctype html>
   <html lang="en">
     <head>
@@ -657,8 +727,22 @@ function renderPage(title: string, body: string): string {
       </script>
     </head>
     <body>
-      <nav><strong>Plex Co-Watch Sync</strong><a href="/">Dashboard</a><a href="/copy">Copy History</a><a href="/audit">Audit</a><a href="/settings">Settings</a></nav>
-      <main><h1>${title}</h1>${body}</main>
+      <header class="app-topbar">
+        <a class="brand-link" href="/" aria-label="Plex Co-Watch Sync home">
+          <span class="brand-mark">P</span>
+          <span class="brand-copy">
+            <strong>Plex Co-Watch Sync</strong>
+            <span>${title}</span>
+          </span>
+        </a>
+        <nav class="topnav" aria-label="Primary">
+          ${navItem("/", "Dashboard")}
+          ${navItem("/copy", "Copy History")}
+          ${navItem("/audit", "Audit")}
+          ${navItem("/settings", "Settings")}
+        </nav>
+      </header>
+      <main class="app-page"><h1>${title}</h1>${body}</main>
     </body>
   </html>`;
 }

@@ -12,6 +12,9 @@ import { QueryService } from "../service/queryService.js";
 import { SummaryService } from "../service/summaryService.js";
 import { SessionService } from "../service/sessionService.js";
 import { CowatchingIntelligenceService } from "../service/cowatchingIntelligenceService.js";
+import { DashboardService } from "../service/dashboardService.js";
+import { DashboardPreferenceService } from "../service/dashboardPreferenceService.js";
+import { appConfig } from "../utils/config.js";
 import { parseDays } from "../utils/time.js";
 
 export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Router {
@@ -27,6 +30,8 @@ export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Ro
   const summaryService = new SummaryService(db, plex);
   const sessionService = new SessionService(db);
   const cowatchingIntelligenceService = new CowatchingIntelligenceService(db);
+  const dashboardPreferences = new DashboardPreferenceService(db);
+  const dashboardService = new DashboardService(db);
 
   users.syncConfiguredUsers();
   (async () => {
@@ -75,6 +80,126 @@ export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Ro
     } catch (error) {
       res.status(500).json({ ok: false, error: String(error) });
     }
+  });
+
+  router.get("/api/settings/users", (_req, res) => {
+    try {
+      const rows = dashboardPreferences.listUsers();
+      res.json({ ok: true, users: rows });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: String(error) });
+    }
+  });
+
+  router.get("/api/dashboard/users", (_req, res) => {
+    try {
+      const rows = dashboardPreferences.listVisibleUsers();
+      res.json({ ok: true, users: rows });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: String(error) });
+    }
+  });
+
+  router.post("/api/settings/users", express.json(), (req, res) => {
+    try {
+      const { users: updatedUsers } = req.body;
+      if (!Array.isArray(updatedUsers)) {
+        return res.status(400).json({ ok: false, message: "Invalid users payload." });
+      }
+      dashboardPreferences.saveUsers(
+        updatedUsers.map((u: { id: number; alias?: string | null; shown?: boolean }) => ({
+          id: Number(u.id),
+          alias: typeof u.alias === "string" && u.alias.trim() ? u.alias.trim() : null,
+          shown: u.shown === true
+        }))
+      );
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: String(error) });
+    }
+  });
+
+  router.get("/api/dashboard/overview", (req, res, next) => {
+    try { res.json({ ok: true, data: dashboardService.getOverview(req.query) }); }
+    catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/timeline", (req, res, next) => {
+    try {
+      res.json({ ok: true, data: dashboardService.getTimeline(req.query) });
+    }
+    catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/media", (req, res, next) => {
+    try { res.json({ ok: true, data: dashboardService.getMedia(req.query) }); }
+    catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/people", (req, res, next) => {
+    try { res.json({ ok: true, data: dashboardService.getPeople(req.query) }); }
+    catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/progress", (req, res, next) => {
+    try { res.json({ ok: true, data: dashboardService.getProgress(req.query) }); }
+    catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/continue-watching", (req, res, next) => {
+    try { res.json({ ok: true, data: dashboardService.getContinueWatching(req.query) }); }
+    catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/cowatch-patterns", (req, res, next) => {
+    try { res.json({ ok: true, data: dashboardService.getCowatchPatterns() }); }
+    catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/detail/:ratingKey", (req, res, next) => {
+    try { res.json({ ok: true, data: dashboardService.getDetail(req.params.ratingKey) }); }
+    catch (e) { next(e); }
+  });
+  router.get("/api/artwork/:key", async (req, res, next) => {
+    try {
+      await serveArtwork(req.params.key, res);
+    } catch (error) {
+      next(error);
+    }
+  });
+  router.get("/api/dashboard/prompts", (_req, res) => {
+    const rows = db.prepare("SELECT * FROM watch_events WHERE prompt_status IN ('pending','prompted','failed') ORDER BY watched_at DESC LIMIT 50").all();
+    res.json(rows);
+  });
+  router.post("/api/dashboard/prompts/:id/:action", express.json(), async (req, res, next) => {
+    try {
+      const id = Number(req.params.id);
+      const action = req.params.action;
+      if (action === "dismiss") {
+        if (!req.body.confirm) return res.status(400).json({ ok: false, message: "Confirmation required" });
+        db.prepare("UPDATE watch_events SET prompt_status='dismissed' WHERE id=?").run(id);
+        audit.record("dashboard_prompt_dismissed", "web", "ok", { watchEventId: id });
+        res.json({ ok: true });
+      } else if (action === "reprompt") {
+        res.json(await cowatch.createPrompt(id, "web"));
+      } else {
+        res.status(400).json({ ok: false, message: "Invalid action" });
+      }
+    } catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/export.csv", (req, res, next) => {
+    try {
+      const { items } = dashboardService.getActivity({ ...req.query, limit: 10000 });
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", 'attachment; filename="history.csv"');
+      res.write("watched_at,person,category,library,title,progress,duration_minutes,status\n");
+      for (const item of items) {
+        res.write([
+          item.watchedAt,
+          item.displayName,
+          item.categoryLabel,
+          item.libraryName ?? "",
+          item.title,
+          item.percentComplete ?? "",
+          Math.round((item.duration ?? 0) / 60000),
+          item.completed ? "completed" : "in_progress"
+        ].map(s => `"${String(s).replace(/"/g, '""')}"`).join(",") + "\n");
+      }
+      res.end();
+    } catch (e) { next(e); }
   });
 
   router.get("/api/users", (_req, res) => res.json({ ok: true, users: users.listConfigured() }));
@@ -279,6 +404,134 @@ export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Ro
       }
     }
   });
+
+  async function serveArtwork(rawKey: string, res: express.Response): Promise<void> {
+    const decodedKey = decodeURIComponent(rawKey);
+    const localSource = await resolveLocalArtworkSource(decodedKey);
+    if (localSource) {
+      await proxyArtworkSource(localSource, res);
+      return;
+    }
+
+    const remoteSource = await resolvePlexArtworkSource(decodedKey);
+    if (remoteSource) {
+      await proxyArtworkSource(remoteSource, res);
+      return;
+    }
+
+    const audiobookRatingKey = resolveAudiobookRatingKey(decodedKey);
+    if (audiobookRatingKey && audiobookRatingKey !== decodedKey) {
+      const fallbackRemoteSource = await resolvePlexArtworkSource(audiobookRatingKey);
+      if (fallbackRemoteSource) {
+        await proxyArtworkSource(fallbackRemoteSource, res);
+        return;
+      }
+    }
+
+    res.status(404).end();
+  }
+
+  async function resolveLocalArtworkSource(artworkKey: string): Promise<string | null> {
+    const catalogRow = db.prepare(`
+      SELECT rating_key, media_type, audiobook_id
+      FROM content_catalog
+      WHERE rating_key = ?
+    `).get(artworkKey) as { rating_key: string; media_type: string; audiobook_id: number | null } | undefined;
+
+    let audiobookId: number | null = null;
+    if (artworkKey.startsWith("audiobook:")) {
+      const raw = artworkKey.slice("audiobook:".length);
+      if (/^\d+$/.test(raw)) {
+        const directBook = db.prepare("SELECT cover_url FROM audiobook_books WHERE id = ?").get(Number(raw)) as { cover_url: string | null } | undefined;
+        if (directBook?.cover_url) return directBook.cover_url;
+        const catalogByRatingKey = db.prepare(`
+          SELECT audiobook_id
+          FROM content_catalog
+          WHERE rating_key = ?
+        `).get(raw) as { audiobook_id: number | null } | undefined;
+        audiobookId = catalogByRatingKey?.audiobook_id ?? null;
+      } else if (catalogRow?.audiobook_id) {
+        audiobookId = Number(catalogRow.audiobook_id);
+      }
+    } else if (catalogRow?.media_type === "audiobook" && catalogRow.audiobook_id != null) {
+      audiobookId = Number(catalogRow.audiobook_id);
+    }
+
+    if (audiobookId != null) {
+      const book = db.prepare("SELECT cover_url FROM audiobook_books WHERE id = ?").get(audiobookId) as { cover_url: string | null } | undefined;
+      if (book?.cover_url) return book.cover_url;
+    }
+
+    return null;
+  }
+
+  function resolveAudiobookRatingKey(artworkKey: string): string | null {
+    if (!artworkKey.startsWith("audiobook:")) return null;
+    const raw = artworkKey.slice("audiobook:".length);
+    if (/^\d+$/.test(raw)) {
+      const catalogByAudiobookId = db.prepare(`
+        SELECT rating_key
+        FROM content_catalog
+        WHERE audiobook_id = ?
+        ORDER BY refreshed_at DESC
+        LIMIT 1
+      `).get(Number(raw)) as { rating_key: string } | undefined;
+      return catalogByAudiobookId?.rating_key ?? null;
+    }
+
+    const catalogRow = db.prepare(`
+      SELECT rating_key
+      FROM content_catalog
+      WHERE rating_key = ? AND audiobook_id IS NOT NULL
+    `).get(raw) as { rating_key: string } | undefined;
+    return catalogRow?.rating_key ?? null;
+  }
+
+  async function resolvePlexArtworkSource(artworkKey: string): Promise<string | null> {
+    const key = artworkKey.startsWith("audiobook:") ? artworkKey.slice("audiobook:".length) : artworkKey;
+    let metadata: Awaited<ReturnType<PlexAdapter["getRichMetadataByRatingKey"]>> | null = null;
+
+    try {
+      metadata = await plex.getRichMetadataByRatingKey(key);
+    } catch (error) {
+      console.warn("Failed to resolve Plex artwork:", error instanceof Error ? error.message : error);
+      return null;
+    }
+
+    const source = metadata.thumb ?? metadata.parentThumb ?? metadata.grandparentThumb ?? metadata.art ?? metadata.parentArt ?? metadata.grandparentArt;
+    if (!source) return null;
+    return normalizeArtworkSource(source);
+  }
+
+  function normalizeArtworkSource(source: string): string {
+    if (/^data:/i.test(source) || /^https?:\/\//i.test(source)) {
+      return source;
+    }
+    const url = new URL(source, appConfig.PLEX_BASE_URL);
+    if (appConfig.PLEX_TOKEN && !url.searchParams.has("X-Plex-Token")) {
+      url.searchParams.set("X-Plex-Token", appConfig.PLEX_TOKEN);
+    }
+    return url.toString();
+  }
+
+  async function proxyArtworkSource(sourceUrl: string, res: express.Response): Promise<void> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(normalizeArtworkSource(sourceUrl), { signal: controller.signal });
+      if (!response.ok) {
+        res.status(response.status === 404 ? 404 : 502).end();
+        return;
+      }
+      const contentType = response.headers.get("content-type") || "image/jpeg";
+      const body = Buffer.from(await response.arrayBuffer());
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      res.status(200).send(body);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
 
   return router;
 }

@@ -22,6 +22,8 @@ import { CowatchingIntelligenceService } from "../dist/service/cowatchingIntelli
 import { AudiobookCatalogService, canonicalizeAudiobookSeriesTitle, isAudiobookMedia, parseAudiobookPath, parseAudnexusAsin, prepareAudiobookMetadata, normalizeAudiobookHierarchy } from "../dist/service/audiobookService.js";
 import { AudiobookBackfillService } from "../dist/service/audiobookBackfillService.js";
 import { AudiobookScannerService } from "../dist/service/audiobookScannerService.js";
+import { DashboardService, deriveDashboardCategory } from "../dist/service/dashboardService.js";
+import { DashboardPreferenceService } from "../dist/service/dashboardPreferenceService.js";
 
 const tests = [];
 
@@ -668,6 +670,40 @@ test("IngestionService creates a source watch event when Tautulli returns a disp
   });
 });
 
+
+test("IngestionService promotes an existing completed playback observation into a watch event", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const watchedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, title, watched_at, completed, created_at, updated_at
+      ) VALUES (1, 'movie-regression', 'movie', 'The Movie', ?, 1, datetime('now'), datetime('now'))
+    `).run(watchedAt);
+
+    const row = {
+      user: "Tony",
+      ratingKey: "movie-regression",
+      mediaType: "movie",
+      title: "The Movie",
+      watchedAt,
+      percentComplete: 95
+    };
+
+    const result = new IngestionService(db, {
+      getUsers: async () => [],
+      getActivity: async () => ({ streamCount: 0 }),
+      getMetadata: async (ratingKey) => ({ ratingKey, title: "" }),
+      getRecentHistory: async () => [row]
+    }).ingestRow(1, row);
+
+    assert.equal(result.inserted, false);
+    assert.equal(typeof result.watchEventId, "number");
+    const event = db.prepare("SELECT rating_key, prompt_status FROM watch_events").get();
+    assert.equal(event.rating_key, "movie-regression");
+    assert.equal(event.prompt_status, "pending");
+  });
+});
 test("IngestionService backfillHistory paginated is idempotent", async () => {
   await withTestDb(async (db) => {
     seedUsers(db);
@@ -1485,6 +1521,344 @@ test("Plex webhook endpoint accepts multipart/form-data and processes tracks in 
   });
 });
 
+
+test("dashboard category model distinguishes the supported media families", () => {
+  assert.equal(deriveDashboardCategory("movie", "Movies").category, "movie");
+  assert.equal(deriveDashboardCategory("movie", "Workouts").category, "other");
+  assert.equal(deriveDashboardCategory("movie", "Anime Movies").category, "anime");
+  assert.equal(deriveDashboardCategory("episode", "Classic TV").category, "classic_tv");
+  assert.equal(deriveDashboardCategory("episode", "Anime").category, "anime");
+  assert.equal(deriveDashboardCategory("track", "Audiobooks").category, "audiobook");
+  assert.equal(deriveDashboardCategory("track", "").category, "other");
+  assert.equal(deriveDashboardCategory("audiobook", "").category, "audiobook");
+  assert.equal(deriveDashboardCategory("episode", "TV Shows").category, "tv");
+});
+
+test("dashboard service returns bounded mixed-media data and honest progress", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const users = db.prepare("SELECT id, plex_username FROM users WHERE enabled = 1 ORDER BY id").all();
+    const insert = db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+    const now = new Date().toISOString();
+    insert.run(users[0].id,"movie-1","movie","Movies","Moonrise",null,now,100,7200000,1,now,now);
+    insert.run(users[1].id,"anime-1","episode","Anime","Episode 1","Skyward",now,73,1500000,0,now,now);
+    insert.run(users[0].id,"book-1","track","Audiobooks","Chapter 1","The Long Book",now,35,1800000,0,now,now);
+    const indexes=db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_playback_dashboard_%'").all();
+    assert.ok(indexes.length >= 3);
+    const service = new DashboardService(db);
+    const overview = service.getOverview({});
+    assert.equal(overview.totals.plays, 3);
+    assert.equal(typeof overview.timingMs, "number");
+    assert.ok(overview.categories.some(x => x.category === "movie"));
+    assert.ok(overview.categories.some(x => x.category === "anime"));
+    assert.ok(overview.categories.some(x => x.category === "audiobook"));
+    assert.equal(service.getActivity({limit:1}).items.length, 1);
+    assert.equal(service.getActivity({limit:5000}).limit, 1000);
+    assert.equal(service.getActivity({category:"anime"}).total, 1);
+    assert.equal(service.getPeople({}).people.length, users.length);
+    assert.equal(service.getTimeline({ days: 30 }).windowDays, 7);
+    const progress = service.getProgress({});
+    assert.equal(typeof progress.timingMs, "number");
+    assert.ok(progress.progress.some(x => x.title === "The Long Book" && x.totalKnown === false));
+  });
+});
+
+test("dashboard preferences survive identity resyncs and drive dashboard visibility", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const users = db.prepare("SELECT id, plex_username FROM users ORDER BY plex_username ASC").all();
+    const byName = Object.fromEntries(users.map((user) => [user.plex_username, user]));
+    const prefs = new DashboardPreferenceService(db);
+    prefs.saveUsers([
+      { id: byName.Tony.id, alias: "Big T", shown: true },
+      { id: byName.Viewer.id, alias: null, shown: false }
+    ]);
+
+    const now = new Date().toISOString();
+    const insert = db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+    insert.run(byName.Tony.id, "movie-1", "movie", "Movies", "Moonrise", null, now, 100, 7200000, 1, now, now);
+    insert.run(byName.Viewer.id, "movie-2", "movie", "Movies", "Moonrise", null, now, 100, 7200000, 1, now, now);
+
+    new UserService(db).syncConfiguredUsers([
+      { plexUsername: "Disabled", displayName: "Disabled Synced", isSourceUser: true, isTypicalCowatcher: false, enabled: false },
+      { plexUsername: "Tony", displayName: "Tony Synced", isSourceUser: true, isTypicalCowatcher: false, enabled: true },
+      { plexUsername: "Viewer", plexUserId: "viewer-plex", displayName: "Viewer Synced", isSourceUser: false, isTypicalCowatcher: true, enabled: true }
+    ]);
+
+    const service = new DashboardService(db);
+    const overview = service.getOverview({});
+    const tony = overview.users.find((user) => user.plex_username === "Tony");
+    assert.ok(tony);
+    assert.equal(tony.display_name, "Big T");
+    assert.equal(overview.users.some((user) => user.plex_username === "Viewer"), false);
+
+    const people = service.getPeople({}).people;
+    assert.equal(people.some((person) => person.plex_username === "Viewer"), false);
+    assert.equal(people.find((person) => person.plex_username === "Tony").display_name, "Big T");
+
+    const stored = db.prepare("SELECT dashboard_alias, dashboard_shown FROM users WHERE plex_username = 'Tony'").get();
+    assert.equal(stored.dashboard_alias, "Big T");
+    assert.equal(stored.dashboard_shown, 1);
+  });
+});
+
+test("dashboard preference lists expose only visible users and preserve aliases", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const users = db.prepare("SELECT id, plex_username FROM users ORDER BY plex_username ASC").all();
+    const byName = Object.fromEntries(users.map((user) => [user.plex_username, user]));
+    const prefs = new DashboardPreferenceService(db);
+    prefs.saveUsers([
+      { id: byName.Tony.id, alias: "Big T", shown: true },
+      { id: byName.Viewer.id, alias: "Hidden Viewer", shown: false }
+    ]);
+
+    const visible = prefs.listVisibleUsers();
+    assert.deepEqual(visible.map((user) => user.plex_username), ["Tony"]);
+    assert.equal(visible[0].alias, "Big T");
+  });
+});
+
+test("dashboard audiobook titles prefer the book title and artwork routes return images", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const user = db.prepare("SELECT id FROM users ORDER BY id LIMIT 1").get();
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const laterIso = new Date(now.getTime() + 1000).toISOString();
+    const coverUrl = "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900"><rect width="600" height="900" fill="#0f172a"/><text x="50%" y="50%" fill="#f59e0b" font-size="44" text-anchor="middle">The Final Empire</text></svg>`);
+
+    db.prepare(`
+      INSERT INTO audiobook_books (folder_key, title, authors_json, narrators_json, cover_url, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("book-folder", "The Final Empire", JSON.stringify(["Brandon Sanderson"]), JSON.stringify([]), coverUrl, "manual", "enriched", nowIso, nowIso);
+    const book = db.prepare("SELECT id FROM audiobook_books WHERE folder_key = 'book-folder'").get();
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, audiobook_id, source_provenance, refreshed_at)
+      VALUES (?, 'audiobook', ?, ?, ?, ?)
+    `).run("book-track-1", "Brandon Sanderson", book.id, "plex", nowIso);
+    db.prepare(`
+      INSERT INTO audiobook_books (folder_key, title, authors_json, narrators_json, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("book-folder-2", "2016 - Arcanum Unbounded The Cosmere Collection (Unabridged)", JSON.stringify(["Brandon Sanderson"]), JSON.stringify([]), "folder_path", "pending", nowIso, nowIso);
+    const secondBook = db.prepare("SELECT id FROM audiobook_books WHERE folder_key = 'book-folder-2'").get();
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, audiobook_id, source_provenance, refreshed_at)
+      VALUES (?, 'audiobook', ?, ?, ?, ?)
+    `).run("book-track-2", "Brandon Sanderson", secondBook.id, "plex", nowIso);
+    db.prepare(`
+      INSERT INTO audiobook_books (folder_key, title, authors_json, narrators_json, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("book-folder-3", "Cosmere Warbreaker (Alyssa Bresnahan) (2015)", JSON.stringify(["Brandon Sanderson"]), JSON.stringify([]), "folder_path", "pending", nowIso, nowIso);
+    const thirdBook = db.prepare("SELECT id FROM audiobook_books WHERE folder_key = 'book-folder-3'").get();
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, audiobook_id, source_provenance, refreshed_at)
+      VALUES (?, 'audiobook', ?, ?, ?, ?)
+    `).run("book-track-3", "Brandon Sanderson", thirdBook.id, "plex", nowIso);
+    db.prepare(`
+      INSERT INTO playback_observations
+        (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(user.id, "book-track-1", "audiobook", "Audiobooks", "Brandon Sanderson", "Brandon Sanderson", nowIso, 25, 1200000, 0, nowIso, nowIso);
+    db.prepare(`
+      INSERT INTO playback_observations
+        (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(user.id, "book-track-2", "audiobook", "Audiobooks", "Arcanum Unbounded The Cosmere Collection (Unabridged) (2016)", "Brandon Sanderson", laterIso, 25, 1200000, 0, laterIso, laterIso);
+    db.prepare(`
+      INSERT INTO playback_observations
+        (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(user.id, "book-track-3", "audiobook", "Audiobooks", "Cosmere Warbreaker (Alyssa Bresnahan) (2015)", "Brandon Sanderson", new Date(now.getTime() + 2000).toISOString(), 3, 1200000, 0, new Date(now.getTime() + 2000).toISOString(), new Date(now.getTime() + 2000).toISOString());
+
+    const service = new DashboardService(db);
+    const overview = service.getOverview({});
+    const firstItem = overview.activity.items.find((item) => item.ratingKey === "book-track-1");
+    const secondItem = overview.activity.items.find((item) => item.ratingKey === "book-track-2");
+    const thirdItem = overview.activity.items.find((item) => item.ratingKey === "book-track-3");
+    const secondContinue = overview.continueWatching.find((item) => item.ratingKey === "book-track-2");
+    assert.ok(firstItem);
+    assert.ok(secondItem);
+    assert.ok(thirdItem);
+    assert.ok(secondContinue);
+    assert.equal(firstItem.displayTitle, "The Final Empire");
+    assert.equal(secondItem.displayTitle, "Arcanum Unbounded The Cosmere Collection (Unabridged)");
+    assert.equal(thirdItem.displayTitle, "Warbreaker");
+    assert.equal(secondContinue.displayTitle, "Arcanum Unbounded The Cosmere Collection (Unabridged)");
+
+    const { createApp } = await import("../dist/server/app.js");
+    const app = createApp(db, new MockPlexAdapter());
+    const server = await new Promise((resolve) => {
+      const s = app.listen(0, "127.0.0.1", () => resolve(s));
+    });
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const audiobookArt = await fetch(base + secondItem.artworkUrl);
+      assert.equal(audiobookArt.status, 200);
+      assert.match(audiobookArt.headers.get("content-type"), /image\/svg\+xml/);
+      assert.match(await audiobookArt.text(), /<svg/i);
+
+      const movieArt = await fetch(base + "/api/artwork/movie-1");
+      assert.equal(movieArt.status, 200);
+      assert.match(movieArt.headers.get("content-type"), /image\/svg\+xml/);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
+test("dashboard service falls back to catalog libraries and groups explorer cards", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const user = db.prepare("SELECT id FROM users ORDER BY id LIMIT 1").get();
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO audiobook_books (folder_key, title, authors_json, narrators_json, series_title, genres_json, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run("book-folder", "Guards! Guards!", JSON.stringify(["Terry Pratchett"]), JSON.stringify(["Nigel Planer"]), "Discworld", JSON.stringify(["Fantasy"]), "plex", "ready", now, now);
+    db.prepare(`INSERT INTO content_catalog (rating_key, media_type, title, library_title, source_provenance, refreshed_at)
+      VALUES (?, ?, ?, ?, ?, ?)`)
+      .run("anime-1", "episode", "Episode 1", "Anime", "plex", now);
+    db.prepare(`INSERT INTO content_catalog (rating_key, media_type, title, library_title, source_provenance, refreshed_at)
+      VALUES (?, ?, ?, ?, ?, ?)`)
+      .run("anime-2", "episode", "Episode 2", "Anime", "plex", now);
+    db.prepare(`INSERT INTO content_catalog (rating_key, media_type, title, library_title, source_provenance, refreshed_at, audiobook_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run("audio-1", "audiobook", "Chapter 1", "Audiobooks", "plex", now, 1);
+    db.prepare(`INSERT INTO content_catalog (rating_key, media_type, title, library_title, source_provenance, refreshed_at, audiobook_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run("audio-2", "audiobook", "Chapter 2", "Audiobooks", "plex", now, 1);
+    db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(user.id, "anime-1", "episode", null, "Episode 1", "Skyward", now, 50, 1500000, 0, now, now);
+    db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(user.id, "anime-2", "episode", null, "Episode 2", "Skyward", now, 60, 1500000, 0, now, now);
+    db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(user.id, "audio-1", "audiobook", null, "Chapter 1", "Guards! Guards!", now, 25, 1200000, 0, now, now);
+    db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(user.id, "audio-2", "audiobook", null, "Chapter 2", "Guards! Guards!", now, 40, 1200000, 0, now, now);
+    db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(user.id, "noise-1", "clip", null, "Broken file", null, now, 0, 60000, 0, now, now);
+    db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(user.id, "unknown-track", "track", null, "01 - mystery file", null, now, 0, 60000, 0, now, now);
+    const service = new DashboardService(db);
+    const overview = service.getOverview({});
+    assert.ok(overview.libraries.includes("Anime"));
+    assert.ok(overview.libraries.includes("Audiobooks"));
+    assert.equal(service.getActivity({ category: "anime" }).total, 2);
+    assert.equal(service.getActivity({ category: "audiobook" }).total, 2);
+    const media = service.getMedia({ sort: "title" });
+    assert.equal(media.total, 2);
+    assert.equal(media.items.length, 2);
+    assert.equal(media.items.some((item) => item.category === "other"), false);
+    assert.equal(media.items.some((item) => item.title === "01 - mystery file"), false);
+    const anime = media.items.find((item) => item.category === "anime");
+    const audio = media.items.find((item) => item.category === "audiobook");
+    assert.ok(anime);
+    assert.ok(audio);
+    assert.equal(anime.plays, 2);
+    assert.equal(anime.distinctItems, 2);
+    assert.equal(audio.plays, 2);
+    assert.equal(anime.title, "Skyward");
+    assert.equal(audio.title, "Guards! Guards!");
+  });
+});
+
+test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed prompt actions", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const user = db.prepare("SELECT id FROM users ORDER BY id LIMIT 1").get();
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?, 'movie-http', 'movie', 'Movies', 'HTTP Movie', ?, 100, 7200000, 1, ?, ?)`).run(user.id,now,now,now);
+    const event = db.prepare(`INSERT INTO watch_events
+      (source_user_id,rating_key,media_type,title,watched_at,prompt_status,created_at,updated_at)
+      VALUES (?, 'movie-http', 'movie', 'HTTP Movie', ?, 'pending', ?, ?)`).run(user.id,now,now,now);
+    const { createApp } = await import("../dist/server/app.js");
+    const app = createApp(db,new MockPlexAdapter());
+    // Wait for the async syncConfiguredUsers to complete in routes.ts, then re-seed
+    await new Promise(r => setTimeout(r, 100));
+    seedUsers(db);
+    const server = await new Promise(resolve => { const instance=app.listen(0,"127.0.0.1",()=>resolve(instance)); });
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const page = await (await fetch(base+"/")).text();
+      assert.match(page,/Everything everyone is enjoying/);
+      assert.match(page,/dashboard\.js/);
+      const copyPage = await (await fetch(base+"/copy")).text();
+      assert.match(copyPage,/api\/dashboard\/users/);
+      assert.match(copyPage,/<th>Select<\/th>/);
+      assert.match(copyPage,/row-select/);
+      const overview = await (await fetch(base+"/api/dashboard/overview")).json();
+      assert.equal(overview.ok,true);
+      assert.equal(overview.data.totals.plays,1);
+      assert.equal(typeof overview.data.timingMs,"number");
+      assert.equal(overview.data.activity.items[0].artworkUrl,"/api/artwork/movie-http");      const timeline = await (await fetch(base+"/api/dashboard/timeline")).json();
+      assert.equal(timeline.ok,true);
+      assert.equal(timeline.data.items.length,1);
+      assert.equal(timeline.data.sessions.length,1);
+      assert.equal(timeline.data.sessions[0].itemCount,1);
+      const detail = await (await fetch(base+"/api/dashboard/detail/movie-http")).json();
+      assert.equal(detail.ok,true);
+      assert.equal(detail.data.item.title,"HTTP Movie");
+      assert.equal(detail.data.repeatCount,0);
+      assert.equal(typeof detail.data.timingMs,"number");
+      assert.doesNotMatch(JSON.stringify(overview),/X-Plex-Token|file_path|folder_path_hint/);
+      const csvResponse=await fetch(base+"/api/dashboard/export.csv");
+      assert.match(csvResponse.headers.get("content-type"),/text\/csv/);
+      const csv=await csvResponse.text();
+      assert.match(csv,/watched_at,person,category/);
+      assert.match(csv,/HTTP Movie/);
+      assert.doesNotMatch(csv,/X-Plex-Token|file_path|folder_path_hint/);
+      const denied=await fetch(base+`/api/dashboard/prompts/${event.lastInsertRowid}/dismiss`,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+      assert.equal(denied.status,400);
+      const accepted=await fetch(base+`/api/dashboard/prompts/${event.lastInsertRowid}/dismiss`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirm:true})});
+      assert.equal(accepted.status,200);
+      assert.equal(db.prepare("SELECT prompt_status FROM watch_events WHERE id=?").get(event.lastInsertRowid).prompt_status,"dismissed");
+      assert.ok(db.prepare("SELECT id FROM audit_log WHERE action='dashboard_prompt_dismissed'").get());
+    } finally { await new Promise(resolve=>server.close(resolve)); }
+  });
+});
+
+test("dashboard timeline uses bounded windows and summary endpoints stay sampled", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const user = db.prepare("SELECT id FROM users ORDER BY id LIMIT 1").get();
+    const insert = db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+    const now = new Date();
+    for (let i = 0; i < 600; i++) {
+      const watchedAt = new Date(now.getTime() - (i % 9) * 24 * 60 * 60 * 1000).toISOString();
+      insert.run(user.id, `movie-${i}`, "movie", "Movies", `Movie ${i}`, null, watchedAt, 100, 7200000, 1, watchedAt, watchedAt);
+    }
+    const service = new DashboardService(db);
+    const timeline = service.getTimeline({ days: 30, limit: 1000 });
+    const overview = service.getOverview({});
+
+    assert.equal(timeline.windowDays, 7);
+    assert.equal(timeline.items.length <= 1000, true);
+    assert.equal(typeof timeline.timingMs, "number");
+    assert.equal(overview.activity.limit, 24);
+    assert.equal(overview.activity.items.length <= 24, true);
+    assert.equal(typeof overview.timingMs, "number");
+  });
+});
 let passed = 0;
 for (const { name, fn } of tests) {
   try {

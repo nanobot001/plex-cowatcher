@@ -120,9 +120,33 @@ Phase 3 introduces domain-specific features, system settings, and reporting to r
 
 Introduce robust heuristics and deep metadata parsing to classify audiobooks and separate them from standard music tracks. Implement a foundational application settings store to configure rules like disabling Discord prompts for solo audiobook sessions.
 
-### Block 3-2: Richer Browser UI
+### Block 3-2 Umbrella Specification: Customizable Household Media Dashboard MVP
 
-Upgrade the local web dashboard to support pagination, deep history search, CSV export, and richer controls for reviewing co-watch history and modifying application settings.
+Implemented 2026-06-28 through Blocks 3-2a to 3-2e. Together, the completed children create a highly customizable, media-neutral window into what every configured user is consuming.
+
+- **3-2a - Usable Dashboard MVP Foundation:** Real household overview, mixed-media activity, shared filters, initial drill-downs, safe Plex artwork, and saved display preferences.
+- **3-2b - Activity Timeline And Layout System:** Persistent layout switching and a chronological, provenance-aware activity view.
+- **3-2c - Media Explorer And Rich Drill-Downs:** Searchable artwork browsing plus media-, person-, session-, episodic-, and audiobook-aware detail.
+- **3-2d - People And Co-Watching Workspace:** Per-person intelligence, Discord prompt lifecycle visibility, and safe audited co-watch actions.
+- **3-2e - Progress, Export, Accessibility And Hardening:** Progress and collections, streamed CSV export, responsive accessibility, performance, and regression coverage.
+
+### Blocks 3-2g Through 3-2o: Corrective Dashboard Redesign
+
+A live Playwright review after 3-2f found that the dashboard had real data but failed its intended product outcome: primary layout navigation was effectively invisible, Overview hierarchy was cramped, Timeline rendered months of tiny fragments, Library was category-skewed, People exposed raw/duplicate identities, and Progress remained unresponsive beyond 30 seconds.
+
+The corrective sequence is mandatory and ordered:
+
+1. **3-2g - Dashboard Contract And Performance Baseline:** Freeze vocabulary, bounds, response contracts, canonical poster/cover rules, dashboard user preference semantics, realistic fixtures, and measurable budgets.
+2. **3-2h - Dashboard Shell And Design System:** Build visible navigation, shared filters, responsive shell, reusable accessible primitives, and Settings controls for dashboard user visibility and aliases.
+3. **3-2i - Overview Decision Surface:** Deliver mixed-media summary, continue consumption, household activity, and evidence-backed attention work.
+4. **3-2j - Library Category Browser:** Replace the undifferentiated alphabetical grid with bounded category-led consumed-title browsing.
+5. **3-2k - Rich Media Detail Workspace:** Add one shared movie, episodic, and audiobook hierarchy/evidence detail system.
+6. **3-2l - Daily Session Timeline:** Replace multi-month rendering with a bounded day/week investigation view and separate activity feed.
+7. **3-2m - People And Co-Watch Intelligence:** Clarify identities, per-person behavior, real person pairings, and prompt/evidence state.
+8. **3-2n - Hierarchy Progress Workspace:** Provide lazy, bounded progress for episodic media, audiobooks, and movies.
+9. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
+
+Each block must pass its own exit gate before the next begins. Block 3-3 is paused until 3-2o completes.
 
 ### Block 3-3: Household Watch Reports
 

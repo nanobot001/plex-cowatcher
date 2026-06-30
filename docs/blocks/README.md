@@ -4,14 +4,38 @@ Blocks are numbered, bounded AI-buildable tickets for code, logic, docs, folder 
 
 ## Active Phase
 
-The project is currently in the Phase 3 refinement set. The next planned blocks are:
+The project is currently in the Phase 3 refinement set. A live Playwright review found that the completed 3-2f redesign did not meet its intended usability, bounded-rendering, or responsive outcome. The next planned block is:
 
-- `block-3-2-richer-browser-ui.md`
-- `block-3-3-household-watch-reports.md`
-- `block-3-4-hierarchical-audiobook-series-modeling.md`
-- `block-3-5-proactive-audiobook-scanner.md`
+- `block-3-2g-dashboard-contract-and-performance-baseline.md`
 
 Phase 3 builds on the completed playback-intelligence foundation with domain-specific refinement, richer operator ergonomics, and reporting.
+Blocks 3-2a through 3-2e form one sequential dashboard implementation path:
+
+- 3-2a establishes the usable household overview and shared dashboard vocabulary.
+- 3-2b adds the reusable layout system and chronological activity view.
+- 3-2c adds media browsing and rich drill-downs.
+- 3-2d adds the people and co-watching workspace.
+- 3-2e adds progress, export, accessibility, and hardening.
+
+Blocks 3-2a through 3-2f are implemented historical work. Blocks 3-2g through 3-2o are the corrective dashboard sequence and must be implemented strictly in order before Block 3-3.
+
+Corrective sequence:
+
+1. `block-3-2g-dashboard-contract-and-performance-baseline.md`
+2. `block-3-2h-dashboard-shell-and-design-system.md`
+3. `block-3-2i-overview-decision-surface.md`
+4. `block-3-2j-library-category-browser.md`
+5. `block-3-2k-rich-media-detail-workspace.md`
+6. `block-3-2l-daily-session-timeline.md`
+7. `block-3-2m-people-and-cowatch-intelligence.md`
+8. `block-3-2n-hierarchy-progress-workspace.md`
+9. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
+
+Do not implement a later corrective block until the previous block's exit gate is recorded as passing. A later block must not conceal, waive, or silently absorb a failed earlier acceptance criterion.
+
+## Umbrella Specifications
+
+- `block-3-2-richer-browser-ui.md` - product contract and sequencing for Blocks 3-2a through 3-2e; do not implement directly.
 
 ## Completed And Historical Blocks
 
@@ -29,7 +53,16 @@ Phase 3 builds on the completed playback-intelligence foundation with domain-spe
 - `block-2-4-watch-progress-summaries.md`
 - `block-2-5-viewing-session-reconstruction.md`
 - `block-2-6-cowatching-intelligence.md`
-- `block-3-1-audiobook-differentiation.md`
+- `completed/block-3-1-audiobook-differentiation.md`
+- `completed/block-3-2a-dashboard-mvp-foundation.md`
+- `completed/block-3-2b-activity-timeline-layout-system.md`
+- `completed/block-3-2c-media-explorer-drilldowns.md`
+- `completed/block-3-2d-people-cowatching-workspace.md`
+- `completed/block-3-2e-progress-export-hardening.md`
+- `completed/block-3-2f-premium-dashboard-redesign.md`
+
+- `completed/block-3-4-hierarchical-audiobook-series-modeling.md`
+- `completed/block-3-5-proactive-audiobook-scanner.md`
 
 Completed blocks remain as historical references. Verify current behavior from code and current docs, not from older block assumptions.
 
@@ -68,8 +101,8 @@ Use:
 - `docs/architecture/` for system structure, component boundaries, integrations, and data flow
 - `docs/data/` for schemas, contracts, payloads, storage rules, migrations, and sample data guidance
 - `docs/process/` for workflow, verification, review, and development process
-- `docs/production/` for deployment, runtime, release, and operations
-- `docs/testing/` for test strategy and verification patterns
+- `docs/production/` for deployment, runtime, release, operations, and monitoring
+- `docs/testing/` for test strategy, verification commands, fixtures, and manual QA flows
 - `docs/decisions/` for important tradeoffs and settled choices
 
 Do not create documentation churn for trivial changes.

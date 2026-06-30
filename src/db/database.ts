@@ -26,9 +26,37 @@ export function migrateDatabase(db: Db): void {
   ensureColumn(db, "watch_events", "discord_prompt_sent_at", "TEXT");
   ensureColumn(db, "copy_job_items", "plex_guid", "TEXT");
   ensureColumn(db, "users", "is_home_user", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "users", "dashboard_alias", "TEXT");
+  ensureColumn(db, "users", "dashboard_shown", "INTEGER NOT NULL DEFAULT 1");
+  migrateDashboardPreferences(db);
   migrateAudiobooks(db);
   normalizeAudiobookSeriesTitles(db);
   migrateAudiobookHierarchy(db);
+}
+
+function migrateDashboardPreferences(db: Db): void {
+  const applied = db.prepare("SELECT 1 FROM schema_migrations WHERE version = 9").get();
+  if (applied) return;
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare(`
+      UPDATE users
+      SET
+        dashboard_alias = CASE
+          WHEN trim(coalesce(display_name, '')) = '' THEN NULL
+          WHEN trim(display_name) = trim(plex_username) THEN NULL
+          ELSE display_name
+        END,
+        dashboard_shown = enabled,
+        updated_at = COALESCE(updated_at, datetime('now'))
+    `).run();
+    db.prepare("INSERT INTO schema_migrations (version, name) VALUES (9, ?)").run("dashboard_preferences");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrateAudiobooks(db: Db): void {

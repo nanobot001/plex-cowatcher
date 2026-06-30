@@ -29,3 +29,4 @@ Rules:
 - Record structured errors.
 - Keep a cheap verification command for the tool contract.
 - Preserve the project's normal runtime model, including PM2, cron, Task Scheduler, Docker Compose, or systemd if used.
+- **Safe File Editing**: Never use the `write_to_file` tool to overwrite an existing file. Always use targeted `replace_file_content` or `multi_replace_file_content` tools to prevent accidental full-file deletions or destructive overwrites.

@@ -106,8 +106,8 @@ export class UserService {
     const upsert = this.db.prepare(`
       INSERT INTO users (
         plex_user_id, plex_username, display_name, discord_user_id,
-        is_source_user, is_typical_cowatcher, enabled, is_home_user, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        is_source_user, is_typical_cowatcher, enabled, dashboard_shown, is_home_user, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(plex_username) DO UPDATE SET
         plex_user_id = excluded.plex_user_id,
         display_name = excluded.display_name,
@@ -181,6 +181,7 @@ export class UserService {
           user.discordUserId ?? null,
           user.isSourceUser ? 1 : 0,
           user.isTypicalCowatcher ? 1 : 0,
+          user.enabled ? 1 : 0,
           user.enabled ? 1 : 0,
           user.isHomeUser ? 1 : 0,
           now,
