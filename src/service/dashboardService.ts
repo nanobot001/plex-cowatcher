@@ -74,10 +74,14 @@ function resolveDashboardAlias(alias?: string | null, plexUsername?: string | nu
 function normalizeAudiobookDisplayTitle(value?: string | null): string {
   const raw = value?.trim();
   if (!raw) return "";
-  return raw
-    .replace(/^\s*\d{4}\s*[-–—]\s*/, "")
-    .replace(/\s*\((\d{4})\)\s*$/, "")
-    .trim();
+  let title = raw.replace(/^\s*\d{4}\s*[-–—]\s*/, "");
+  const hadTrailingYear = /\s*\((\d{4})\)\s*$/.test(title);
+  title = title.replace(/\s*\((\d{4})\)\s*$/, "");
+  if (hadTrailingYear) {
+    title = title.replace(/\s*\(([^()]+)\)\s*$/, "");
+  }
+  title = title.replace(/^Cosmere\s+/i, "");
+  return title.trim();
 }
 
 function resolveDashboardDisplayTitle(item: Pick<DashboardActivityItem, "category" | "showTitle" | "title" | "audiobookTitle">): string {

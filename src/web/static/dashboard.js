@@ -146,23 +146,61 @@ async function loadGlobals() {
 // ----------------------------------------------------
 
 async function renderOverview() {
-  const [overview, health, prompts] = await Promise.allSettled([
+  const [overview, health, prompts, audit] = await Promise.allSettled([
     fetchJson("/api/dashboard/overview?" + query()),
     fetch("/api/health").then(r => r.json()),
-    fetchJson("/api/dashboard/prompts")
+    fetchJson("/api/dashboard/prompts"),
+    fetchJson("/api/audit?days=7")
   ]);
   
   if (overview.status === "rejected") throw overview.reason;
   const d = overview.value;
-  const pList = prompts.status === "fulfilled" ? prompts.value : [];
+  const pList = prompts.status === "fulfilled" ? (Array.isArray(prompts.value) ? prompts.value : prompts.value?.prompts || prompts.value?.data || []) : [];
+  const auditList = audit.status === "fulfilled" ? (Array.isArray(audit.value) ? audit.value : audit.value?.audit || audit.value?.data || []) : [];
+  const userLookup = new Map((d.users || []).map(u => [String(u.id), u.display_name || u.displayName || u.plex_username || String(u.id)]));
   
-  const healthHtml = health.status === "fulfilled" 
-    ? Object.entries(health.value.readiness || {}).map(([k, v]) => '<span class="health-pill status-' + esc(v.status) + '">' + esc(k) + ' ' + esc(v.status) + '</span>').join("") 
-    : '<span class="proof error">Health unavailable</span>';
+  const healthData = health.status === "fulfilled" ? health.value : null;
+  const readiness = healthData?.readiness || {};
+  const readinessEntries = Object.entries(readiness);
+  const healthSummary = healthData
+    ? `${readinessEntries.filter(([, v]) => v.status === "healthy").length}/${readinessEntries.length || 0} healthy`
+    : "Health unavailable";
+
+  const atAGlanceHtml = `
+    <div class="glance-grid">
+      <article class="glance-card"><strong>${esc(d.totals.plays)}</strong><span>Total plays</span></article>
+      <article class="glance-card"><strong>${esc(d.totals.people)}</strong><span>Active users</span></article>
+      <article class="glance-card"><strong>${esc(Math.round((d.totals.minutes || 0) / 60))}</strong><span>Hours watched</span></article>
+      <article class="glance-card"><strong>${esc(d.totals.pendingPrompts)}</strong><span>Pending prompts</span></article>
+    </div>
+  `;
+
+  const recentSyncHtml = auditList.length > 0
+    ? `<div class="feed-list">${auditList.slice(0, 5).map(entry => {
+        const action = String(entry.action || "event").replace(/_/g, " ");
+        const status = String(entry.status || "ok");
+        const actor = String(entry.actor || "system");
+        const payload = entry.error ? ` · ${esc(entry.error)}` : "";
+        return `<article class="feed-row"><div><strong>${esc(action)}</strong><p>${esc(actor)} · ${fmtDate(entry.created_at)}${payload}</p></div><span class="audit-pill status-${esc(status)}">${esc(status)}</span></article>`;
+      }).join("")}</div>`
+    : '<div class="panel-state"><p>No recent sync activity yet.</p></div>';
+
+  const watchHealthHtml = healthData
+    ? `<div class="health-mini-grid">${readinessEntries.map(([k, v]) => `<article class="health-mini-card status-${esc(v.status)}"><strong>${esc(k)}</strong><p>${esc(v.message)}</p></article>`).join("")}</div>`
+    : '<div class="panel-state"><p>Watch health is unavailable.</p></div>';
+
+  const notificationsHtml = pList.length > 0
+    ? `<div class="feed-list">${pList.slice(0, 5).map(entry => {
+        const person = userLookup.get(String(entry.source_user_id)) || entry.plex_username || entry.username || "Household member";
+        const title = entry.title || entry.show_title || entry.rating_key || "Prompt";
+        const status = String(entry.prompt_status || "pending");
+        return `<article class="feed-row"><div><strong>${esc(title)}</strong><p>${esc(person)} · ${fmtDate(entry.watched_at)}</p></div><span class="audit-pill status-${esc(status)}">${esc(status)}</span></article>`;
+      }).join("")}</div>`
+    : '<div class="panel-state"><p>No notifications waiting.</p></div>';
     
   // Recently Active Media Carousel
   const cwHtml = d.continueWatching && d.continueWatching.length > 0 
-    ? '<div class="cw-carousel">' + d.continueWatching.map(cw => '<article class="cw-card" tabindex="0" data-item="' + encodeURIComponent(JSON.stringify(cw)) + '">' + cardArt(cw) + '<div class="cw-bar"><i style="width:'+esc(cw.percentComplete||0)+'%"></i></div><p>' + esc(cw.displayTitle) + '</p></article>').join("") + '</div>'
+    ? '<div class="cw-carousel">' + d.continueWatching.map(cw => '<article class="cw-card" tabindex="0" data-item="' + encodeURIComponent(JSON.stringify(cw)) + '">' + cardArt(cw) + '<div class="cw-bar"><i style="width:'+esc(cw.percentComplete||0)+'%"></i></div><p>' + esc(cw.displayTitle || cw.title || "") + '</p></article>').join("") + '</div>'
     : '<p class="text-muted">No active media in progress.</p>';
 
   content.innerHTML = `
@@ -189,11 +227,55 @@ async function renderOverview() {
         </div>
       </div>
       
-      <aside>
-        <div class="dashboard-panel">
-          <h3>Service Readiness</h3>
-          <div class="health-list">${healthHtml}</div>
-        </div>
+      <aside class="dashboard-stack">
+        <details class="dashboard-collapsible" open>
+          <summary>
+            <div class="collapsible-copy">
+              <h3>At a Glance</h3>
+              <span>Fast household summary</span>
+            </div>
+            <span class="collapsible-meta">${esc(d.totals.pendingPrompts)} pending</span>
+          </summary>
+          <div class="dashboard-collapsible-body">
+            ${atAGlanceHtml}
+          </div>
+        </details>
+        <details class="dashboard-collapsible">
+          <summary>
+            <div class="collapsible-copy">
+              <h3>Recent Sync Activity</h3>
+              <span>Latest audit trail entries</span>
+            </div>
+            <span class="collapsible-meta">${esc(auditList.length)} events</span>
+          </summary>
+          <div class="dashboard-collapsible-body">
+            ${recentSyncHtml}
+          </div>
+        </details>
+        <details class="dashboard-collapsible">
+          <summary>
+            <div class="collapsible-copy">
+              <h3>Watch Health</h3>
+              <span>${esc(healthSummary)}</span>
+            </div>
+            <span class="collapsible-meta">${esc(Object.values(readiness).filter(v => v.status === "healthy").length)} healthy</span>
+          </summary>
+          <div class="dashboard-collapsible-body">
+            ${watchHealthHtml}
+          </div>
+        </details>
+        <details class="dashboard-collapsible"${pList.length > 0 ? " open" : ""}>
+          <summary>
+            <div class="collapsible-copy">
+              <h3>Notifications</h3>
+              <span>Pending prompts and follow-ups</span>
+            </div>
+            <span class="collapsible-meta">${esc(pList.length)} items</span>
+          </summary>
+          <div class="dashboard-collapsible-body">
+            ${notificationsHtml}
+          </div>
+        </details>
       </aside>
     </section>
   `;
