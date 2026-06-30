@@ -23,6 +23,7 @@ import { AudiobookCatalogService, canonicalizeAudiobookSeriesTitle, isAudiobookM
 import { AudiobookBackfillService } from "../dist/service/audiobookBackfillService.js";
 import { AudiobookScannerService } from "../dist/service/audiobookScannerService.js";
 import { DashboardService, deriveDashboardCategory } from "../dist/service/dashboardService.js";
+import { DashboardPreferenceService } from "../dist/service/dashboardPreferenceService.js";
 
 const tests = [];
 
@@ -1561,6 +1562,47 @@ test("dashboard service returns bounded mixed-media data and honest progress", (
     const progress = service.getProgress({});
     assert.equal(typeof progress.timingMs, "number");
     assert.ok(progress.progress.some(x => x.title === "The Long Book" && x.totalKnown === false));
+  });
+});
+
+test("dashboard preferences survive identity resyncs and drive dashboard visibility", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const users = db.prepare("SELECT id, plex_username FROM users ORDER BY plex_username ASC").all();
+    const byName = Object.fromEntries(users.map((user) => [user.plex_username, user]));
+    const prefs = new DashboardPreferenceService(db);
+    prefs.saveUsers([
+      { id: byName.Tony.id, alias: "Big T", shown: true },
+      { id: byName.Viewer.id, alias: null, shown: false }
+    ]);
+
+    const now = new Date().toISOString();
+    const insert = db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+    insert.run(byName.Tony.id, "movie-1", "movie", "Movies", "Moonrise", null, now, 100, 7200000, 1, now, now);
+    insert.run(byName.Viewer.id, "movie-2", "movie", "Movies", "Moonrise", null, now, 100, 7200000, 1, now, now);
+
+    new UserService(db).syncConfiguredUsers([
+      { plexUsername: "Disabled", displayName: "Disabled Synced", isSourceUser: true, isTypicalCowatcher: false, enabled: false },
+      { plexUsername: "Tony", displayName: "Tony Synced", isSourceUser: true, isTypicalCowatcher: false, enabled: true },
+      { plexUsername: "Viewer", plexUserId: "viewer-plex", displayName: "Viewer Synced", isSourceUser: false, isTypicalCowatcher: true, enabled: true }
+    ]);
+
+    const service = new DashboardService(db);
+    const overview = service.getOverview({});
+    const tony = overview.users.find((user) => user.plex_username === "Tony");
+    assert.ok(tony);
+    assert.equal(tony.display_name, "Big T");
+    assert.equal(overview.users.some((user) => user.plex_username === "Viewer"), false);
+
+    const people = service.getPeople({}).people;
+    assert.equal(people.some((person) => person.plex_username === "Viewer"), false);
+    assert.equal(people.find((person) => person.plex_username === "Tony").display_name, "Big T");
+
+    const stored = db.prepare("SELECT dashboard_alias, dashboard_shown FROM users WHERE plex_username = 'Tony'").get();
+    assert.equal(stored.dashboard_alias, "Big T");
+    assert.equal(stored.dashboard_shown, 1);
   });
 });
 

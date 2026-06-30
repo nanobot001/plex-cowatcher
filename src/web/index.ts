@@ -570,14 +570,14 @@ export function registerWebRoutes(router: Router): void {
 
       <section class="band">
         <h2>Dashboard Users</h2>
-        <p class="text-muted" style="margin-bottom: 1rem;">Manage the aliases and visibility of users on the dashboard.</p>
+        <p class="text-muted" style="margin-bottom: 1rem;">Manage dashboard-only aliases and visibility without changing synced Plex identity.</p>
         <form id="users-form" class="job-form">
           <div class="items-table-container">
             <table class="preview-table">
               <thead>
                 <tr>
                   <th>Username</th>
-                  <th>Alias (Display Name)</th>
+                  <th>Alias</th>
                   <th>Show on Dashboard?</th>
                 </tr>
               </thead>
@@ -629,11 +629,12 @@ export function registerWebRoutes(router: Router): void {
         fetch('/api/settings/users').then(r => r.json()).then(data => {
           if (data.ok && data.users) {
             usersBody.innerHTML = data.users.map(u => {
-              const safeName = (u.display_name || u.plex_username).replace(/"/g, '&quot;');
+              const safeAlias = (u.alias || '').replace(/"/g, '&quot;');
+              const safeUsername = (u.plex_username || '').replace(/"/g, '&quot;');
               return '<tr data-id="' + u.id + '">' +
-                '<td>' + u.plex_username + '</td>' +
-                '<td><input type="text" class="user-display-name" value="' + safeName + '" style="padding: 4px; width: 100%; box-sizing: border-box;" /></td>' +
-                '<td><input type="checkbox" class="user-enabled" ' + (u.enabled ? 'checked' : '') + ' /></td>' +
+                '<td>' + safeUsername + '</td>' +
+                '<td><input type="text" class="user-alias" value="' + safeAlias + '" placeholder="' + safeUsername + '" style="padding: 4px; width: 100%; box-sizing: border-box;" /></td>' +
+                '<td><input type="checkbox" class="user-shown" ' + (u.shown ? 'checked' : '') + ' /></td>' +
               '</tr>';
             }).join('');
           }
@@ -646,8 +647,8 @@ export function registerWebRoutes(router: Router): void {
           const updatedUsers = Array.from(usersBody.querySelectorAll('tr')).map(tr => {
             return {
               id: Number(tr.getAttribute('data-id')),
-              display_name: tr.querySelector('.user-display-name').value,
-              enabled: tr.querySelector('.user-enabled').checked ? 1 : 0
+              alias: tr.querySelector('.user-alias').value,
+              shown: tr.querySelector('.user-shown').checked
             };
           });
 

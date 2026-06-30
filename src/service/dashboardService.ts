@@ -65,6 +65,12 @@ function resolveLibraryName(libraryName?: string | null, catalogLibraryTitle?: s
   return value?.trim();
 }
 
+function resolveDashboardAlias(alias?: string | null, plexUsername?: string | null): string {
+  const value = alias?.trim();
+  if (value) return value;
+  return plexUsername?.trim() || "";
+}
+
 function explorerTitle(item: Pick<DashboardActivityItem, "category" | "showTitle" | "title" | "audiobookTitle">): string {
   if (item.category === "audiobook") return item.audiobookTitle ?? item.showTitle ?? item.title;
   if (item.category === "tv" || item.category === "classic_tv" || item.category === "anime") return item.showTitle ?? item.title;
@@ -113,7 +119,7 @@ export class DashboardService {
 
   getActivity(input: unknown): { items: DashboardActivityItem[]; total: number; limit: number; offset: number } {
     const p = parseFilters(input);
-    let where = " WHERE u.enabled = 1";
+    let where = " WHERE COALESCE(u.dashboard_shown, u.enabled) = 1";
     const args: any[] = [];
     if (p.dateFrom) { where += " AND po.watched_at >= ?"; args.push(new Date(p.dateFrom).toISOString()); }
     if (p.dateTo) { where += " AND po.watched_at <= ?"; args.push(new Date(p.dateTo).toISOString()); }
@@ -129,7 +135,7 @@ export class DashboardService {
     const from = ` FROM playback_observations po JOIN users u ON u.id=po.user_id LEFT JOIN content_catalog cat ON cat.rating_key=po.rating_key LEFT JOIN content_catalog groupcat ON groupcat.rating_key=po.grandparent_rating_key LEFT JOIN audiobook_books ab ON ab.id=cat.audiobook_id LEFT JOIN watch_events we ON we.rating_key=po.rating_key AND we.source_user_id=po.user_id AND abs(strftime('%s',we.watched_at)-strftime('%s',po.watched_at))<=600 LEFT JOIN cowatch_confirmations cc ON cc.watch_event_id=we.id AND cc.target_user_id=po.user_id`;
     const total = Number((this.db.prepare(`SELECT count(*) total${from}${where}`).get(...args) as any).total);
     const order = p.sort === "title" ? "po.title COLLATE NOCASE, po.rating_key, po.watched_at DESC, po.id DESC" : p.sort === "progress" ? "po.percent_complete DESC, po.watched_at DESC, po.id DESC" : "po.watched_at DESC, po.id DESC";
-    const rows = this.db.prepare(`SELECT po.*,u.plex_username,u.display_name,we.prompt_status,cc.status confirmation_status,cc.plex_sync_status,cat.library_title AS catalog_library_title,groupcat.library_title AS group_catalog_library_title,cat.audiobook_id AS audiobook_id,ab.title AS audiobook_title${from}${where} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...args, p.limit, p.offset) as any[];
+    const rows = this.db.prepare(`SELECT po.*,u.plex_username,u.display_name AS synced_display_name,u.dashboard_alias,u.dashboard_shown,we.prompt_status,cc.status confirmation_status,cc.plex_sync_status,cat.library_title AS catalog_library_title,groupcat.library_title AS group_catalog_library_title,cat.audiobook_id AS audiobook_id,ab.title AS audiobook_title${from}${where} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...args, p.limit, p.offset) as any[];
     const items = rows.map((row) => this.mapActivity(row)).filter(Boolean) as DashboardActivityItem[];
     return { items, total, limit: p.limit, offset: p.offset };
   }
@@ -154,7 +160,18 @@ export class DashboardService {
     const timed = withTiming(() => {
       const baseActivity = this.getActivity({ ...(input as object), limit: 24, offset: 0 });
       const all = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0 }).items;
-      const users = this.db.prepare("SELECT id,plex_username,display_name,enabled,is_source_user FROM users WHERE enabled = 1 ORDER BY display_name,id").all() as any[];
+      const users = this.db.prepare(`
+        SELECT
+          id,
+          plex_username,
+          COALESCE(NULLIF(dashboard_alias, ''), plex_username) AS display_name,
+          COALESCE(dashboard_shown, enabled) AS shown,
+          enabled,
+          is_source_user
+        FROM users
+        WHERE COALESCE(dashboard_shown, enabled) = 1
+        ORDER BY COALESCE(NULLIF(dashboard_alias, ''), plex_username), id
+      `).all() as any[];
 
       const categoryStats = new Map<string, { category: string; plays: number; duration: number; completed: number }>();
       const topTitlesMap = new Map<string, any>();
@@ -262,7 +279,18 @@ export class DashboardService {
   getPeople(input: unknown) {
     const timed = withTiming(() => {
       const all = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0 }).items;
-      const users = this.db.prepare("SELECT id,plex_username,display_name,enabled,is_source_user FROM users WHERE enabled = 1 ORDER BY display_name,id").all() as any[];
+      const users = this.db.prepare(`
+        SELECT
+          id,
+          plex_username,
+          COALESCE(NULLIF(dashboard_alias, ''), plex_username) AS display_name,
+          COALESCE(dashboard_shown, enabled) AS shown,
+          enabled,
+          is_source_user
+        FROM users
+        WHERE COALESCE(dashboard_shown, enabled) = 1
+        ORDER BY COALESCE(NULLIF(dashboard_alias, ''), plex_username), id
+      `).all() as any[];
       return users.map((user) => { const items = all.filter((item) => item.userId === user.id); return { ...user, plays: items.length, minutes: Math.round(items.reduce((minutes, item) => minutes + (item.duration ?? 0), 0) / 60000), recent: items.slice(0, 5), mix: Object.entries(items.reduce<Record<string, number>>((accumulator, item) => { accumulator[item.category] = (accumulator[item.category] ?? 0) + 1; return accumulator; }, {})).map(([category, count]) => ({ category, count })) }; });
     });
     return { people: timed.value, timingMs: timed.timingMs };
@@ -444,7 +472,7 @@ export class DashboardService {
       id: row.id, 
       userId: row.user_id, 
       username: row.plex_username, 
-      displayName: row.display_name?.trim() || row.plex_username, 
+      displayName: resolveDashboardAlias(row.dashboard_alias, row.plex_username), 
       ratingKey: row.rating_key, 
       title: row.title, 
       showTitle: row.show_title ?? undefined, 
@@ -464,12 +492,12 @@ export class DashboardService {
       audiobookTitle: row.audiobook_title ?? undefined, 
       seasonNumber: row.season_number ?? undefined, 
       episodeNumber: row.episode_number ?? undefined, 
-      evidence: { 
-        observed: true, 
-        confirmed: row.confirmation_status === "confirmed", 
-        promptStatus: row.prompt_status ?? null, 
-        plexSyncStatus: row.plex_sync_status ?? null, 
-        watchedAtProvenance: row.watched_at_provenance ?? "unknown", 
+        evidence: { 
+          observed: true, 
+          confirmed: row.confirmation_status === "confirmed", 
+          promptStatus: row.prompt_status ?? null, 
+          plexSyncStatus: row.plex_sync_status ?? null, 
+          watchedAtProvenance: row.watched_at_provenance ?? "unknown", 
         percentCompleteProvenance: row.percent_complete_provenance ?? "unknown" 
       } 
     };

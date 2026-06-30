@@ -13,6 +13,7 @@ import { SummaryService } from "../service/summaryService.js";
 import { SessionService } from "../service/sessionService.js";
 import { CowatchingIntelligenceService } from "../service/cowatchingIntelligenceService.js";
 import { DashboardService } from "../service/dashboardService.js";
+import { DashboardPreferenceService } from "../service/dashboardPreferenceService.js";
 import { parseDays } from "../utils/time.js";
 
 export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Router {
@@ -28,6 +29,7 @@ export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Ro
   const summaryService = new SummaryService(db, plex);
   const sessionService = new SessionService(db);
   const cowatchingIntelligenceService = new CowatchingIntelligenceService(db);
+  const dashboardPreferences = new DashboardPreferenceService(db);
   const dashboardService = new DashboardService(db);
 
   users.syncConfiguredUsers();
@@ -81,7 +83,7 @@ export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Ro
 
   router.get("/api/settings/users", (_req, res) => {
     try {
-      const rows = db.prepare("SELECT id, plex_username, display_name, enabled FROM users ORDER BY plex_username ASC").all();
+      const rows = dashboardPreferences.listUsers();
       res.json({ ok: true, users: rows });
     } catch (error) {
       res.status(500).json({ ok: false, error: String(error) });
@@ -94,18 +96,13 @@ export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Ro
       if (!Array.isArray(updatedUsers)) {
         return res.status(400).json({ ok: false, message: "Invalid users payload." });
       }
-      const stmt = db.prepare("UPDATE users SET display_name = ?, enabled = ?, updated_at = ? WHERE id = ?");
-      const now = new Date().toISOString();
-      try {
-        db.exec('BEGIN IMMEDIATE');
-        for (const u of updatedUsers) {
-          stmt.run(u.display_name || null, u.enabled ? 1 : 0, now, u.id);
-        }
-        db.exec('COMMIT');
-      } catch (err) {
-        db.exec('ROLLBACK');
-        throw err;
-      }
+      dashboardPreferences.saveUsers(
+        updatedUsers.map((u: { id: number; alias?: string | null; shown?: boolean }) => ({
+          id: Number(u.id),
+          alias: typeof u.alias === "string" && u.alias.trim() ? u.alias.trim() : null,
+          shown: u.shown === true
+        }))
+      );
       res.json({ ok: true });
     } catch (error) {
       res.status(500).json({ ok: false, error: String(error) });

@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS users (
   plex_user_id TEXT,
   plex_username TEXT NOT NULL,
   display_name TEXT NOT NULL,
+  dashboard_alias TEXT,
+  dashboard_shown INTEGER NOT NULL DEFAULT 1,
   discord_user_id TEXT,
   is_source_user INTEGER NOT NULL DEFAULT 0,
   is_typical_cowatcher INTEGER NOT NULL DEFAULT 0,

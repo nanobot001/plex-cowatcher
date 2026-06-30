@@ -10,10 +10,11 @@ This document freezes the dashboard read-model vocabulary and the current first-
   - movies resolve at the movie identity
   - episodic media resolve at the show identity
   - audiobooks resolve at the canonical book identity
-- Dashboard user presentation uses the existing `users` read model:
-  - `enabled = 1` means the user is shown in dashboard views
-  - `enabled = 0` means the user is hidden from dashboard views and dashboard aggregates
-  - `display_name` is the dashboard alias; if no explicit alias exists, the exact Plex username is the fallback
+- Dashboard user presentation uses the synced `users` identity rows plus durable dashboard preference fields:
+  - `dashboard_shown = 1` means the user is shown in dashboard views
+  - `dashboard_shown = 0` means the user is hidden from dashboard views and dashboard aggregates
+  - `dashboard_alias` is the dashboard alias; if no explicit alias exists, the exact Plex username is the fallback
+  - `display_name` and `enabled` remain synced identity fields and must not be mutated by dashboard preference edits
 - Hidden users remain part of ingestion, history, Discord, copy, audit, and adapter domains. Only the dashboard read model excludes them.
 
 ## Canonical Artwork Rules

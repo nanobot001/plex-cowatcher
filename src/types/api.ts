@@ -50,6 +50,13 @@ export interface DashboardFilters {
   search?: string;
 }
 
+export interface DashboardUserSetting {
+  id: number;
+  plexUsername: string;
+  alias: string | null;
+  shown: boolean;
+}
+
 export interface DashboardActivityItem {
   id: number; userId: number; username: string; displayName: string; ratingKey: string;
   title: string; showTitle?: string; mediaType: string; category: DashboardCategory;

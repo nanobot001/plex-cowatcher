@@ -19,7 +19,7 @@ Create a coherent, accessible dashboard shell that makes all five workspaces dis
 - Keep Overview, Timeline, Library, People, and Progress primary; place Copy History, Audit, Settings, CSV, and health status in a clearly secondary operations area.
 - Build shared tokens and primitives for typography, spacing, surfaces, category colors, buttons, pills, metrics, panels, skeletons, empty/error states, artwork fallbacks, drawers, and focus rings.
 - Add one persistent date-range control and one collapsible filter surface shared by all layouts.
-- Extend the existing Settings function with a Dashboard People section listing configured users by Plex username, a `Show on dashboard` toggle, and an optional alias field. Persist these non-secret preferences through the established settings/state layer and shared service boundary.
+- Extend the existing Settings function with a Dashboard People section listing configured users by Plex username, a `Show on dashboard` toggle, and an optional alias field. Persist these non-secret preferences through the dashboard preference fields rather than the synced Plex identity fields.
 - Default every enabled configured user to shown and every blank/missing alias to the exact Plex username. Provide an explicit `Reset alias to username` behavior.
 - Build one shared display-name resolver and one shared canonical poster/cover component consumed by every later layout.
 - Preserve layout, filter, selection, and browser-history state across navigation and reload.
