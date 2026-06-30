@@ -130,6 +130,24 @@ Implemented 2026-06-28 through Blocks 3-2a to 3-2e. Together, the completed chil
 - **3-2d - People And Co-Watching Workspace:** Per-person intelligence, Discord prompt lifecycle visibility, and safe audited co-watch actions.
 - **3-2e - Progress, Export, Accessibility And Hardening:** Progress and collections, streamed CSV export, responsive accessibility, performance, and regression coverage.
 
+### Blocks 3-2g Through 3-2o: Corrective Dashboard Redesign
+
+A live Playwright review after 3-2f found that the dashboard had real data but failed its intended product outcome: primary layout navigation was effectively invisible, Overview hierarchy was cramped, Timeline rendered months of tiny fragments, Library was category-skewed, People exposed raw/duplicate identities, and Progress remained unresponsive beyond 30 seconds.
+
+The corrective sequence is mandatory and ordered:
+
+1. **3-2g - Dashboard Contract And Performance Baseline:** Freeze vocabulary, bounds, response contracts, realistic fixtures, and measurable budgets.
+2. **3-2h - Dashboard Shell And Design System:** Build visible navigation, shared filters, responsive shell, and reusable accessible primitives.
+3. **3-2i - Overview Decision Surface:** Deliver mixed-media summary, continue consumption, household activity, and evidence-backed attention work.
+4. **3-2j - Library Category Browser:** Replace the undifferentiated alphabetical grid with bounded category-led consumed-title browsing.
+5. **3-2k - Rich Media Detail Workspace:** Add one shared movie, episodic, and audiobook hierarchy/evidence detail system.
+6. **3-2l - Daily Session Timeline:** Replace multi-month rendering with a bounded day/week investigation view and separate activity feed.
+7. **3-2m - People And Co-Watch Intelligence:** Clarify identities, per-person behavior, real person pairings, and prompt/evidence state.
+8. **3-2n - Hierarchy Progress Workspace:** Provide lazy, bounded progress for episodic media, audiobooks, and movies.
+9. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
+
+Each block must pass its own exit gate before the next begins. Block 3-3 is paused until 3-2o completes.
+
 ### Block 3-3: Household Watch Reports
 
 Automate and schedule the delivery of daily or weekly household watch reports to Discord, summarizing what was watched, by whom, and what co-watching sessions occurred.
