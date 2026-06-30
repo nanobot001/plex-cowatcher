@@ -71,9 +71,18 @@ function resolveDashboardAlias(alias?: string | null, plexUsername?: string | nu
   return plexUsername?.trim() || "";
 }
 
+function normalizeAudiobookDisplayTitle(value?: string | null): string {
+  const raw = value?.trim();
+  if (!raw) return "";
+  return raw
+    .replace(/^\s*\d{4}\s*[-–—]\s*/, "")
+    .replace(/\s*\((\d{4})\)\s*$/, "")
+    .trim();
+}
+
 function resolveDashboardDisplayTitle(item: Pick<DashboardActivityItem, "category" | "showTitle" | "title" | "audiobookTitle">): string {
   if (item.category === "audiobook") {
-    return item.audiobookTitle?.trim() || item.title.trim() || item.showTitle?.trim() || "";
+    return normalizeAudiobookDisplayTitle(item.audiobookTitle ?? item.title) || item.showTitle?.trim() || "";
   }
   if (item.category === "tv" || item.category === "classic_tv" || item.category === "anime") {
     return item.showTitle?.trim() || item.title.trim() || "";

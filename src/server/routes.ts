@@ -419,6 +419,15 @@ export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Ro
       return;
     }
 
+    const audiobookRatingKey = resolveAudiobookRatingKey(decodedKey);
+    if (audiobookRatingKey && audiobookRatingKey !== decodedKey) {
+      const fallbackRemoteSource = await resolvePlexArtworkSource(audiobookRatingKey);
+      if (fallbackRemoteSource) {
+        await proxyArtworkSource(fallbackRemoteSource, res);
+        return;
+      }
+    }
+
     res.status(404).end();
   }
 
@@ -454,6 +463,28 @@ export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Ro
     }
 
     return null;
+  }
+
+  function resolveAudiobookRatingKey(artworkKey: string): string | null {
+    if (!artworkKey.startsWith("audiobook:")) return null;
+    const raw = artworkKey.slice("audiobook:".length);
+    if (/^\d+$/.test(raw)) {
+      const catalogByAudiobookId = db.prepare(`
+        SELECT rating_key
+        FROM content_catalog
+        WHERE audiobook_id = ?
+        ORDER BY refreshed_at DESC
+        LIMIT 1
+      `).get(Number(raw)) as { rating_key: string } | undefined;
+      return catalogByAudiobookId?.rating_key ?? null;
+    }
+
+    const catalogRow = db.prepare(`
+      SELECT rating_key
+      FROM content_catalog
+      WHERE rating_key = ? AND audiobook_id IS NOT NULL
+    `).get(raw) as { rating_key: string } | undefined;
+    return catalogRow?.rating_key ?? null;
   }
 
   async function resolvePlexArtworkSource(artworkKey: string): Promise<string | null> {

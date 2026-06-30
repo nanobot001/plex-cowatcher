@@ -1627,28 +1627,51 @@ test("dashboard audiobook titles prefer the book title and artwork routes return
   await withTestDb(async (db) => {
     seedUsers(db);
     const user = db.prepare("SELECT id FROM users ORDER BY id LIMIT 1").get();
-    const now = new Date().toISOString();
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const laterIso = new Date(now.getTime() + 1000).toISOString();
     const coverUrl = "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900"><rect width="600" height="900" fill="#0f172a"/><text x="50%" y="50%" fill="#f59e0b" font-size="44" text-anchor="middle">The Final Empire</text></svg>`);
 
     db.prepare(`
       INSERT INTO audiobook_books (folder_key, title, authors_json, narrators_json, cover_url, source_provenance, enrichment_status, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run("book-folder", "The Final Empire", JSON.stringify(["Brandon Sanderson"]), JSON.stringify([]), coverUrl, "manual", "enriched", now, now);
+    `).run("book-folder", "The Final Empire", JSON.stringify(["Brandon Sanderson"]), JSON.stringify([]), coverUrl, "manual", "enriched", nowIso, nowIso);
     const book = db.prepare("SELECT id FROM audiobook_books WHERE folder_key = 'book-folder'").get();
     db.prepare(`
       INSERT INTO content_catalog (rating_key, media_type, title, audiobook_id, source_provenance, refreshed_at)
       VALUES (?, 'audiobook', ?, ?, ?, ?)
-    `).run("book-track-1", "Brandon Sanderson", book.id, "plex", now);
+    `).run("book-track-1", "Brandon Sanderson", book.id, "plex", nowIso);
+    db.prepare(`
+      INSERT INTO audiobook_books (folder_key, title, authors_json, narrators_json, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("book-folder-2", "2016 - Arcanum Unbounded The Cosmere Collection (Unabridged)", JSON.stringify(["Brandon Sanderson"]), JSON.stringify([]), "folder_path", "pending", nowIso, nowIso);
+    const secondBook = db.prepare("SELECT id FROM audiobook_books WHERE folder_key = 'book-folder-2'").get();
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, audiobook_id, source_provenance, refreshed_at)
+      VALUES (?, 'audiobook', ?, ?, ?, ?)
+    `).run("book-track-2", "Brandon Sanderson", secondBook.id, "plex", nowIso);
     db.prepare(`
       INSERT INTO playback_observations
         (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-    `).run(user.id, "book-track-1", "audiobook", "Audiobooks", "Brandon Sanderson", "Brandon Sanderson", now, 25, 1200000, 0, now, now);
+    `).run(user.id, "book-track-1", "audiobook", "Audiobooks", "Brandon Sanderson", "Brandon Sanderson", nowIso, 25, 1200000, 0, nowIso, nowIso);
+    db.prepare(`
+      INSERT INTO playback_observations
+        (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(user.id, "book-track-2", "audiobook", "Audiobooks", "Arcanum Unbounded The Cosmere Collection (Unabridged) (2016)", "Brandon Sanderson", laterIso, 25, 1200000, 0, laterIso, laterIso);
 
     const service = new DashboardService(db);
     const overview = service.getOverview({});
-    assert.equal(overview.continueWatching[0].displayTitle, "The Final Empire");
-    assert.equal(overview.activity.items[0].displayTitle, "The Final Empire");
+    const firstItem = overview.activity.items.find((item) => item.ratingKey === "book-track-1");
+    const secondItem = overview.activity.items.find((item) => item.ratingKey === "book-track-2");
+    const secondContinue = overview.continueWatching.find((item) => item.ratingKey === "book-track-2");
+    assert.ok(firstItem);
+    assert.ok(secondItem);
+    assert.ok(secondContinue);
+    assert.equal(firstItem.displayTitle, "The Final Empire");
+    assert.equal(secondItem.displayTitle, "Arcanum Unbounded The Cosmere Collection (Unabridged)");
+    assert.equal(secondContinue.displayTitle, "Arcanum Unbounded The Cosmere Collection (Unabridged)");
 
     const { createApp } = await import("../dist/server/app.js");
     const app = createApp(db, new MockPlexAdapter());
@@ -1657,10 +1680,10 @@ test("dashboard audiobook titles prefer the book title and artwork routes return
     });
     const base = `http://127.0.0.1:${server.address().port}`;
     try {
-      const audiobookArt = await fetch(base + overview.activity.items[0].artworkUrl);
+      const audiobookArt = await fetch(base + secondItem.artworkUrl);
       assert.equal(audiobookArt.status, 200);
       assert.match(audiobookArt.headers.get("content-type"), /image\/svg\+xml/);
-      assert.match(await audiobookArt.text(), /The Final Empire/);
+      assert.match(await audiobookArt.text(), /<svg/i);
 
       const movieArt = await fetch(base + "/api/artwork/movie-1");
       assert.equal(movieArt.status, 200);

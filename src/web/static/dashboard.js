@@ -14,6 +14,8 @@ const fetchJson=async url=>{const r=await fetch(url);const j=await r.json();if(!
 const evidence=x=>{const e=x.evidence||{};return '<div class="evidence"><span class="proof observed">Observed</span>'+(e.confirmed?'<span class="proof confirmed">Confirmed</span>':'')+(e.promptStatus?'<span class="proof">Prompt '+esc(e.promptStatus)+'</span>':'')+(e.plexSyncStatus?'<span class="proof synced">Plex '+esc(e.plexSyncStatus)+'</span>':'')+'</div>';};
 const art=x=>'<img class="poster" src="'+esc(x.artworkUrl)+'" alt="" loading="lazy" onerror="this.src=\'/static/icon.svg\'">';
 const mediaTitle=x=>esc(x.displayTitle||x.title||x.showTitle||"");
+const mediaBadge=x=>x.displayName?'<span class="media-badge">'+esc(x.displayName)+'</span>':'';
+const cardArt=x=>'<div class="poster-frame">'+art(x)+mediaBadge(x)+'</div>';
 const activityRow=x=>'<article class="activity-row" tabindex="0" data-item="'+encodeURIComponent(JSON.stringify(x))+'">'+art(x)+'<div class="activity-copy"><div class="activity-heading"><strong>'+mediaTitle(x)+'</strong><span>'+esc(x.categoryLabel)+'</span></div>'+(x.category==="audiobook"&&x.showTitle?'<p>By '+esc(x.showTitle)+'</p>':x.showTitle&&x.showTitle!==x.displayTitle?'<p>'+esc(x.title)+'</p>':'')+'<p>'+esc(x.displayName)+' &middot; '+fmtDate(x.watchedAt)+' &middot; '+fmtDuration(x.duration)+'</p>'+evidence(x)+'</div><div class="progress-ring">'+esc(x.percentComplete??"--")+'%</div></article>';
 const empty=label=>'<div class="panel-state"><h3>No '+esc(label)+' here yet</h3><p>Try broadening the filters. Missing evidence stays unknown.</p></div>';
 function setButtons(){document.querySelectorAll("[data-layout]").forEach(b=>{b.classList.toggle("active",b.dataset.layout===state.layout);b.setAttribute("aria-pressed",String(b.dataset.layout===state.layout));});}
@@ -160,7 +162,7 @@ async function renderOverview() {
     
   // Recently Active Media Carousel
   const cwHtml = d.continueWatching && d.continueWatching.length > 0 
-    ? '<div class="cw-carousel">' + d.continueWatching.map(cw => '<article class="cw-card" tabindex="0" data-item="' + encodeURIComponent(JSON.stringify(cw)) + '">' + art(cw) + '<div class="cw-bar"><i style="width:'+esc(cw.percentComplete||0)+'%"></i></div><p>' + esc(cw.displayTitle) + '</p></article>').join("") + '</div>'
+    ? '<div class="cw-carousel">' + d.continueWatching.map(cw => '<article class="cw-card" tabindex="0" data-item="' + encodeURIComponent(JSON.stringify(cw)) + '">' + cardArt(cw) + '<div class="cw-bar"><i style="width:'+esc(cw.percentComplete||0)+'%"></i></div><p>' + esc(cw.displayTitle) + '</p></article>').join("") + '</div>'
     : '<p class="text-muted">No active media in progress.</p>';
 
   content.innerHTML = `
@@ -301,7 +303,7 @@ async function renderExplorer() {
   const d = await fetchJson("/api/dashboard/media?" + query({limit: 48, offset: state.offset, sort: "title"}));
   
   const cwHtml = cw.length > 0 
-    ? '<section class="dashboard-panel mb-4"><div class="panel-title"><h3>Recently Enjoyed (In Progress)</h3></div><div class="poster-carousel">' + cw.map(x => '<article class="poster-card cw-poster" tabindex="0" data-item="'+encodeURIComponent(JSON.stringify(x))+'">'+art(x)+'<div class="cw-bar"><i style="width:'+esc(x.percentComplete||0)+'%"></i></div><strong>'+esc(x.displayTitle||x.title)+'</strong></article>').join("") + '</div></section>'
+    ? '<section class="dashboard-panel mb-4"><div class="panel-title"><h3>Recently Enjoyed (In Progress)</h3></div><div class="poster-carousel">' + cw.map(x => '<article class="poster-card cw-poster" tabindex="0" data-item="'+encodeURIComponent(JSON.stringify(x))+'">'+cardArt(x)+'<div class="cw-bar"><i style="width:'+esc(x.percentComplete||0)+'%"></i></div><strong>'+esc(x.displayTitle||x.title)+'</strong></article>').join("") + '</div></section>'
     : '';
 
   const cats = [
@@ -322,7 +324,7 @@ async function renderExplorer() {
       <div class="panel-title"><h3>Household Library</h3><span>Categorized media explorer</span></div>
       ${catTabsHtml}
       <div class="poster-grid">
-                ${(d.items.length ? d.items.map(x=>'<article class="poster-card" tabindex="0" data-item="'+encodeURIComponent(JSON.stringify(x))+'">'+art(x)+'<strong>'+mediaTitle(x)+'</strong><span>'+esc(x.categoryLabel)+' &middot; '+x.distinctItems+' '+(x.category==="movie"?"title":x.category==="audiobook"?"chapter":"episode")+(x.distinctItems===1?"":"s")+' &middot; '+x.plays+' play'+(x.plays===1?"":"s")+'</span></article>').join("") : empty("consumed titles"))}
+                ${(d.items.length ? d.items.map(x=>'<article class="poster-card" tabindex="0" data-item="'+encodeURIComponent(JSON.stringify(x))+'">'+cardArt(x)+'<strong>'+mediaTitle(x)+'</strong><span>'+esc(x.categoryLabel)+' &middot; '+x.distinctItems+' '+(x.category==="movie"?"title":x.category==="audiobook"?"chapter":"episode")+(x.distinctItems===1?"":"s")+' &middot; '+x.plays+' play'+(x.plays===1?"":"s")+'</span></article>').join("") : empty("consumed titles"))}
       </div>
       ${pager(d)}
     </section>
