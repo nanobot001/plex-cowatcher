@@ -38,7 +38,7 @@ export interface HealthResponse {
 }
 
 export type DashboardLayout = "overview" | "timeline" | "explorer" | "people" | "progress";
-export type DashboardCategory = "movie" | "tv" | "classic_tv" | "anime" | "audiobook" | "other";
+export type DashboardCategory = "movie" | "tv" | "classic_tv" | "anime" | "audiobook";
 
 export interface DashboardFilters {
   dateFrom?: string;
@@ -57,5 +57,17 @@ export interface DashboardActivityItem {
   duration?: number; percentComplete?: number; completed: boolean; artworkUrl: string;
   grandparentRatingKey?: string; parentRatingKey?: string; audiobookId?: number; audiobookTitle?: string;
   seasonNumber?: number; episodeNumber?: number;
+  displayTitle?: string;
   evidence: Record<string, unknown>;
+}
+
+export interface DashboardTimelineSession {
+  id: string;
+  userId: number;
+  displayName: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  itemCount: number;
+  category?: DashboardCategory;
 }

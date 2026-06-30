@@ -193,27 +193,44 @@ async function renderOverview() {
 }
 
 async function renderTimeline() {
-  const d = await fetchJson("/api/dashboard/timeline?" + query({limit: 500, offset: state.offset}));
+  const d = await fetchJson("/api/dashboard/timeline?" + query({limit: 50, offset: state.offset}));
+  const sessions = Array.isArray(d.sessions) ? d.sessions : [];
   
-  if (d.items.length === 0) {
+  if ((d.items || []).length === 0 && sessions.length === 0) {
     content.innerHTML = empty("timeline activity");
     return;
   }
   
-  // Group items by day (local date YYYY-MM-DD)
+  // Group bounded chart sessions by day.
   const daysMap = new Map();
-  d.items.forEach(item => {
-    if (!item.watchedAt) return;
-    const dateStr = item.watchedAt.slice(0, 10);
-    if (!daysMap.has(dateStr)) daysMap.set(dateStr, []);
-    daysMap.get(dateStr).push(item);
-  });
+  if (sessions.length > 0) {
+    sessions.forEach(session => {
+      if (!daysMap.has(session.date)) daysMap.set(session.date, []);
+      daysMap.get(session.date).push(session);
+    });
+  } else {
+      (d.items || []).forEach(item => {
+        if (!item.watchedAt) return;
+        const dateStr = item.watchedAt.slice(0, 10);
+        if (!daysMap.has(dateStr)) daysMap.set(dateStr, []);
+        daysMap.get(dateStr).push({
+          id: `${item.userId}-${dateStr}`,
+          userId: item.userId,
+          displayName: item.displayName,
+          date: dateStr,
+          startTime: item.watchedAt,
+          endTime: item.watchedAt,
+          itemCount: 1,
+          category: item.category
+        });
+      });
+  }
   
   const sortedDays = [...daysMap.keys()].sort().reverse();
   
   const dayGanttsHtml = sortedDays.map(dateStr => {
     const dayItems = daysMap.get(dateStr);
-    dayItems.sort((a, b) => new Date(a.watchedAt).getTime() - new Date(b.watchedAt).getTime());
+    dayItems.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
     
     const dayStart = new Date(dateStr + "T00:00:00").getTime();
     const dayRange = 24 * 60 * 60 * 1000;
@@ -227,8 +244,9 @@ async function renderTimeline() {
     
     const lanes = Array.from(userMap.entries()).map(([user, items]) => {
       const blocks = items.map(item => {
-        const start = new Date(item.watchedAt).getTime();
-        const duration = item.duration || 1800000;
+        const start = new Date(item.startTime).getTime();
+        const end = new Date(item.endTime || item.startTime).getTime();
+        const duration = Math.max(15 * 60 * 1000, end - start || 1800000);
         
         let left = ((start - dayStart) / dayRange) * 100;
         let width = (duration / dayRange) * 100;
@@ -238,7 +256,7 @@ async function renderTimeline() {
         
         const catColor = {"movie":"var(--accent-movie)","tv":"var(--accent-tv)","classic_tv":"var(--accent-classic)","anime":"var(--accent-anime)","audiobook":"var(--accent-audiobook)"}[item.category] || "#95a5a6";
         
-        return `<div class="gantt-block" style="left: ${left}%; width: max(6px, ${width}%); background: ${catColor};" title="${esc(item.showTitle||item.title)}" tabindex="0" data-item="${encodeURIComponent(JSON.stringify(item))}"></div>`;
+        return `<div class="gantt-block" style="left: ${left}%; width: max(6px, ${width}%); background: ${catColor};" title="${esc(item.displayName)} · ${esc(item.itemCount)} items" tabindex="0"></div>`;
       }).join("");
       return `<div class="gantt-lane"><div class="gantt-user">${esc(user)}</div><div class="gantt-track">${blocks}</div></div>`;
     }).join("");
@@ -266,7 +284,7 @@ async function renderTimeline() {
       ${dayGanttsHtml}
       <div class="recent-list-fallback" style="margin-top: 2rem;">
         <div class="panel-title mb-2"><h3>Activity Feed</h3></div>
-        ${d.items.slice(0, 15).map(activityRow).join("")}
+        ${(d.items || []).slice(0, 15).map(activityRow).join("")}
       </div>
       ${pager(d)}
     </section>
@@ -311,6 +329,7 @@ async function renderPeople() {
     fetchJson("/api/dashboard/people?" + query()),
     fetchJson("/api/dashboard/cowatch-patterns")
   ]);
+  const rows = Array.isArray(people) ? people : people.people || [];
 
   const patternsHtml = cowatch.length > 0 
     ? cowatch.map(p => `
@@ -329,7 +348,7 @@ async function renderPeople() {
       <div class="dashboard-panel panel-wide">
         <div class="panel-title"><h3>Household Members</h3></div>
         <div class="people-grid">
-          ${people.map(p=>'<article class="person-card"><div class="avatar">'+esc((p.display_name||p.plex_username).slice(0,1))+'</div><h4>'+esc(p.display_name||p.plex_username)+'</h4><p>'+p.plays+' plays &middot; '+p.minutes+' min</p><div>'+p.mix.map(m=>'<span class="proof">'+esc(m.category)+' '+m.count+'</span>').join("")+'</div>'+(p.recent.length?'<button class="text-button" data-person="'+esc(p.plex_username)+'">View activity</button>':'<p class="text-muted">No activity in this window.</p>')+'</article>').join("")}
+          ${rows.map(p=>'<article class="person-card"><div class="avatar">'+esc((p.display_name||p.plex_username).slice(0,1))+'</div><h4>'+esc(p.display_name||p.plex_username)+'</h4><p>'+p.plays+' plays &middot; '+p.minutes+' min</p><div>'+p.mix.map(m=>'<span class="proof">'+esc(m.category)+' '+m.count+'</span>').join("")+'</div>'+(p.recent.length?'<button class="text-button" data-person="'+esc(p.plex_username)+'">View activity</button>':'<p class="text-muted">No activity in this window.</p>')+'</article>').join("")}
         </div>
       </div>
       <aside>

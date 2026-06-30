@@ -1,5 +1,10 @@
 # Block 3-2g: Dashboard Contract And Performance Baseline
 
+> Status: Implemented on 2026-06-30.
+> Result: Implemented.
+> Verification: `npm run build` and `npm test` - passed.
+> Notes: Added the dashboard contract doc, bounded the dashboard read model and timeline windowing, excluded `other` from household-facing results, introduced timing metadata, and recorded a local timing snapshot of overview 19 ms, timeline 16 ms, progress 9 ms, and detail 1 ms on the fixture benchmark.
+
 > Status: Planned.
 > Result: Not implemented.
 > Notes: First corrective block after 3-2f. It freezes the dashboard product vocabulary and removes the query/rendering behavior that currently prevents later visual work from being validated reliably.

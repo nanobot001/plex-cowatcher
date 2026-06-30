@@ -9,14 +9,14 @@ export function registerWebRoutes(router: Router): void {
     res.type("html").send(renderPage("Dashboard", `
       <div class="dashboard-shell">
         <aside class="dashboard-sidebar">
-          <nav id="layout-switcher" class="sidebar-nav">
+          <nav id="layout-switcher" class="sidebar-nav dashboard-views" aria-label="Dashboard views">
             <button class="nav-btn" data-layout="overview">Overview</button>
             <button class="nav-btn" data-layout="timeline">Activity Timeline</button>
             <button class="nav-btn" data-layout="explorer">Media Explorer</button>
             <button class="nav-btn" data-layout="people">People</button>
             <button class="nav-btn" data-layout="progress">Progress</button>
           </nav>
-          <div class="sidebar-section">
+          <div class="sidebar-section dashboard-members">
             <h3>Household Members</h3>
             <div id="sidebar-presence"></div>
           </div>
@@ -39,7 +39,6 @@ export function registerWebRoutes(router: Router): void {
               <option value="classic_tv">Classic TV</option>
               <option value="anime">Anime</option>
               <option value="audiobook">Audiobooks</option>
-              <option value="other">Other</option>
             </select>
             <button type="submit" class="btn">Apply</button>
             <a id="csv-export" href="/api/dashboard/export.csv" class="btn" download>CSV</a>

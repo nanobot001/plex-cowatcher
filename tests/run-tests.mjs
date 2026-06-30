@@ -1549,13 +1549,17 @@ test("dashboard service returns bounded mixed-media data and honest progress", (
     const service = new DashboardService(db);
     const overview = service.getOverview({});
     assert.equal(overview.totals.plays, 3);
+    assert.equal(typeof overview.timingMs, "number");
     assert.ok(overview.categories.some(x => x.category === "movie"));
     assert.ok(overview.categories.some(x => x.category === "anime"));
     assert.ok(overview.categories.some(x => x.category === "audiobook"));
     assert.equal(service.getActivity({limit:1}).items.length, 1);
+    assert.equal(service.getActivity({limit:5000}).limit, 1000);
     assert.equal(service.getActivity({category:"anime"}).total, 1);
-    assert.equal(service.getPeople({}).length, users.length);
+    assert.equal(service.getPeople({}).people.length, users.length);
+    assert.equal(service.getTimeline({ days: 30 }).windowDays, 7);
     const progress = service.getProgress({});
+    assert.equal(typeof progress.timingMs, "number");
     assert.ok(progress.progress.some(x => x.title === "The Long Book" && x.totalKnown === false));
   });
 });
@@ -1652,14 +1656,17 @@ test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed promp
       const overview = await (await fetch(base+"/api/dashboard/overview")).json();
       assert.equal(overview.ok,true);
       assert.equal(overview.data.totals.plays,1);
+      assert.equal(typeof overview.data.timingMs,"number");
       assert.equal(overview.data.activity.items[0].artworkUrl,"/api/artwork/movie-http");      const timeline = await (await fetch(base+"/api/dashboard/timeline")).json();
       assert.equal(timeline.ok,true);
       assert.equal(timeline.data.items.length,1);
-      assert.ok(timeline.data.items[0].session);
+      assert.equal(timeline.data.sessions.length,1);
+      assert.equal(timeline.data.sessions[0].itemCount,1);
       const detail = await (await fetch(base+"/api/dashboard/detail/movie-http")).json();
       assert.equal(detail.ok,true);
       assert.equal(detail.data.item.title,"HTTP Movie");
       assert.equal(detail.data.repeatCount,0);
+      assert.equal(typeof detail.data.timingMs,"number");
       assert.doesNotMatch(JSON.stringify(overview),/X-Plex-Token|file_path|folder_path_hint/);
       const csvResponse=await fetch(base+"/api/dashboard/export.csv");
       assert.match(csvResponse.headers.get("content-type"),/text\/csv/);
@@ -1674,6 +1681,31 @@ test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed promp
       assert.equal(db.prepare("SELECT prompt_status FROM watch_events WHERE id=?").get(event.lastInsertRowid).prompt_status,"dismissed");
       assert.ok(db.prepare("SELECT id FROM audit_log WHERE action='dashboard_prompt_dismissed'").get());
     } finally { await new Promise(resolve=>server.close(resolve)); }
+  });
+});
+
+test("dashboard timeline uses bounded windows and summary endpoints stay sampled", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const user = db.prepare("SELECT id FROM users ORDER BY id LIMIT 1").get();
+    const insert = db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+    const now = new Date();
+    for (let i = 0; i < 600; i++) {
+      const watchedAt = new Date(now.getTime() - (i % 9) * 24 * 60 * 60 * 1000).toISOString();
+      insert.run(user.id, `movie-${i}`, "movie", "Movies", `Movie ${i}`, null, watchedAt, 100, 7200000, 1, watchedAt, watchedAt);
+    }
+    const service = new DashboardService(db);
+    const timeline = service.getTimeline({ days: 30, limit: 1000 });
+    const overview = service.getOverview({});
+
+    assert.equal(timeline.windowDays, 7);
+    assert.equal(timeline.items.length <= 1000, true);
+    assert.equal(typeof timeline.timingMs, "number");
+    assert.equal(overview.activity.limit, 24);
+    assert.equal(overview.activity.items.length <= 24, true);
+    assert.equal(typeof overview.timingMs, "number");
   });
 });
 let passed = 0;

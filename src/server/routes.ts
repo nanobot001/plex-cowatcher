@@ -118,22 +118,7 @@ export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Ro
   });
   router.get("/api/dashboard/timeline", (req, res, next) => {
     try {
-      const result = dashboardService.getActivity(req.query);
-      // Enrich each item with a synthetic session stub (user + local day key)
-      const enriched = result.items.map((item: any) => {
-        const day = item.watchedAt ? item.watchedAt.slice(0, 10) : "unknown";
-        return {
-          ...item,
-          session: {
-            id: `${item.userId}-${day}`,
-            userId: item.userId,
-            displayName: item.displayName,
-            date: day,
-            startTime: item.watchedAt,
-          }
-        };
-      });
-      res.json({ ok: true, data: { ...result, items: enriched } });
+      res.json({ ok: true, data: dashboardService.getTimeline(req.query) });
     }
     catch (e) { next(e); }
   });
