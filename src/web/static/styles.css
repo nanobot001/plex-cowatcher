@@ -28,6 +28,94 @@ body {
   background-attachment: fixed;
 }
 
+.app-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px 28px;
+  margin: 0;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  background: rgba(4, 6, 8, 0.88);
+  backdrop-filter: blur(18px);
+}
+.brand-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--text-main);
+  text-decoration: none;
+  min-width: 0;
+}
+.brand-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, #F59E0B, #F43F5E);
+  color: #fff;
+  font-family: 'Outfit', sans-serif;
+  font-weight: 800;
+  box-shadow: 0 8px 24px rgba(245, 158, 11, 0.22);
+  flex: 0 0 auto;
+}
+.brand-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.brand-copy strong {
+  font-size: 1rem;
+  line-height: 1.1;
+}
+.brand-copy span {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+.topnav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.topnav-link {
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: rgba(255,255,255,0.02);
+  font-size: 0.92rem;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+.topnav-link:hover {
+  color: var(--text-main);
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.06);
+}
+.topnav-link.active {
+  color: #0b0d11;
+  background: #f8fafc;
+}
+.app-page {
+  padding: 28px 28px 40px;
+  box-sizing: border-box;
+}
+.app-page > h1 {
+  margin: 0 0 20px;
+  font-size: 2.2rem;
+  letter-spacing: -0.03em;
+}
+
 h1, h2, h3, h4, h5, strong, .eyebrow {
   font-family: 'Outfit', sans-serif;
 }
@@ -1101,6 +1189,12 @@ dialog::backdrop { background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); }
   gap: 8px;
 }
 @media (max-width: 1024px) {
+  .app-topbar {
+    padding: 16px 20px;
+  }
+  .app-page {
+    padding: 20px;
+  }
   .dashboard-shell {
     grid-template-columns: 1fr;
   }
@@ -1111,7 +1205,17 @@ dialog::backdrop { background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); }
   }
 }
 @media (max-width: 600px) {
+  .app-topbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .topnav {
+    justify-content: flex-start;
+  }
   .dashboard-shell {
     padding: 0 20px;
+  }
+  .app-page > h1 {
+    font-size: 1.8rem;
   }
 }

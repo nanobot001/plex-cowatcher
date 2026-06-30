@@ -674,6 +674,10 @@ export function registerWebRoutes(router: Router): void {
 }
 
 function renderPage(title: string, body: string): string {
+  const navItem = (href: string, label: string): string => {
+    const active = label === title ? " active" : "";
+    return `<a class="topnav-link${active}" href="${href}">${label}</a>`;
+  };
   return `<!doctype html>
   <html lang="en">
     <head>
@@ -694,8 +698,22 @@ function renderPage(title: string, body: string): string {
       </script>
     </head>
     <body>
-      <nav><strong>Plex Co-Watch Sync</strong><a href="/">Dashboard</a><a href="/copy">Copy History</a><a href="/audit">Audit</a><a href="/settings">Settings</a></nav>
-      <main><h1>${title}</h1>${body}</main>
+      <header class="app-topbar">
+        <a class="brand-link" href="/" aria-label="Plex Co-Watch Sync home">
+          <span class="brand-mark">P</span>
+          <span class="brand-copy">
+            <strong>Plex Co-Watch Sync</strong>
+            <span>${title}</span>
+          </span>
+        </a>
+        <nav class="topnav" aria-label="Primary">
+          ${navItem("/", "Dashboard")}
+          ${navItem("/copy", "Copy History")}
+          ${navItem("/audit", "Audit")}
+          ${navItem("/settings", "Settings")}
+        </nav>
+      </header>
+      <main class="app-page"><h1>${title}</h1>${body}</main>
     </body>
   </html>`;
 }
