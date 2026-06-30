@@ -12,6 +12,7 @@ import { QueryService } from "../service/queryService.js";
 import { SummaryService } from "../service/summaryService.js";
 import { SessionService } from "../service/sessionService.js";
 import { CowatchingIntelligenceService } from "../service/cowatchingIntelligenceService.js";
+import { DashboardService } from "../service/dashboardService.js";
 import { parseDays } from "../utils/time.js";
 
 export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Router {
@@ -27,6 +28,7 @@ export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Ro
   const summaryService = new SummaryService(db, plex);
   const sessionService = new SessionService(db);
   const cowatchingIntelligenceService = new CowatchingIntelligenceService(db);
+  const dashboardService = new DashboardService(db);
 
   users.syncConfiguredUsers();
   (async () => {
@@ -108,6 +110,97 @@ export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Ro
     } catch (error) {
       res.status(500).json({ ok: false, error: String(error) });
     }
+  });
+
+  router.get("/api/dashboard/overview", (req, res, next) => {
+    try { res.json({ ok: true, data: dashboardService.getOverview(req.query) }); }
+    catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/timeline", (req, res, next) => {
+    try {
+      const result = dashboardService.getActivity(req.query);
+      // Enrich each item with a synthetic session stub (user + local day key)
+      const enriched = result.items.map((item: any) => {
+        const day = item.watchedAt ? item.watchedAt.slice(0, 10) : "unknown";
+        return {
+          ...item,
+          session: {
+            id: `${item.userId}-${day}`,
+            userId: item.userId,
+            displayName: item.displayName,
+            date: day,
+            startTime: item.watchedAt,
+          }
+        };
+      });
+      res.json({ ok: true, data: { ...result, items: enriched } });
+    }
+    catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/media", (req, res, next) => {
+    try { res.json({ ok: true, data: dashboardService.getMedia(req.query) }); }
+    catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/people", (req, res, next) => {
+    try { res.json({ ok: true, data: dashboardService.getPeople(req.query) }); }
+    catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/progress", (req, res, next) => {
+    try { res.json({ ok: true, data: dashboardService.getProgress(req.query) }); }
+    catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/continue-watching", (req, res, next) => {
+    try { res.json({ ok: true, data: dashboardService.getContinueWatching(req.query) }); }
+    catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/cowatch-patterns", (req, res, next) => {
+    try { res.json({ ok: true, data: dashboardService.getCowatchPatterns() }); }
+    catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/detail/:ratingKey", (req, res, next) => {
+    try { res.json({ ok: true, data: dashboardService.getDetail(req.params.ratingKey) }); }
+    catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/prompts", (_req, res) => {
+    const rows = db.prepare("SELECT * FROM watch_events WHERE prompt_status IN ('pending','prompted','failed') ORDER BY watched_at DESC LIMIT 50").all();
+    res.json(rows);
+  });
+  router.post("/api/dashboard/prompts/:id/:action", express.json(), async (req, res, next) => {
+    try {
+      const id = Number(req.params.id);
+      const action = req.params.action;
+      if (action === "dismiss") {
+        if (!req.body.confirm) return res.status(400).json({ ok: false, message: "Confirmation required" });
+        db.prepare("UPDATE watch_events SET prompt_status='dismissed' WHERE id=?").run(id);
+        audit.record("dashboard_prompt_dismissed", "web", "ok", { watchEventId: id });
+        res.json({ ok: true });
+      } else if (action === "reprompt") {
+        res.json(await cowatch.createPrompt(id, "web"));
+      } else {
+        res.status(400).json({ ok: false, message: "Invalid action" });
+      }
+    } catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/export.csv", (req, res, next) => {
+    try {
+      const { items } = dashboardService.getActivity({ ...req.query, limit: 10000 });
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", 'attachment; filename="history.csv"');
+      res.write("watched_at,person,category,library,title,progress,duration_minutes,status\n");
+      for (const item of items) {
+        res.write([
+          item.watchedAt,
+          item.displayName,
+          item.categoryLabel,
+          item.libraryName ?? "",
+          item.title,
+          item.percentComplete ?? "",
+          Math.round((item.duration ?? 0) / 60000),
+          item.completed ? "completed" : "in_progress"
+        ].map(s => `"${String(s).replace(/"/g, '""')}"`).join(",") + "\n");
+      }
+      res.end();
+    } catch (e) { next(e); }
   });
 
   router.get("/api/users", (_req, res) => res.json({ ok: true, users: users.listConfigured() }));

@@ -1640,6 +1640,9 @@ test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed promp
       VALUES (?, 'movie-http', 'movie', 'HTTP Movie', ?, 'pending', ?, ?)`).run(user.id,now,now,now);
     const { createApp } = await import("../dist/server/app.js");
     const app = createApp(db,new MockPlexAdapter());
+    // Wait for the async syncConfiguredUsers to complete in routes.ts, then re-seed
+    await new Promise(r => setTimeout(r, 100));
+    seedUsers(db);
     const server = await new Promise(resolve => { const instance=app.listen(0,"127.0.0.1",()=>resolve(instance)); });
     const base = `http://127.0.0.1:${server.address().port}`;
     try {

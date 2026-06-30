@@ -29,9 +29,14 @@ async function openDetail(x){
 
   let headerHtml = '';
   if (x.showTitle) {
-    headerHtml = '<p class="eyebrow">'+esc(x.categoryLabel)+'</p><h2>'+esc(x.showTitle)+'</h2><p class="detail-episode-meta"><span class="detail-season-badge">'+esc(seasonEp || 'Episode')+'</span> &middot; <span class="detail-episode-title">"'+esc(x.title)+'"</span></p>';
+    let epTitle = x.title;
+    if (epTitle.toLowerCase().includes("episode") || x.showTitle === epTitle || epTitle.match(/^Season \d+/i)) {
+      headerHtml = '<p class="eyebrow">'+esc(x.categoryLabel)+'</p><h2 style="margin-bottom: 0;">'+esc(x.showTitle)+'</h2><p class="detail-episode-meta" style="margin-top: 8px; margin-bottom: 12px;"><span class="detail-season-badge">'+esc(seasonEp || 'Episode')+'</span></p>';
+    } else {
+      headerHtml = '<p class="eyebrow">'+esc(x.categoryLabel)+'</p><h2 style="margin-bottom: 0;">'+esc(x.showTitle)+'</h2><p class="detail-episode-meta" style="margin-top: 8px; margin-bottom: 12px;"><span class="detail-season-badge">'+esc(seasonEp || 'Episode')+'</span> &middot; <span class="detail-episode-title">"'+esc(epTitle)+'"</span></p>';
+    }
   } else {
-    headerHtml = '<p class="eyebrow">'+esc(x.categoryLabel)+'</p><h2>'+esc(x.title)+'</h2>';
+    headerHtml = '<p class="eyebrow">'+esc(x.categoryLabel)+'</p><h2 style="margin-bottom: 12px;">'+esc(x.title)+'</h2>';
   }
 
   const hierarchy = a 
@@ -153,9 +158,6 @@ async function renderOverview() {
     ? '<div class="cw-carousel">' + d.continueWatching.map(cw => '<article class="cw-card" tabindex="0" data-item="' + encodeURIComponent(JSON.stringify(cw)) + '">' + art(cw) + '<div class="cw-bar"><i style="width:'+esc(cw.percentComplete||0)+'%"></i></div><p>' + esc(cw.displayTitle) + '</p></article>').join("") + '</div>'
     : '<p class="text-muted">No active media in progress.</p>';
 
-  // Operations Lane
-  const opsHtml = pList.filter(p=>["pending","prompted","failed"].includes(p.prompt_status)).map(p=>'<article class="prompt-card ops-alert"><strong>'+esc(p.show_title||p.title)+'</strong><span>'+esc(p.prompt_status)+(p.delivery_error?" - delivery failed: "+esc(p.delivery_error):"")+'</span><div><button class="btn-sm" data-action="dismiss" data-id="'+p.id+'">Dismiss</button><button class="btn-sm" data-action="reprompt" data-id="'+p.id+'">Re-prompt</button></div></article>').join("") || empty("pending prompts in queue");
- 
   content.innerHTML = `
     <section class="dashboard-grid">
       <div class="dashboard-panel panel-wide">
@@ -181,11 +183,6 @@ async function renderOverview() {
       </div>
       
       <aside>
-        <div class="dashboard-panel ops-lane">
-          <h3>Discord Prompt Queue</h3>
-          <p class="text-muted" style="font-size: 0.85rem; margin-top: -8px; margin-bottom: 16px;">Manage active or failed Discord co-watch verification prompts.</p>
-          ${opsHtml}
-        </div>
         <div class="dashboard-panel">
           <h3>Service Readiness</h3>
           <div class="health-list">${healthHtml}</div>

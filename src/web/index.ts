@@ -7,84 +7,49 @@ export function registerWebRoutes(router: Router): void {
 
   router.get("/", (_req, res) => {
     res.type("html").send(renderPage("Dashboard", `
-      <section class="band">
-        <h2>Service Health</h2>
-        <div id="readiness" class="readiness-grid" aria-live="polite"></div>
-        <pre id="health">Loading...</pre>
-      </section>
-
-      <section class="band">
-        <h2>Configured Users</h2>
-        <div class="items-table-container">
-          <table class="preview-table">
-            <thead>
-              <tr>
-                <th>Username</th>
-                <th>Display Name</th>
-                <th>Plex User ID</th>
-                <th>Role</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody id="users-table-body">
-              <tr><td colspan="5" class="text-center">Loading users...</td></tr>
-            </tbody>
-          </table>
+      <div class="dashboard-shell">
+        <aside class="dashboard-sidebar">
+          <nav id="layout-switcher" class="sidebar-nav">
+            <button class="nav-btn" data-layout="overview">Overview</button>
+            <button class="nav-btn" data-layout="timeline">Activity Timeline</button>
+            <button class="nav-btn" data-layout="explorer">Media Explorer</button>
+            <button class="nav-btn" data-layout="people">People</button>
+            <button class="nav-btn" data-layout="progress">Progress</button>
+          </nav>
+          <div class="sidebar-section">
+            <h3>Household Members</h3>
+            <div id="sidebar-presence"></div>
+          </div>
+        </aside>
+        <div class="dashboard-main">
+          <header class="dashboard-header">
+            <div class="header-titles">
+              <p id="view-subtitle">Everything everyone is enjoying.</p>
+            </div>
+            <form id="dashboard-filters" class="dashboard-filters">
+              <input type="search" name="search" placeholder="Search title...">
+              <select name="user"><option value="">All Users</option></select>
+              <select name="category">
+                <option value="">All Categories</option>
+                <option value="movie">Movies</option>
+                <option value="tv">TV</option>
+                <option value="classic_tv">Classic TV</option>
+                <option value="anime">Anime</option>
+                <option value="audiobook">Audiobooks</option>
+                <option value="other">Other</option>
+              </select>
+              <button type="submit" class="btn">Apply</button>
+              <button type="button" class="btn" id="export-csv">CSV</button>
+            </form>
+          </header>
+          <div id="dashboard-content"></div>
         </div>
-      </section>
-
-      <section class="band">
-        <h2>Recent Activity</h2>
-        <p>Use the API, CLI, or Discord prompt flow while the richer history copy UI fills in.</p>
-      </section>
-
-      <script>
-        const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
-          '&': '&amp;',
-          '<': '&lt;',
-          '>': '&gt;',
-          '"': '&quot;',
-          "'": '&#39;'
-        })[character]);
-
-        fetch('/api/health').then(r => r.json()).then(data => {
-          const readiness = data.readiness || {};
-          const labels = {
-            database: 'Database',
-            plex: 'Plex',
-            tautulli: 'Tautulli',
-            discord: 'Discord',
-            watcher: 'Watcher',
-            plexMutation: 'Plex mutation'
-          };
-          document.getElementById('readiness').innerHTML = Object.entries(labels).map(([key, label]) => {
-            const item = readiness[key] || { status: 'unconfigured', message: 'No status reported.' };
-            return '<article class="readiness-item status-' + escapeHtml(item.status) + '">' +
-              '<div class="readiness-label">' + escapeHtml(label) + '</div>' +
-              '<div class="readiness-status">' + escapeHtml(item.status) + '</div>' +
-              '<p>' + escapeHtml(item.message) + '</p>' +
-            '</article>';
-          }).join('');
-          document.getElementById('health').textContent = JSON.stringify(data, null, 2);
-        });
-
-        fetch('/api/users').then(r => r.json()).then(data => {
-          if (data.ok && data.users) {
-            const tbody = document.getElementById('users-table-body');
-            tbody.innerHTML = data.users.map(u => {
-              const role = u.is_source_user ? 'Source' : 'Typical Target';
-              const status = u.enabled ? '<span class="badge badge-success">Enabled</span>' : '<span class="badge badge-failed">Disabled</span>';
-              return '<tr>' +
-                '<td>' + escapeHtml(u.plex_username) + '</td>' +
-                '<td>' + escapeHtml(u.display_name || '-') + '</td>' +
-                '<td>' + escapeHtml(u.plex_user_id || '-') + '</td>' +
-                '<td>' + role + '</td>' +
-                '<td>' + status + '</td>' +
-                '</tr>';
-            }).join('');
-          }
-        });
-      </script>
+      </div>
+      <dialog id="detail-dialog">
+        <button class="dialog-close" formmethod="dialog">×</button>
+        <div id="detail-content"></div>
+      </dialog>
+      <script src="/static/dashboard.js"></script>
     `));
   });
 
@@ -600,6 +565,29 @@ export function registerWebRoutes(router: Router): void {
         </form>
         <div id="settings-message" style="margin-top: 1rem;"></div>
       </section>
+
+      <section class="band">
+        <h2>Dashboard Users</h2>
+        <p class="text-muted" style="margin-bottom: 1rem;">Manage the aliases and visibility of users on the dashboard.</p>
+        <form id="users-form" class="job-form">
+          <div class="items-table-container">
+            <table class="preview-table">
+              <thead>
+                <tr>
+                  <th>Username</th>
+                  <th>Alias (Display Name)</th>
+                  <th>Show on Dashboard?</th>
+                </tr>
+              </thead>
+              <tbody id="settings-users-body">
+                <tr><td colspan="3">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <button type="submit" style="margin-top: 1rem;">Save Users</button>
+        </form>
+        <div id="users-message" style="margin-top: 1rem;"></div>
+      </section>
       <script>
         const form = document.getElementById('settings-form');
         const checkbox = document.getElementById('prompt_for_audiobooks');
@@ -629,6 +617,53 @@ export function registerWebRoutes(router: Router): void {
           }).catch(err => {
             message.textContent = 'Error saving settings';
             message.style.color = 'red';
+          });
+        });
+
+        const usersForm = document.getElementById('users-form');
+        const usersBody = document.getElementById('settings-users-body');
+        const usersMessage = document.getElementById('users-message');
+        
+        fetch('/api/settings/users').then(r => r.json()).then(data => {
+          if (data.ok && data.users) {
+            usersBody.innerHTML = data.users.map(u => {
+              const safeName = (u.display_name || u.plex_username).replace(/"/g, '&quot;');
+              return '<tr data-id="' + u.id + '">' +
+                '<td>' + u.plex_username + '</td>' +
+                '<td><input type="text" class="user-display-name" value="' + safeName + '" style="padding: 4px; width: 100%; box-sizing: border-box;" /></td>' +
+                '<td><input type="checkbox" class="user-enabled" ' + (u.enabled ? 'checked' : '') + ' /></td>' +
+              '</tr>';
+            }).join('');
+          }
+        });
+
+        usersForm.addEventListener('submit', (e) => {
+          e.preventDefault();
+          usersMessage.textContent = 'Saving...';
+          
+          const updatedUsers = Array.from(usersBody.querySelectorAll('tr')).map(tr => {
+            return {
+              id: Number(tr.getAttribute('data-id')),
+              display_name: tr.querySelector('.user-display-name').value,
+              enabled: tr.querySelector('.user-enabled').checked ? 1 : 0
+            };
+          });
+
+          fetch('/api/settings/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ users: updatedUsers })
+          }).then(r => r.json()).then(data => {
+            if (data.ok) {
+              usersMessage.textContent = 'Users saved successfully!';
+              usersMessage.style.color = 'green';
+            } else {
+              usersMessage.textContent = 'Error: ' + data.error;
+              usersMessage.style.color = 'red';
+            }
+          }).catch(err => {
+            usersMessage.textContent = 'Error saving users';
+            usersMessage.style.color = 'red';
           });
         });
       </script>

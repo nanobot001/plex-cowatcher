@@ -182,16 +182,26 @@ legend { font-size: 0.9rem; font-weight: 600; color: #06B6D4; padding: 0 12px; }
 
 /* Dashboard Filters */
 .dashboard-filters {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
   background: var(--panel-bg);
   backdrop-filter: blur(12px);
-  padding: 24px;
-  border-radius: 16px;
+  padding: 12px 20px;
+  border-radius: 99px;
   border: 1px solid var(--panel-border);
-  align-items: end;
-  margin-bottom: 16px;
+  align-items: center;
+  margin-bottom: 24px;
+}
+.dashboard-filters > input, .dashboard-filters > select {
+  flex: 1 1 180px;
+  border-radius: 99px;
+  padding: 10px 16px;
+}
+.dashboard-filters .btn {
+  flex: 0 0 auto;
+  border-radius: 99px;
+  padding: 10px 20px;
 }
 .active-filters { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 32px; padding-left: 8px; }
 
@@ -267,7 +277,11 @@ legend { font-size: 0.9rem; font-weight: 600; color: #06B6D4; padding: 0 12px; }
 .cw-carousel {
   display: flex; gap: 20px; overflow-x: auto; padding-bottom: 24px; padding-top: 8px;
   scroll-snap-type: x mandatory;
-  width: 100%;
+  width: auto;
+  margin-left: -24px;
+  margin-right: -24px;
+  padding-left: 24px;
+  padding-right: 24px;
 }
 .cw-card {
   flex: 0 0 160px;
@@ -367,7 +381,7 @@ dialog::backdrop { background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); }
 .detail-info-wrapper {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 12px;
 }
 .detail-info-wrapper h2 {
   font-size: 2.2rem;
@@ -377,12 +391,12 @@ dialog::backdrop { background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); }
 }
 .detail-metadata {
   display: grid;
-  grid-template-columns: 100px 1fr;
-  gap: 12px 16px;
+  grid-template-columns: 90px 1fr;
+  gap: 8px 16px;
   margin: 0;
   font-size: 0.95rem;
   background: rgba(0, 0, 0, 0.25);
-  padding: 20px;
+  padding: 16px;
   border-radius: 16px;
   border: 1px solid var(--panel-border);
 }
