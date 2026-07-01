@@ -25,6 +25,23 @@ const art=x=>'<img class="poster" src="'+esc(x.artworkUrl)+'" alt="" loading="la
 const mediaTitle=x=>esc(x.displayTitle||x.title||x.showTitle||"");
 const mediaBadge=x=>x.displayName?'<span class="media-badge">'+esc(x.displayName)+'</span>':'';
 const cardArt=x=>'<div class="poster-frame">'+art(x)+mediaBadge(x)+'</div>';
+const viewerBadge=x=>{
+  const names = Array.isArray(x.displayNames) && x.displayNames.length
+    ? x.displayNames.filter(Boolean)
+    : x.displayName
+      ? String(x.displayName).split(" + ").map(name => name.trim()).filter(Boolean)
+      : [];
+  if (!names.length) return "";
+  if (names.length === 1) return `<span class="media-badge">${esc(names[0])}</span>`;
+  const visibleNames = names.slice(0, 2);
+  const remaining = names.length - visibleNames.length;
+  const badgeLabel = visibleNames.map((name, index) => {
+    const spanClass = index === 0 ? "media-badge-name" : "media-badge-name media-badge-name-secondary";
+    return `<span class="${spanClass}">${esc(name)}</span>`;
+  }).join('<span class="media-badge-sep">+</span>');
+  const more = remaining > 0 ? `<span class="media-badge-more">+${remaining} more</span>` : "";
+  return `<span class="media-badge media-badge--multi">${badgeLabel}${more}</span>`;
+};
 const groupRecentCards = items => {
   const thresholdMs = 10 * 60 * 1000;
   const groups = new Map();
@@ -46,6 +63,7 @@ const groupRecentCards = items => {
     }
     if (item.displayName && !group.displayNames.includes(item.displayName)) {
       group.displayNames.push(item.displayName);
+      group.displayNames.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
       group.displayName = group.displayNames.join(" + ");
     }
     if (watchedAtMs > group.latestWatchedAtMs) {
@@ -303,7 +321,7 @@ async function renderOverview() {
           ${cardArt(cw)}
           <div class="cw-bar"><i style="width:${esc(cw.percentComplete ?? 0)}%"></i></div>
           <p>${esc(cw.displayTitle || cw.title || '')}</p>
-          <span class="cw-meta">${esc(cw.displayName)} · ${fmtDate(cw.watchedAt)}</span>
+          <span class="cw-meta">${viewerBadge(cw)} · ${fmtDate(cw.watchedAt)}</span>
         </article>
       `).join("")}</div>`
     : '<div class="panel-state compact"><p>No recent playback to show right now.</p></div>';

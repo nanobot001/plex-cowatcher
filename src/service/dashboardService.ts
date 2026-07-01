@@ -923,6 +923,7 @@ export class DashboardService {
 
       if (item.displayName && !group.displayNames.includes(item.displayName)) {
         group.displayNames.push(item.displayName);
+        group.displayNames.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
         group.displayName = group.displayNames.join(" + ");
       }
       if (watchedAtMs > group.latestWatchedAtMs) {
@@ -935,6 +936,6 @@ export class DashboardService {
       .flat()
       .sort((a, b) => b.latestWatchedAtMs - a.latestWatchedAtMs)
       .slice(0, limit)
-      .map(({ latestWatchedAtMs, displayNames, ...rest }) => rest);
+      .map(({ latestWatchedAtMs, displayNames, ...rest }) => ({ ...rest, displayNames }));
   }
 }

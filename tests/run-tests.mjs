@@ -1612,6 +1612,7 @@ test("dashboard overview groups near-simultaneous co-watch cards by shared title
     assert.match(overview.recentPlayback[0].displayName, /\+/);
     assert.match(overview.recentPlayback[0].displayName, /Tony/);
     assert.match(overview.recentPlayback[0].displayName, /Viewer/);
+    assert.deepEqual(overview.recentPlayback[0].displayNames, ["Tony", "Viewer"]);
   });
 });
 

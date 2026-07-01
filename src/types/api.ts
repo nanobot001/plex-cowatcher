@@ -65,6 +65,7 @@ export interface DashboardActivityItem {
   grandparentRatingKey?: string; parentRatingKey?: string; audiobookId?: number; audiobookTitle?: string;
   seasonNumber?: number; episodeNumber?: number;
   displayTitle?: string;
+  displayNames?: string[];
   evidence: Record<string, unknown>;
 }
 
