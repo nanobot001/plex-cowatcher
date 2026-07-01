@@ -42,6 +42,11 @@ Go to `/copy` for the history copy utility:
 http://localhost:8787/copy
 ```
 
+### Dashboard Overview
+- The `/` dashboard now opens with an overview surface that emphasizes recent playback, household summary cards, and operational status.
+- Filter controls are ordered by category, user, then search so browsing starts with media type first.
+- Recent playback cards compactly show shared watches when multiple people are involved, while keeping single-user cards simple.
+
 ### History Copy UI Features
 - **Interactive Preview Grid**: Lists all history items for the copy job, including status (eligible, already watched, already copied, restricted, or no matching media).
 - **Selective Sync Highlight**: Click on any eligible row to toggle its selection status. Only highlighted rows will be copied.
