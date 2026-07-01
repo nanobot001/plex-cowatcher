@@ -7,6 +7,10 @@ const SUMMARY_SAMPLE_LIMIT = 500;
 const DETAIL_SAMPLE_LIMIT = 200;
 const TIMELINE_DEFAULT_DAYS = 1;
 const TIMELINE_MAX_DAYS = 7;
+const OVERVIEW_CONTINUE_LIMIT = 3;
+const OVERVIEW_COMPLETED_LIMIT = 4;
+const OVERVIEW_ACTIVITY_LIMIT = 4;
+const OVERVIEW_ATTENTION_LIMIT = 4;
 
 const filterSchema = z.object({
   dateFrom: z.string().optional(),
@@ -118,6 +122,30 @@ function compareExplorerItems(a: any, b: any, sort: string): number {
   return b.latestWatchedAt.localeCompare(a.latestWatchedAt) || aTitle.localeCompare(bTitle, undefined, { sensitivity: "base" });
 }
 
+function isoDay(value: string): string {
+  return value.slice(0, 10);
+}
+
+function addDays(value: string, days: number): string {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function minutesFromDuration(duration?: number): number {
+  return Math.round((duration ?? 0) / 60000);
+}
+
+function hoursFromDuration(duration?: number): number {
+  return Math.round((duration ?? 0) / 3600000);
+}
+
+function buildWindowLabel(start: string | null, end: string | null): string {
+  if (!start || !end) return "No visible activity yet";
+  if (start === end) return start;
+  return `${start} to ${end}`;
+}
+
 export function deriveDashboardCategory(mediaType: string, libraryName?: string): { category: DashboardDerivedCategory; label: string; derived: boolean } {
   const library = (libraryName ?? "").toLowerCase();
   const type = mediaType.toLowerCase();
@@ -179,6 +207,7 @@ export class DashboardService {
 
   getOverview(input: unknown) {
     const timed = withTiming(() => {
+      const filters = parseFilters(input);
       const baseActivity = this.getActivity({ ...(input as object), limit: 24, offset: 0 });
       const all = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0 }).items;
       const users = this.db.prepare(`
@@ -194,9 +223,26 @@ export class DashboardService {
         ORDER BY COALESCE(NULLIF(dashboard_alias, ''), plex_username), id
       `).all() as any[];
 
+      const visibleUserIds = new Set(users.map((user) => Number(user.id)));
       const categoryStats = new Map<string, { category: string; plays: number; duration: number; completed: number }>();
       const topTitlesMap = new Map<string, any>();
       const heatmaps = new Map<number, number[]>();
+      const recentCompletedMap = new Map<string, DashboardActivityItem>();
+      const householdActivityMap = new Map<number, {
+        userId: number;
+        plexUsername: string;
+        displayName: string;
+        minutes: number;
+        completed: number;
+        inProgress: number;
+        latestWatchedAt: string;
+        latestItemTitle: string;
+        latestRatingKey: string;
+        latestCategory: DashboardCategory;
+        topCategoryCounts: Record<string, number>;
+      }>();
+      let earliestDay: string | null = null;
+      let latestDay: string | null = null;
 
       for (const item of all) {
         const cat = item.category;
@@ -217,11 +263,52 @@ export class DashboardService {
         const date = new Date(item.watchedAt);
         const day = (date.getDay() + 6) % 7;
         const userHeatmap = heatmaps.get(item.userId) ?? [0, 0, 0, 0, 0, 0, 0];
-        userHeatmap[day] += Math.round((item.duration ?? 0) / 60000);
+        userHeatmap[day] += minutesFromDuration(item.duration);
         heatmaps.set(item.userId, userHeatmap);
+
+        const watchedDay = isoDay(item.watchedAt);
+        if (!earliestDay || watchedDay < earliestDay) earliestDay = watchedDay;
+        if (!latestDay || watchedDay > latestDay) latestDay = watchedDay;
+
+        if (item.completed) {
+          const key = explorerGroupKey(item);
+          if (!recentCompletedMap.has(key)) {
+            recentCompletedMap.set(key, { ...item, displayTitle: explorerTitle(item) });
+          }
+        }
+
+        const household = householdActivityMap.get(item.userId) ?? {
+          userId: item.userId,
+          plexUsername: item.username,
+          displayName: item.displayName,
+          minutes: 0,
+          completed: 0,
+          inProgress: 0,
+          latestWatchedAt: item.watchedAt,
+          latestItemTitle: item.displayTitle ?? item.title,
+          latestRatingKey: item.ratingKey,
+          latestCategory: item.category,
+          topCategoryCounts: {}
+        };
+        household.minutes += minutesFromDuration(item.duration);
+        household.topCategoryCounts[item.category] = (household.topCategoryCounts[item.category] ?? 0) + 1;
+        if (item.completed) household.completed += 1;
+        else household.inProgress += 1;
+        if (item.watchedAt >= household.latestWatchedAt) {
+          household.latestWatchedAt = item.watchedAt;
+          household.latestItemTitle = item.displayTitle ?? item.title;
+          household.latestRatingKey = item.ratingKey;
+          household.latestCategory = item.category;
+        }
+        householdActivityMap.set(item.userId, household);
       }
 
-      const statsList = [...categoryStats.values()].map(s => ({ ...s, durationHours: Math.round(s.duration / 3600000), completionRate: s.plays > 0 ? Math.round((s.completed / s.plays) * 100) : 0 }));
+      const statsList = [...categoryStats.values()].map((s) => ({
+        ...s,
+        durationHours: hoursFromDuration(s.duration),
+        durationMinutes: minutesFromDuration(s.duration),
+        completionRate: s.plays > 0 ? Math.round((s.completed / s.plays) * 100) : 0
+      }));
 
       const topTitlesByCategory = new Map<string, any[]>();
       for (const stat of topTitlesMap.values()) {
@@ -235,19 +322,268 @@ export class DashboardService {
       }
 
       const pending = this.db.prepare("SELECT count(*) count FROM watch_events WHERE prompt_status='pending'").get() as any;
+      const currentWindow = {
+        start: filters.dateFrom ? isoDay(new Date(filters.dateFrom).toISOString()) : earliestDay,
+        end: filters.dateTo ? isoDay(new Date(filters.dateTo).toISOString()) : latestDay
+      };
+      const summaryStrip = HOUSEHOLD_CATEGORIES.map((category) => {
+        const stat = categoryStats.get(category);
+        const deltaMinutes = this.getOverviewDeltaMinutes(filters, category);
+        return {
+          category,
+          label: category === "movie"
+            ? "Movies"
+            : category === "tv"
+              ? "TV"
+              : category === "classic_tv"
+                ? "Classic TV"
+                : category === "anime"
+                  ? "Anime"
+                  : "Audiobooks",
+          minutes: Math.round((stat?.duration ?? 0) / 60000),
+          plays: stat?.plays ?? 0,
+          completed: stat?.completed ?? 0,
+          deltaMinutes
+        };
+      });
+
+      const householdActivity = [...householdActivityMap.values()]
+        .map((item) => ({
+          ...item,
+          topCategory: Object.entries(item.topCategoryCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? null
+        }))
+        .sort((a, b) => b.minutes - a.minutes || b.latestWatchedAt.localeCompare(a.latestWatchedAt))
+        .slice(0, OVERVIEW_ACTIVITY_LIMIT);
+
+      const recentlyCompleted = [...recentCompletedMap.values()]
+        .sort((a, b) => b.watchedAt.localeCompare(a.watchedAt))
+        .slice(0, OVERVIEW_COMPLETED_LIMIT);
+
+      const needsAttention = this.getNeedsAttention(visibleUserIds).slice(0, OVERVIEW_ATTENTION_LIMIT);
+      const comparableWindowLabel = buildWindowLabel(currentWindow.start, currentWindow.end);
       return {
         activity: baseActivity,
         totals: { plays: baseActivity.total, people: new Set(all.map((item) => item.userId)).size, minutes: Math.round(all.reduce((minutes, item) => minutes + (item.duration ?? 0), 0) / 60000), pendingPrompts: Number(pending.count) },
         categories: [...categoryStats.values()].map(s => ({ category: s.category, count: s.plays })),
         users,
         libraries: [...new Set(all.map((item) => item.libraryName).filter(Boolean))].sort(),
-        continueWatching: this.getContinueWatching(input),
+        continueWatching: this.getContinueWatching({ ...(input as object), limit: OVERVIEW_CONTINUE_LIMIT }),
         categoryStats: statsList,
         topTitles: Object.fromEntries(topTitlesByCategory),
-        heatmaps: Object.fromEntries(heatmaps)
+        heatmaps: Object.fromEntries(heatmaps),
+        summaryStrip,
+        recentlyCompleted,
+        householdActivity,
+        needsAttention,
+        categoryMix: statsList,
+        windows: {
+          overview: comparableWindowLabel,
+          continueWatching: "Recent incomplete playback from the last 30 days",
+          recentlyCompleted: comparableWindowLabel,
+          categoryMix: comparableWindowLabel,
+          householdActivity: comparableWindowLabel,
+          needsAttention: "Open operational issues"
+        }
       };
     });
     return { ...timed.value, timingMs: timed.timingMs };
+  }
+
+  private getOverviewDeltaMinutes(
+    filters: ReturnType<typeof parseFilters>,
+    category: DashboardCategory
+  ): number | null {
+    if (!filters.dateFrom || !filters.dateTo) return null;
+    const start = new Date(filters.dateFrom);
+    const end = new Date(filters.dateTo);
+    const spanMs = end.getTime() - start.getTime();
+    if (!Number.isFinite(spanMs) || spanMs <= 0) return null;
+
+    const previousEnd = new Date(start.getTime());
+    previousEnd.setMilliseconds(previousEnd.getMilliseconds() - 1);
+    const previousStart = new Date(previousEnd.getTime() - spanMs);
+    const previous = this.getActivity({
+      ...filters,
+      category,
+      dateFrom: previousStart.toISOString(),
+      dateTo: previousEnd.toISOString(),
+      limit: SUMMARY_SAMPLE_LIMIT,
+      offset: 0
+    }).items;
+    if (!previous.length) return null;
+    const previousMinutes = previous.reduce((sum, item) => sum + minutesFromDuration(item.duration), 0);
+    const current = this.getActivity({
+      ...filters,
+      category,
+      limit: SUMMARY_SAMPLE_LIMIT,
+      offset: 0
+    }).items;
+    const currentMinutes = current.reduce((sum, item) => sum + minutesFromDuration(item.duration), 0);
+    return currentMinutes - previousMinutes;
+  }
+
+  private getNeedsAttention(visibleUserIds: Set<number>) {
+    const items: Array<Record<string, unknown>> = [];
+
+    const unresolvedPrompts = this.db.prepare(`
+      SELECT
+        we.id,
+        we.rating_key,
+        we.title,
+        we.show_title,
+        we.watched_at,
+        we.prompt_status,
+        u.plex_username,
+        COALESCE(NULLIF(u.dashboard_alias, ''), u.plex_username) AS display_name
+      FROM watch_events we
+      JOIN users u ON u.id = we.source_user_id
+      WHERE COALESCE(u.dashboard_shown, u.enabled) = 1
+        AND we.prompt_status IN ('pending', 'prompted')
+      ORDER BY we.watched_at DESC
+      LIMIT 6
+    `).all() as any[];
+
+    for (const row of unresolvedPrompts) {
+      items.push({
+        kind: "unresolved_prompt",
+        title: row.show_title || row.title,
+        detail: `${row.display_name} still needs a co-watch prompt resolution`,
+        status: row.prompt_status,
+        watchedAt: row.watched_at,
+        ratingKey: row.rating_key,
+        user: row.plex_username,
+        route: { layout: "people", filters: { user: row.plex_username } }
+      });
+    }
+
+    const promptErrors = this.db.prepare(`
+      SELECT payload_json, error, created_at
+      FROM audit_log
+      WHERE action = 'create_cowatch_prompt' AND status = 'error'
+      ORDER BY created_at DESC
+      LIMIT 6
+    `).all() as Array<{ payload_json: string; error: string | null; created_at: string }>;
+    for (const row of promptErrors) {
+      let watchEventId: number | null = null;
+      try {
+        const payload = JSON.parse(row.payload_json ?? "{}");
+        watchEventId = Number(payload.watchEventId ?? 0) || null;
+      } catch {
+        watchEventId = null;
+      }
+      if (!watchEventId) continue;
+      const event = this.db.prepare(`
+        SELECT
+          we.rating_key,
+          we.title,
+          we.show_title,
+          u.plex_username,
+          COALESCE(NULLIF(u.dashboard_alias, ''), u.plex_username) AS display_name
+        FROM watch_events we
+        JOIN users u ON u.id = we.source_user_id
+        WHERE we.id = ? AND COALESCE(u.dashboard_shown, u.enabled) = 1
+      `).get(watchEventId) as any;
+      if (!event) continue;
+      items.push({
+        kind: "discord_delivery_failed",
+        title: event.show_title || event.title,
+        detail: `${event.display_name} had a Discord delivery failure`,
+        status: "failed",
+        watchedAt: row.created_at,
+        ratingKey: event.rating_key,
+        user: event.plex_username,
+        route: { layout: "people", filters: { user: event.plex_username } }
+      });
+    }
+
+    const failedSyncs = this.db.prepare(`
+      SELECT
+        sf.rating_key,
+        sf.error,
+        sf.created_at,
+        u.plex_username,
+        COALESCE(NULLIF(u.dashboard_alias, ''), u.plex_username) AS display_name,
+        po.title,
+        po.show_title
+      FROM sync_failures sf
+      LEFT JOIN users u ON u.id = sf.target_user_id
+      LEFT JOIN playback_observations po ON po.user_id = sf.target_user_id AND po.rating_key = sf.rating_key
+      WHERE sf.resolved_at IS NULL
+        AND (u.id IS NULL OR COALESCE(u.dashboard_shown, u.enabled) = 1)
+      ORDER BY sf.created_at DESC
+      LIMIT 6
+    `).all() as any[];
+    for (const row of failedSyncs) {
+      items.push({
+        kind: "plex_sync_failed",
+        title: row.show_title || row.title || row.rating_key,
+        detail: `${row.display_name || "A household member"} has an unresolved Plex sync failure`,
+        status: "failed",
+        watchedAt: row.created_at,
+        ratingKey: row.rating_key,
+        user: row.plex_username ?? null,
+        route: row.plex_username ? { layout: "people", filters: { user: row.plex_username } } : { layout: "people", filters: {} }
+      });
+    }
+
+    const metadataGaps = this.db.prepare(`
+      SELECT
+        po.rating_key,
+        po.title,
+        po.show_title,
+        po.watched_at,
+        u.plex_username,
+        COALESCE(NULLIF(u.dashboard_alias, ''), u.plex_username) AS display_name,
+        po.media_type,
+        po.library_name
+      FROM playback_observations po
+      JOIN users u ON u.id = po.user_id
+      LEFT JOIN content_catalog cat ON cat.rating_key = po.rating_key
+      WHERE COALESCE(u.dashboard_shown, u.enabled) = 1
+        AND cat.rating_key IS NULL
+      ORDER BY po.watched_at DESC
+      LIMIT 6
+    `).all() as any[];
+    for (const row of metadataGaps) {
+      const derived = deriveDashboardCategory(row.media_type, row.library_name);
+      if (!isHouseholdCategory(derived.category)) continue;
+      items.push({
+        kind: "missing_metadata",
+        title: row.show_title || row.title,
+        detail: `${row.display_name} has visible playback missing catalog metadata`,
+        status: "missing",
+        watchedAt: row.watched_at,
+        ratingKey: row.rating_key,
+        user: row.plex_username,
+        route: { layout: "timeline", filters: { user: row.plex_username } }
+      });
+    }
+
+    const uncertainRows = this.getActivity({ limit: 120, offset: 0 }).items.filter((item) => item.categoryDerived);
+    for (const item of uncertainRows.slice(0, 6)) {
+      items.push({
+        kind: "uncertain_classification",
+        title: item.displayTitle ?? item.title,
+        detail: `${item.displayName} is shown through a derived ${item.categoryLabel} classification`,
+        status: "review",
+        watchedAt: item.watchedAt,
+        ratingKey: item.ratingKey,
+        user: item.username,
+        route: { layout: "timeline", filters: { user: item.username, category: item.category } }
+      });
+    }
+
+    return items
+      .filter((item, index, list) => {
+        const route = JSON.stringify(item.route ?? {});
+        const key = `${item.kind}:${item.ratingKey ?? item.title}:${item.user ?? ""}:${route}`;
+        return list.findIndex((candidate) => {
+          const candidateRoute = JSON.stringify(candidate.route ?? {});
+          return `${candidate.kind}:${candidate.ratingKey ?? candidate.title}:${candidate.user ?? ""}:${candidateRoute}` === key;
+        }) === index;
+      })
+      .sort((a, b) => String(b.watchedAt ?? "").localeCompare(String(a.watchedAt ?? "")))
+      .slice(0, 10);
   }
 
   getMedia(input: unknown) {
@@ -509,7 +845,7 @@ export class DashboardService {
       categoryDerived: category.derived, 
       libraryName, 
       watchedAt: row.watched_at, 
-      duration: row.duration ? row.duration * 1000 : undefined, 
+      duration: row.duration ?? undefined,
       percentComplete: row.percent_complete ?? undefined, 
       completed: row.completed === 1, 
       artworkUrl: `/api/artwork/${encodeURIComponent(artworkKey)}`, 

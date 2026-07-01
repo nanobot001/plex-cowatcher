@@ -17,7 +17,15 @@ import { DashboardPreferenceService } from "../service/dashboardPreferenceServic
 import { appConfig } from "../utils/config.js";
 import { parseDays } from "../utils/time.js";
 
-export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Router {
+export type RouterOptions = {
+  skipStartupUserSync?: boolean;
+};
+
+export function buildRouter(
+  db: Db,
+  plex: PlexAdapter = createPlexAdapter(),
+  options: RouterOptions = {}
+): Router {
   const router = express.Router();
   const tautulli = createTautulliAdapter();
   const sync = new SyncService(plex);
@@ -33,18 +41,20 @@ export function buildRouter(db: Db, plex: PlexAdapter = createPlexAdapter()): Ro
   const dashboardPreferences = new DashboardPreferenceService(db);
   const dashboardService = new DashboardService(db);
 
-  users.syncConfiguredUsers();
-  (async () => {
-    try {
-      const [plexUsers, tautulliUsers] = await Promise.all([
-        plex.listUsers().catch(() => []),
-        tautulli.getUsers().catch(() => [])
-      ]);
-      users.syncConfiguredUsers(undefined, plexUsers, tautulliUsers);
-    } catch (error) {
-      console.warn("Failed to sync users with Plex/Tautulli at startup:", error instanceof Error ? error.message : error);
-    }
-  })();
+  if (!options.skipStartupUserSync) {
+    users.syncConfiguredUsers();
+    (async () => {
+      try {
+        const [plexUsers, tautulliUsers] = await Promise.all([
+          plex.listUsers().catch(() => []),
+          tautulli.getUsers().catch(() => [])
+        ]);
+        users.syncConfiguredUsers(undefined, plexUsers, tautulliUsers);
+      } catch (error) {
+        console.warn("Failed to sync users with Plex/Tautulli at startup:", error instanceof Error ? error.message : error);
+      }
+    })();
+  }
 
   router.get("/api/health", (_req, res) => res.json(health.getHealth()));
   router.get("/api/status", (_req, res) => res.json(health.getHealth()));

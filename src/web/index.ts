@@ -20,6 +20,7 @@ export function registerWebRoutes(router: Router): void {
             <h3>Household Members</h3>
             <div id="sidebar-presence"></div>
           </div>
+          <div id="sidebar-overview-sections"></div>
         </aside>
         <div class="dashboard-main">
           <header class="dashboard-header">

@@ -1,8 +1,9 @@
 # Block 3-2i: Overview Decision Surface
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Rebuilds Overview after the shared shell exists, using Mockup 1 for composition and only the evidence-backed operations concepts from Mockup 5.
+> Status: Implemented on 2026-06-30.
+> Result: Implemented.
+> Verification: `npm run build` and `npm test` - passed.
+> Notes: Rebuilt Overview into a one-screen decision surface with summary strip, continue consuming, recently completed, category mix, household activity, evidence-backed attention items, and compact operations/readiness surfaces; live desktop and narrow Playwright captures plus click-through checks passed after restarting the PM2 service, and fixture-backed empty plus partial-failure desktop/narrow captures now pass via `capture_fixture_states.cjs` after fixing dashboard duration scaling.
 
 ## Goal
 

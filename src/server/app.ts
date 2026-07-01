@@ -10,11 +10,14 @@ import { appConfig } from "../utils/config.js";
 import { log } from "../utils/logger.js";
 import { WatcherService } from "../watcher/watcher.js";
 import { registerWebRoutes } from "../web/index.js";
-import { buildRouter } from "./routes.js";
+import { buildRouter, type RouterOptions } from "./routes.js";
+
+export type CreateAppOptions = RouterOptions;
 
 export function createApp(
   db = openMigratedDatabase(),
-  plex: PlexAdapter = createPlexAdapter()
+  plex: PlexAdapter = createPlexAdapter(),
+  options: CreateAppOptions = {}
 ) {
   const app = express();
   app.locals.db = db;
@@ -22,7 +25,7 @@ export function createApp(
   app.use(express.urlencoded({ extended: true }));
   app.use("/static", express.static(path.resolve("src/web/static")));
   registerWebRoutes(app);
-  app.use(buildRouter(db, plex));
+  app.use(buildRouter(db, plex, options));
   app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     log("error", { action: "http_error", message: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ ok: false, errorCode: "HTTP_ERROR", message: error instanceof Error ? error.message : "HTTP error" });

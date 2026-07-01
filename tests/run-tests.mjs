@@ -1473,7 +1473,7 @@ test("Plex webhook endpoint accepts multipart/form-data and processes tracks in 
     
     // Import server createApp
     const { createApp } = await import("../dist/server/app.js");
-    const app = createApp(db, new MockPlexAdapter());
+    const app = createApp(db, new MockPlexAdapter(), { skipStartupUserSync: true });
     
     // Start local server on random port
     const server = await new Promise((resolve) => {
@@ -1550,10 +1550,21 @@ test("dashboard service returns bounded mixed-media data and honest progress", (
     const service = new DashboardService(db);
     const overview = service.getOverview({});
     assert.equal(overview.totals.plays, 3);
+    assert.equal(overview.totals.minutes, 175);
     assert.equal(typeof overview.timingMs, "number");
+    assert.equal(overview.summaryStrip.length, 5);
+    assert.equal(overview.summaryStrip.some(x => x.category === "movie"), true);
+    assert.equal(overview.summaryStrip.find(x => x.category === "movie").minutes, 120);
+    assert.equal(overview.summaryStrip.find(x => x.category === "anime").minutes, 25);
+    assert.equal(overview.windows.continueWatching, "Recent incomplete playback from the last 30 days");
     assert.ok(overview.categories.some(x => x.category === "movie"));
     assert.ok(overview.categories.some(x => x.category === "anime"));
     assert.ok(overview.categories.some(x => x.category === "audiobook"));
+    assert.equal(overview.categoryMix.find(x => x.category === "movie").durationMinutes, 120);
+    assert.equal(overview.categoryMix.find(x => x.category === "anime").durationMinutes, 25);
+    assert.equal(overview.recentlyCompleted.length, 1);
+    assert.equal(overview.householdActivity.length, 2);
+    assert.equal(Array.isArray(overview.needsAttention), true);
     assert.equal(service.getActivity({limit:1}).items.length, 1);
     assert.equal(service.getActivity({limit:5000}).limit, 1000);
     assert.equal(service.getActivity({category:"anime"}).total, 1);
@@ -1685,13 +1696,14 @@ test("dashboard audiobook titles prefer the book title and artwork routes return
     assert.ok(secondItem);
     assert.ok(thirdItem);
     assert.ok(secondContinue);
+    assert.equal(overview.summaryStrip.find((item) => item.category === "audiobook").minutes > 0, true);
     assert.equal(firstItem.displayTitle, "The Final Empire");
     assert.equal(secondItem.displayTitle, "Arcanum Unbounded The Cosmere Collection (Unabridged)");
     assert.equal(thirdItem.displayTitle, "Warbreaker");
     assert.equal(secondContinue.displayTitle, "Arcanum Unbounded The Cosmere Collection (Unabridged)");
 
     const { createApp } = await import("../dist/server/app.js");
-    const app = createApp(db, new MockPlexAdapter());
+    const app = createApp(db, new MockPlexAdapter(), { skipStartupUserSync: true });
     const server = await new Promise((resolve) => {
       const s = app.listen(0, "127.0.0.1", () => resolve(s));
     });
@@ -1790,7 +1802,7 @@ test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed promp
       (source_user_id,rating_key,media_type,title,watched_at,prompt_status,created_at,updated_at)
       VALUES (?, 'movie-http', 'movie', 'HTTP Movie', ?, 'pending', ?, ?)`).run(user.id,now,now,now);
     const { createApp } = await import("../dist/server/app.js");
-    const app = createApp(db,new MockPlexAdapter());
+    const app = createApp(db,new MockPlexAdapter(), { skipStartupUserSync: true });
     // Wait for the async syncConfiguredUsers to complete in routes.ts, then re-seed
     await new Promise(r => setTimeout(r, 100));
     seedUsers(db);
@@ -1856,7 +1868,30 @@ test("dashboard timeline uses bounded windows and summary endpoints stay sampled
     assert.equal(typeof timeline.timingMs, "number");
     assert.equal(overview.activity.limit, 24);
     assert.equal(overview.activity.items.length <= 24, true);
+    assert.equal(typeof overview.windows.overview, "string");
     assert.equal(typeof overview.timingMs, "number");
+  });
+});
+
+test("dashboard overview attention lane stays evidence-backed", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const users = db.prepare("SELECT id, plex_username FROM users WHERE enabled = 1 ORDER BY id").all();
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?, 'movie-attention', 'movie', 'Movies', 'Attention Movie', ?, 40, 3600000, 0, ?, ?)`).run(users[0].id, now, now, now);
+    db.prepare(`INSERT INTO watch_events
+      (source_user_id,rating_key,media_type,title,watched_at,prompt_status,created_at,updated_at)
+      VALUES (?, 'movie-attention', 'movie', 'Attention Movie', ?, 'pending', ?, ?)`).run(users[0].id, now, now, now);
+    db.prepare(`INSERT INTO sync_failures
+      (action,target_user_id,rating_key,error,created_at)
+      VALUES ('apply_history_copy', ?, 'movie-attention', 'PLEX_TIMEOUT', ?)`).run(users[1].id, now);
+
+    const overview = new DashboardService(db).getOverview({});
+    assert.equal(overview.needsAttention.length >= 1, true);
+    assert.equal(overview.needsAttention.some(item => item.kind === "unresolved_prompt"), true);
+    assert.equal(overview.needsAttention.some(item => item.kind === "plex_sync_failed"), true);
   });
 });
 let passed = 0;

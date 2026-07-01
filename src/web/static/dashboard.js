@@ -1,4 +1,4 @@
-const layouts = new Set(["overview","timeline","explorer","people","progress"]);
+﻿const layouts = new Set(["overview","timeline","explorer","people","progress"]);
 const state = { layout: "overview", filters: {}, offset: 0, totals: null, users: null, libraries: null };
 const content = document.querySelector("#dashboard-content");
 const form = document.querySelector("#dashboard-filters");
@@ -18,7 +18,77 @@ const mediaBadge=x=>x.displayName?'<span class="media-badge">'+esc(x.displayName
 const cardArt=x=>'<div class="poster-frame">'+art(x)+mediaBadge(x)+'</div>';
 const activityRow=x=>'<article class="activity-row" tabindex="0" data-item="'+encodeURIComponent(JSON.stringify(x))+'">'+art(x)+'<div class="activity-copy"><div class="activity-heading"><strong>'+mediaTitle(x)+'</strong><span>'+esc(x.categoryLabel)+'</span></div>'+(x.category==="audiobook"&&x.showTitle?'<p>By '+esc(x.showTitle)+'</p>':x.showTitle&&x.showTitle!==x.displayTitle?'<p>'+esc(x.title)+'</p>':'')+'<p>'+esc(x.displayName)+' &middot; '+fmtDate(x.watchedAt)+' &middot; '+fmtDuration(x.duration)+'</p>'+evidence(x)+'</div><div class="progress-ring">'+esc(x.percentComplete??"--")+'%</div></article>';
 const empty=label=>'<div class="panel-state"><h3>No '+esc(label)+' here yet</h3><p>Try broadening the filters. Missing evidence stays unknown.</p></div>';
+const encodeRoute=route=>encodeURIComponent(JSON.stringify(route));
+const fmtHourValue=minutes=>{
+  const totalMinutes = Math.max(0, Number(minutes || 0));
+  if (totalMinutes === 0) return "0h";
+  const hours = totalMinutes / 60;
+  if (hours >= 10) return `${Math.round(hours).toLocaleString()}h`;
+  if (hours >= 1) return `${hours.toFixed(1).replace(/\.0$/, "")}h`;
+  return `${Math.round(totalMinutes)}m`;
+};
+const categoryLabel=category=>({movie:"Movies",tv:"TV",classic_tv:"Classic TV",anime:"Anime",audiobook:"Audiobooks"})[category]||String(category||"");
+const toneClass=status=>({failed:"is-danger",error:"is-danger",missing:"is-warning",review:"is-neutral",pending:"is-info",prompted:"is-info"})[status]||"is-neutral";
+const deltaText=value=>value==null?"":`${value>0?"+":value<0?"-":""}${fmtHourValue(Math.abs(value))}`;
+const progressText=value=>value==null?"Progress unknown":`${value}% finished`;
+const attentionHeading=item=>({
+  unresolved_prompt:"Waiting on a co-watch answer",
+  discord_delivery_failed:"Prompt delivery failed",
+  plex_sync_failed:"Watch state sync failed",
+  missing_metadata:"Title needs matching metadata",
+  uncertain_classification:"Category needs review"
+})[item?.kind]||"Needs review";
+const attentionDetail=item=>{
+  const who = item?.user ? String(item.user) : "Someone";
+  const title = item?.title ? String(item.title) : "This title";
+  switch (item?.kind) {
+    case "unresolved_prompt":
+      return `${who} still needs to answer whether ${title} was co-watched.`;
+    case "discord_delivery_failed":
+      return `The co-watch prompt for ${title} did not reach ${who}.`;
+    case "plex_sync_failed":
+      return `We could not sync watched state for ${title} to ${who}.`;
+    case "missing_metadata":
+      return `${title} is visible in playback history, but it is not matched in the catalog yet.`;
+    case "uncertain_classification":
+      return `${title} is showing up under a guessed category and should be checked.`;
+    default:
+      return item?.detail || "Needs review.";
+  }
+};
+const attentionStatusLabel=item=>{
+  if (item?.kind === "unresolved_prompt") return "Waiting";
+  if (item?.kind === "discord_delivery_failed") return "Resend";
+  if (item?.kind === "plex_sync_failed") return "Sync failed";
+  if (item?.kind === "missing_metadata") return "Match title";
+  if (item?.kind === "uncertain_classification") return "Review";
+  return String(item?.status || "Open").replace(/_/g, " ");
+};
+const sidebarOverview = ()=>document.querySelector("#sidebar-overview-sections");
+function setSidebarOverview(html=""){
+  const node = sidebarOverview();
+  if(!node)return;
+  node.innerHTML = html;
+  node.style.display = html ? "block" : "none";
+}
 function setButtons(){document.querySelectorAll("[data-layout]").forEach(b=>{b.classList.toggle("active",b.dataset.layout===state.layout);b.setAttribute("aria-pressed",String(b.dataset.layout===state.layout));});}
+
+function syncFormToState(){
+  for(const element of form.elements){
+    if(element.name)element.value=state.filters[element.name]||"";
+  }
+}
+
+function applyRoute(route){
+  if(!route)return;
+  state.filters=route.filters&&typeof route.filters==="object"?{...route.filters}:{};
+  if(route.layout)state.layout=route.layout;
+  state.offset=0;
+  syncFormToState();
+  save();
+  loadGlobals();
+  render();
+}
 
 async function openDetail(x){
   document.querySelector("#detail-content").innerHTML='<div class="panel-state">Loading rich detail.</div>';dialog.showModal();
@@ -146,34 +216,32 @@ async function loadGlobals() {
 // ----------------------------------------------------
 
 async function renderOverview() {
-  const [overview, health, prompts, audit] = await Promise.allSettled([
+  const [overview, health, audit] = await Promise.allSettled([
     fetchJson("/api/dashboard/overview?" + query()),
     fetch("/api/health").then(r => r.json()),
-    fetchJson("/api/dashboard/prompts"),
     fetchJson("/api/audit?days=7")
   ]);
-  
+
   if (overview.status === "rejected") throw overview.reason;
   const d = overview.value;
-  const pList = prompts.status === "fulfilled" ? (Array.isArray(prompts.value) ? prompts.value : prompts.value?.prompts || prompts.value?.data || []) : [];
   const auditList = audit.status === "fulfilled" ? (Array.isArray(audit.value) ? audit.value : audit.value?.audit || audit.value?.data || []) : [];
-  const userLookup = new Map((d.users || []).map(u => [String(u.id), u.display_name || u.displayName || u.plex_username || String(u.id)]));
-  
+
   const healthData = health.status === "fulfilled" ? health.value : null;
   const readiness = healthData?.readiness || {};
   const readinessEntries = Object.entries(readiness);
   const healthSummary = healthData
     ? `${readinessEntries.filter(([, v]) => v.status === "healthy").length}/${readinessEntries.length || 0} healthy`
     : "Health unavailable";
+  const currentWindow = d.windows?.overview || "Visible activity window";
 
-  const atAGlanceHtml = `
-    <div class="glance-grid">
-      <article class="glance-card"><strong>${esc(d.totals.plays)}</strong><span>Total plays</span></article>
-      <article class="glance-card"><strong>${esc(d.totals.people)}</strong><span>Active users</span></article>
-      <article class="glance-card"><strong>${esc(Math.round((d.totals.minutes || 0) / 60))}</strong><span>Hours watched</span></article>
-      <article class="glance-card"><strong>${esc(d.totals.pendingPrompts)}</strong><span>Pending prompts</span></article>
-    </div>
-  `;
+  const summaryHtml = (d.summaryStrip || []).map(item => `
+    <button class="overview-summary-card" data-route="${encodeRoute({layout:"explorer",filters:{...state.filters,category:item.category}})}">
+      <span class="overview-summary-label">${esc(item.label)}</span>
+      <strong>${esc(fmtHourValue(item.minutes))}</strong>
+      <span class="overview-summary-meta">${esc(item.plays)} plays</span>
+      ${item.deltaMinutes == null ? `<span class="overview-summary-delta muted">No prior comparable window</span>` : `<span class="overview-summary-delta ${item.deltaMinutes === 0 ? "muted" : item.deltaMinutes > 0 ? "up" : "down"}">${esc(deltaText(item.deltaMinutes))} vs prior window</span>`}
+    </button>
+  `).join("");
 
   const recentSyncHtml = auditList.length > 0
     ? `<div class="feed-list">${auditList.slice(0, 5).map(entry => {
@@ -189,94 +257,140 @@ async function renderOverview() {
     ? `<div class="health-mini-grid">${readinessEntries.map(([k, v]) => `<article class="health-mini-card status-${esc(v.status)}"><strong>${esc(k)}</strong><p>${esc(v.message)}</p></article>`).join("")}</div>`
     : '<div class="panel-state"><p>Watch health is unavailable.</p></div>';
 
-  const notificationsHtml = pList.length > 0
-    ? `<div class="feed-list">${pList.slice(0, 5).map(entry => {
-        const person = userLookup.get(String(entry.source_user_id)) || entry.plex_username || entry.username || "Household member";
-        const title = entry.title || entry.show_title || entry.rating_key || "Prompt";
-        const status = String(entry.prompt_status || "pending");
-        return `<article class="feed-row"><div><strong>${esc(title)}</strong><p>${esc(person)} · ${fmtDate(entry.watched_at)}</p></div><span class="audit-pill status-${esc(status)}">${esc(status)}</span></article>`;
-      }).join("")}</div>`
-    : '<div class="panel-state"><p>No notifications waiting.</p></div>';
-    
-  // Recently Active Media Carousel
-  const cwHtml = d.continueWatching && d.continueWatching.length > 0 
-    ? '<div class="cw-carousel">' + d.continueWatching.map(cw => '<article class="cw-card" tabindex="0" data-item="' + encodeURIComponent(JSON.stringify(cw)) + '">' + cardArt(cw) + '<div class="cw-bar"><i style="width:'+esc(cw.percentComplete||0)+'%"></i></div><p>' + esc(cw.displayTitle || cw.title || "") + '</p></article>').join("") + '</div>'
-    : '<p class="text-muted">No active media in progress.</p>';
+  const recentPlaybackItems = Array.isArray(d.activity?.items) ? d.activity.items.slice(0, 18) : [];
+  const cwHtml = recentPlaybackItems.length
+    ? `<div class="cw-carousel cw-carousel-overview">${recentPlaybackItems.map(cw => `
+        <article class="cw-card" tabindex="0" data-item="${encodeURIComponent(JSON.stringify(cw))}">
+          ${cardArt(cw)}
+          <div class="cw-bar"><i style="width:${esc(cw.percentComplete ?? 0)}%"></i></div>
+          <p>${esc(cw.displayTitle || cw.title || '')}</p>
+          <span class="cw-meta">${esc(cw.displayName)} · ${fmtDate(cw.watchedAt)}</span>
+        </article>
+      `).join("")}</div>`
+    : '<div class="panel-state compact"><p>No recent playback to show right now.</p></div>';
+  const completedHtml = (d.recentlyCompleted || []).length
+    ? `<div class="overview-completed-list">${d.recentlyCompleted.map(item => `
+        <button class="overview-completed-row" data-item="${encodeURIComponent(JSON.stringify(item))}">
+          ${art(item)}
+          <div>
+            <strong>${esc(item.displayTitle || item.title)}</strong>
+            <p>${esc(item.displayName)} · ${fmtDate(item.watchedAt)}</p>
+          </div>
+        </button>
+      `).join("")}</div>`
+    : '<div class="panel-state compact"><p>No completed titles landed in this visible window.</p></div>';
+  const mixHtml = (d.categoryMix || []).length
+    ? `<div class="overview-mix-grid">${d.categoryMix.map(item => `
+        <button class="overview-mix-card" data-route="${encodeRoute({layout:"explorer",filters:{...state.filters,category:item.category}})}" data-cat="${esc(item.category)}">
+          <span>${esc(categoryLabel(item.category))}</span>
+          <strong>${esc(fmtHourValue(item.durationMinutes))}</strong>
+          <small>${esc(item.plays)} plays · ${esc(item.completionRate)}% complete</small>
+        </button>
+      `).join("")}</div>`
+    : '<div class="panel-state compact"><p>Category mix will appear once visible household activity exists.</p></div>';
+  const activityHtml = (d.householdActivity || []).length
+    ? `<div class="overview-people-list">${d.householdActivity.map(person => `
+        <button class="overview-person-row" data-route="${encodeRoute({layout:"timeline",filters:{...state.filters,user:person.plexUsername}})}">
+          <div class="overview-person-avatar">${esc((person.displayName || '?').slice(0,1).toUpperCase())}</div>
+          <div class="overview-person-copy">
+            <strong>${esc(person.displayName)}</strong>
+            <p>${esc(fmtHourValue(person.minutes))} · ${esc(person.completed)} completed · ${esc(person.inProgress)} in progress</p>
+            <p class="muted">Latest: ${esc(person.latestItemTitle)} · ${fmtDate(person.latestWatchedAt)}</p>
+          </div>
+          <span class="overview-person-tag">${esc(categoryLabel(person.topCategory || 'movie'))}</span>
+        </button>
+      `).join("")}</div>`
+    : '<div class="panel-state compact"><p>No visible household activity in this window.</p></div>';
+  const attentionHtml = (d.needsAttention || []).length
+    ? `<div class="overview-attention-list">${d.needsAttention.map(item => `
+        <button class="overview-attention-row ${toneClass(item.status)}" data-route="${encodeRoute(item.route)}">
+          <div class="overview-attention-copy">
+            <strong>${esc(attentionHeading(item))}</strong>
+            <p>${esc(attentionDetail(item))}</p>
+          </div>
+          <span class="overview-attention-status">${esc(attentionStatusLabel(item))}</span>
+        </button>
+      `).join("")}</div>`
+    : '<div class="panel-state compact"><p>Nothing needs fixing right now.</p></div>';
 
-  content.innerHTML = `
-    <section class="dashboard-grid">
-      <div class="dashboard-panel panel-wide">
-        <div class="panel-title"><h3>Recently Enjoyed (In Progress)</h3></div>
-        ${cwHtml}
-        
-        <div class="panel-title" style="margin-top: 2rem;"><h3>Category Breakdown</h3></div>
-        <div class="category-stats-grid">
-          ${d.categoryStats.map(s => `
-            <div class="stat-card" data-cat="${s.category}">
-              <h4>${esc(s.category.replace('_',' ').toUpperCase())}</h4>
-              <div class="stat-main">
-                <div class="ring" style="--val: ${s.completionRate}%;"><span class="ring-val">${s.completionRate}%</span><br><small>Fin.</small></div>
-                <div class="stat-val"><strong>${s.durationHours}</strong><br>Hours</div>
-                <div class="stat-val"><strong>${s.plays}</strong><br>Plays</div>
-              </div>
-              <div class="top-titles-list">
-                ${(d.topTitles[s.category]||[]).map(t => `<div class="top-title-row"><span>${esc(t.title)}</span><small>${Math.round(t.duration/3600000)}h</small></div>`).join('')}
-              </div>
-            </div>
-          `).join('')}
+  setSidebarOverview(`
+    <div class="sidebar-section sidebar-overview-stack">
+      <div class="dashboard-panel overview-ops-panel">
+        <div class="panel-title"><h3>Operations</h3><span>${esc(healthSummary)}</span></div>
+        <div class="overview-ops-grid">
+          <article class="glance-card"><strong>${esc(fmtHourValue(d.totals.minutes || 0))}</strong><span>Visible time</span></article>
+          <article class="glance-card"><strong>${esc(d.totals.people)}</strong><span>Active people</span></article>
+          <article class="glance-card"><strong>${esc(d.needsAttention?.length || 0)}</strong><span>Open issues</span></article>
+          <article class="glance-card"><strong>${esc(d.totals.pendingPrompts)}</strong><span>Pending prompts</span></article>
         </div>
       </div>
-      
-      <aside class="dashboard-stack">
-        <details class="dashboard-collapsible" open>
-          <summary>
-            <div class="collapsible-copy">
-              <h3>At a Glance</h3>
-              <span>Fast household summary</span>
-            </div>
-            <span class="collapsible-meta">${esc(d.totals.pendingPrompts)} pending</span>
-          </summary>
-          <div class="dashboard-collapsible-body">
-            ${atAGlanceHtml}
+      <details class="dashboard-collapsible" open>
+        <summary>
+          <div class="collapsible-copy">
+            <h3>Readiness Details</h3>
+            <span>${esc(healthSummary)}</span>
           </div>
-        </details>
-        <details class="dashboard-collapsible">
-          <summary>
-            <div class="collapsible-copy">
-              <h3>Recent Sync Activity</h3>
-              <span>Latest audit trail entries</span>
-            </div>
-            <span class="collapsible-meta">${esc(auditList.length)} events</span>
-          </summary>
-          <div class="dashboard-collapsible-body">
-            ${recentSyncHtml}
+          <span class="collapsible-meta">${esc(Object.values(readiness).filter(v => v.status === 'healthy').length)} healthy</span>
+        </summary>
+        <div class="dashboard-collapsible-body">
+          ${watchHealthHtml}
+        </div>
+      </details>
+      <details class="dashboard-collapsible">
+        <summary>
+          <div class="collapsible-copy">
+            <h3>Recent Sync Activity</h3>
+            <span>Latest audit trail entries</span>
           </div>
-        </details>
-        <details class="dashboard-collapsible">
-          <summary>
-            <div class="collapsible-copy">
-              <h3>Watch Health</h3>
-              <span>${esc(healthSummary)}</span>
-            </div>
-            <span class="collapsible-meta">${esc(Object.values(readiness).filter(v => v.status === "healthy").length)} healthy</span>
-          </summary>
-          <div class="dashboard-collapsible-body">
-            ${watchHealthHtml}
-          </div>
-        </details>
-        <details class="dashboard-collapsible"${pList.length > 0 ? " open" : ""}>
-          <summary>
-            <div class="collapsible-copy">
-              <h3>Notifications</h3>
-              <span>Pending prompts and follow-ups</span>
-            </div>
-            <span class="collapsible-meta">${esc(pList.length)} items</span>
-          </summary>
-          <div class="dashboard-collapsible-body">
-            ${notificationsHtml}
-          </div>
-        </details>
-      </aside>
+          <span class="collapsible-meta">${esc(auditList.length)} events</span>
+        </summary>
+        <div class="dashboard-collapsible-body">
+          ${recentSyncHtml}
+        </div>
+      </details>
+    </div>
+  `);
+
+  content.innerHTML = `
+    <section class="overview-main-stack">
+      <section class="dashboard-panel">
+        <div class="panel-title"><h3>Recent Playback</h3><span>${esc(d.windows?.overview || 'Latest household watch history')}</span></div>
+        ${cwHtml}
+      </section>
+
+      <section class="dashboard-panel overview-summary-panel">
+        <div class="panel-title"><h3>Household Overview</h3><span>${esc(currentWindow)}</span></div>
+        <div class="overview-summary-grid">
+          <article class="overview-lead-card">
+            <span class="overview-lead-label">Consumed time</span>
+            <strong>${esc(fmtHourValue(d.totals.minutes || 0))}</strong>
+            <p>${esc(d.totals.plays)} plays across ${esc(d.totals.people)} visible people</p>
+          </article>
+          ${summaryHtml}
+        </div>
+      </section>
+
+      <section class="overview-grid-two">
+        <div class="dashboard-panel">
+          <div class="panel-title"><h3>Recently Completed</h3><span>${esc(d.windows?.recentlyCompleted || currentWindow)}</span></div>
+          ${completedHtml}
+        </div>
+        <div class="dashboard-panel">
+          <div class="panel-title"><h3>Needs Fixing</h3><span>${esc(d.windows?.needsAttention || 'Things blocking clean watch history')}</span></div>
+          ${attentionHtml}
+        </div>
+      </section>
+
+      <section class="overview-grid-two">
+        <div class="dashboard-panel">
+          <div class="panel-title"><h3>Category Mix</h3><span>${esc(d.windows?.categoryMix || currentWindow)}</span></div>
+          ${mixHtml}
+        </div>
+        <div class="dashboard-panel">
+          <div class="panel-title"><h3>Household Activity</h3><span>${esc(d.windows?.householdActivity || currentWindow)}</span></div>
+          ${activityHtml}
+        </div>
+      </section>
     </section>
   `;
 }
@@ -345,7 +459,7 @@ async function renderTimeline() {
         
         const catColor = {"movie":"var(--accent-movie)","tv":"var(--accent-tv)","classic_tv":"var(--accent-classic)","anime":"var(--accent-anime)","audiobook":"var(--accent-audiobook)"}[item.category] || "#95a5a6";
         
-        return `<div class="gantt-block" style="left: ${left}%; width: max(6px, ${width}%); background: ${catColor};" title="${esc(item.displayName)} · ${esc(item.itemCount)} items" tabindex="0"></div>`;
+        return `<div class="gantt-block" style="left: ${left}%; width: max(6px, ${width}%); background: ${catColor};" title="${esc(item.displayName)} Â· ${esc(item.itemCount)} items" tabindex="0"></div>`;
       }).join("");
       return `<div class="gantt-lane"><div class="gantt-user">${esc(user)}</div><div class="gantt-track">${blocks}</div></div>`;
     }).join("");
@@ -507,6 +621,7 @@ function populateOptions(d){const user=form.elements.user,lib=form.elements.libr
 
 async function render(){
   setButtons();
+  setSidebarOverview("");
   content.innerHTML='<div class="panel-state">Loading '+esc(state.layout)+'...</div>';
   const targetHash="#"+state.layout+"?"+query();
   if(location.hash!==targetHash)history.pushState({layout:state.layout,filters:state.filters},"",targetHash);
@@ -562,6 +677,11 @@ form.addEventListener("reset",()=>setTimeout(()=>{
 content.addEventListener("click",async e=>{
   const item=e.target.closest("[data-item]");
   if(item)return openDetail(JSON.parse(decodeURIComponent(item.dataset.item)));
+  const routeButton=e.target.closest("[data-route]");
+  if(routeButton){
+    applyRoute(JSON.parse(decodeURIComponent(routeButton.dataset.route)));
+    return;
+  }
   const page=e.target.closest("[data-page]");
   if(page){
     state.offset=Math.max(0,state.offset+(page.dataset.page==="next"?50:-50));
@@ -610,16 +730,15 @@ window.addEventListener("popstate",e=>{
   if(layouts.has(h)){
     state.layout=h;
     state.filters=e.state?.filters||state.filters;
-    for(const element of form.elements){
-      if(element.name)element.value=state.filters[element.name]||"";
-    }
+    syncFormToState();
     render();
   }
 });
 
-Object.entries(state.filters).forEach(([k,v])=>{if(form.elements[k])form.elements[k].value=v;});
+syncFormToState();
 const hash=location.hash.slice(1).split("?")[0];
 if(layouts.has(hash))state.layout=hash;
 
 loadGlobals();
 render();
+
