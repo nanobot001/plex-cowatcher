@@ -31,8 +31,6 @@ export function registerWebRoutes(router: Router): void {
             <div id="stat-ribbon" class="stat-ribbon"></div>
           </header>
           <form id="dashboard-filters" class="dashboard-filters">
-            <input type="search" name="search" placeholder="Search title...">
-            <select name="user"><option value="">All Users</option></select>
             <select name="category">
               <option value="">All Categories</option>
               <option value="movie">Movies</option>
@@ -41,6 +39,8 @@ export function registerWebRoutes(router: Router): void {
               <option value="anime">Anime</option>
               <option value="audiobook">Audiobooks</option>
             </select>
+            <select name="user"><option value="">All Users</option></select>
+            <input type="search" name="search" placeholder="Search title...">
             <button type="submit" class="btn">Apply</button>
             <a id="csv-export" href="/api/dashboard/export.csv" class="btn" download>CSV</a>
           </form>

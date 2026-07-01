@@ -1576,6 +1576,45 @@ test("dashboard service returns bounded mixed-media data and honest progress", (
   });
 });
 
+test("dashboard overview normalizes seconds-based durations from playback observations", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const users = db.prepare("SELECT id, plex_username FROM users WHERE enabled = 1 ORDER BY id").all();
+    const insert = db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+    const now = new Date().toISOString();
+    insert.run(users[0].id, "movie-seconds", "movie", "Movies", "Moonrise", null, now, 100, 7200, 1, now, now);
+    insert.run(users[1].id, "anime-seconds", "episode", "Anime", "Episode 1", "Skyward", now, 73, 1500, 0, now, now);
+    const overview = new DashboardService(db).getOverview({});
+
+    assert.equal(overview.totals.minutes, 145);
+    assert.equal(overview.categoryMix.find(x => x.category === "movie").durationMinutes, 120);
+    assert.equal(overview.categoryMix.find(x => x.category === "anime").durationMinutes, 25);
+  });
+});
+
+test("dashboard overview groups near-simultaneous co-watch cards by shared title", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const users = db.prepare("SELECT id, plex_username FROM users WHERE plex_username IN ('Tony', 'Viewer') ORDER BY plex_username").all();
+    const now = new Date();
+    const insert = db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+    const firstAt = now.toISOString();
+    const secondAt = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
+    insert.run(users[0].id, "cowatch-1", "movie", "Movies", "Moonrise", null, firstAt, 100, 7200, 1, firstAt, firstAt);
+    insert.run(users[1].id, "cowatch-1", "movie", "Movies", "Moonrise", null, secondAt, 100, 7200, 1, secondAt, secondAt);
+    const overview = new DashboardService(db).getOverview({});
+
+    assert.equal(overview.recentPlayback.length, 1);
+    assert.match(overview.recentPlayback[0].displayName, /\+/);
+    assert.match(overview.recentPlayback[0].displayName, /Tony/);
+    assert.match(overview.recentPlayback[0].displayName, /Viewer/);
+  });
+});
+
 test("dashboard preferences survive identity resyncs and drive dashboard visibility", () => {
   withTestDb((db) => {
     seedUsers(db);
@@ -1812,6 +1851,8 @@ test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed promp
       const page = await (await fetch(base+"/")).text();
       assert.match(page,/Everything everyone is enjoying/);
       assert.match(page,/dashboard\.js/);
+      assert.ok(page.indexOf('name="category"') < page.indexOf('name="user"'));
+      assert.ok(page.indexOf('name="user"') < page.indexOf('name="search"'));
       const copyPage = await (await fetch(base+"/copy")).text();
       assert.match(copyPage,/api\/dashboard\/users/);
       assert.match(copyPage,/<th>Select<\/th>/);
@@ -1866,8 +1907,8 @@ test("dashboard timeline uses bounded windows and summary endpoints stay sampled
     assert.equal(timeline.windowDays, 7);
     assert.equal(timeline.items.length <= 1000, true);
     assert.equal(typeof timeline.timingMs, "number");
-    assert.equal(overview.activity.limit, 24);
-    assert.equal(overview.activity.items.length <= 24, true);
+    assert.equal(overview.activity.limit, 48);
+    assert.equal(overview.activity.items.length <= 48, true);
     assert.equal(typeof overview.windows.overview, "string");
     assert.equal(typeof overview.timingMs, "number");
   });

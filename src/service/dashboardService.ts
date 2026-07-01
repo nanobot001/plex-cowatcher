@@ -132,12 +132,26 @@ function addDays(value: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+function normalizeDurationSeconds(duration?: number): number {
+  const value = Number(duration ?? 0);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return value > 100000 ? value / 1000 : value;
+}
+
 function minutesFromDuration(duration?: number): number {
-  return Math.round((duration ?? 0) / 60000);
+  return Math.round(normalizeDurationSeconds(duration) / 60);
 }
 
 function hoursFromDuration(duration?: number): number {
-  return Math.round((duration ?? 0) / 3600000);
+  return Math.round(normalizeDurationSeconds(duration) / 3600);
+}
+
+function minutesFromSeconds(seconds?: number): number {
+  return Math.round((seconds ?? 0) / 60);
+}
+
+function hoursFromSeconds(seconds?: number): number {
+  return Math.round((seconds ?? 0) / 3600);
 }
 
 function buildWindowLabel(start: string | null, end: string | null): string {
@@ -208,7 +222,7 @@ export class DashboardService {
   getOverview(input: unknown) {
     const timed = withTiming(() => {
       const filters = parseFilters(input);
-      const baseActivity = this.getActivity({ ...(input as object), limit: 24, offset: 0 });
+      const baseActivity = this.getActivity({ ...(input as object), limit: 48, offset: 0 });
       const all = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0 }).items;
       const users = this.db.prepare(`
         SELECT
@@ -248,14 +262,14 @@ export class DashboardService {
         const cat = item.category;
         const stat = categoryStats.get(cat) ?? { category: cat, plays: 0, duration: 0, completed: 0 };
         stat.plays++;
-        stat.duration += item.duration ?? 0;
+        stat.duration += normalizeDurationSeconds(item.duration);
         if (item.completed) stat.completed++;
         categoryStats.set(cat, stat);
 
         if (isRecognizedExplorerItem(item)) {
           const key = explorerGroupKey(item);
           const titleStat = topTitlesMap.get(key) ?? { category: cat, title: explorerTitle(item), duration: 0, lastActivityAt: item.watchedAt };
-          titleStat.duration += item.duration ?? 0;
+          titleStat.duration += normalizeDurationSeconds(item.duration);
           if (item.watchedAt > titleStat.lastActivityAt) titleStat.lastActivityAt = item.watchedAt;
           topTitlesMap.set(key, titleStat);
         }
@@ -305,8 +319,8 @@ export class DashboardService {
 
       const statsList = [...categoryStats.values()].map((s) => ({
         ...s,
-        durationHours: hoursFromDuration(s.duration),
-        durationMinutes: minutesFromDuration(s.duration),
+        durationHours: hoursFromSeconds(s.duration),
+        durationMinutes: minutesFromSeconds(s.duration),
         completionRate: s.plays > 0 ? Math.round((s.completed / s.plays) * 100) : 0
       }));
 
@@ -340,13 +354,14 @@ export class DashboardService {
                 : category === "anime"
                   ? "Anime"
                   : "Audiobooks",
-          minutes: Math.round((stat?.duration ?? 0) / 60000),
+          minutes: minutesFromSeconds(stat?.duration ?? 0),
           plays: stat?.plays ?? 0,
           completed: stat?.completed ?? 0,
           deltaMinutes
         };
       });
 
+      const recentPlayback = this.buildRecentPlaybackCards(all, 24);
       const householdActivity = [...householdActivityMap.values()]
         .map((item) => ({
           ...item,
@@ -363,7 +378,8 @@ export class DashboardService {
       const comparableWindowLabel = buildWindowLabel(currentWindow.start, currentWindow.end);
       return {
         activity: baseActivity,
-        totals: { plays: baseActivity.total, people: new Set(all.map((item) => item.userId)).size, minutes: Math.round(all.reduce((minutes, item) => minutes + (item.duration ?? 0), 0) / 60000), pendingPrompts: Number(pending.count) },
+        recentPlayback,
+        totals: { plays: baseActivity.total, people: new Set(all.map((item) => item.userId)).size, minutes: minutesFromSeconds(all.reduce((minutes, item) => minutes + normalizeDurationSeconds(item.duration), 0)), pendingPrompts: Number(pending.count) },
         categories: [...categoryStats.values()].map(s => ({ category: s.category, count: s.plays })),
         users,
         libraries: [...new Set(all.map((item) => item.libraryName).filter(Boolean))].sort(),
@@ -648,7 +664,7 @@ export class DashboardService {
         WHERE COALESCE(dashboard_shown, enabled) = 1
         ORDER BY COALESCE(NULLIF(dashboard_alias, ''), plex_username), id
       `).all() as any[];
-      return users.map((user) => { const items = all.filter((item) => item.userId === user.id); return { ...user, plays: items.length, minutes: Math.round(items.reduce((minutes, item) => minutes + (item.duration ?? 0), 0) / 60000), recent: items.slice(0, 5), mix: Object.entries(items.reduce<Record<string, number>>((accumulator, item) => { accumulator[item.category] = (accumulator[item.category] ?? 0) + 1; return accumulator; }, {})).map(([category, count]) => ({ category, count })) }; });
+      return users.map((user) => { const items = all.filter((item) => item.userId === user.id); return { ...user, plays: items.length, minutes: minutesFromSeconds(items.reduce((minutes, item) => minutes + normalizeDurationSeconds(item.duration), 0)), recent: items.slice(0, 5), mix: Object.entries(items.reduce<Record<string, number>>((accumulator, item) => { accumulator[item.category] = (accumulator[item.category] ?? 0) + 1; return accumulator; }, {})).map(([category, count]) => ({ category, count })) }; });
     });
     return { people: timed.value, timingMs: timed.timingMs };
   }
@@ -727,7 +743,7 @@ export class DashboardService {
       const cat2 = deriveDashboardCategory(mediaType2, libraryName2).category;
       if (!isHouseholdCategory(cat1) || !isHouseholdCategory(cat2)) continue;
       
-      const duration = ev.target_duration ?? ev.source_duration ?? 0;
+      const duration = normalizeDurationSeconds(ev.target_duration ?? ev.source_duration ?? 0);
       
       const sorted = [cat1, cat2].sort();
       const key = sorted.join('+');
@@ -736,7 +752,7 @@ export class DashboardService {
       pairs.set(key, p);
     }
     const total = [...pairs.values()].reduce((sum, p) => sum + p.duration, 0);
-    return [...pairs.values()].map(p => ({ ...p, durationHours: Math.round(p.duration / 3600), percent: total > 0 ? Math.round((p.duration / total) * 100) : 0 })).sort((a,b) => b.durationHours - a.durationHours).slice(0, 4);
+    return [...pairs.values()].map(p => ({ ...p, durationHours: hoursFromSeconds(p.duration), percent: total > 0 ? Math.round((p.duration / total) * 100) : 0 })).sort((a,b) => b.durationHours - a.durationHours).slice(0, 4);
   }
 
   getProgress(input: unknown) {
@@ -881,5 +897,44 @@ export class DashboardService {
       ? (item.audiobookId != null ? `audiobook:${item.audiobookId}` : fallbackKey)
       : fallbackKey;
     return `/api/artwork/${encodeURIComponent(key)}`;
+  }
+
+  private buildRecentPlaybackCards(items: DashboardActivityItem[], limit: number): DashboardActivityItem[] {
+    const thresholdMs = 10 * 60 * 1000;
+    const groups = new Map<string, Array<DashboardActivityItem & { latestWatchedAtMs: number; displayNames: string[] }>>();
+
+    for (const item of items) {
+      if (!item.ratingKey || !item.watchedAt) continue;
+      const watchedAtMs = new Date(item.watchedAt).getTime();
+      if (!Number.isFinite(watchedAtMs)) continue;
+
+      const buckets = groups.get(item.ratingKey) ?? [];
+      let group = buckets.find((candidate) => Math.abs(candidate.latestWatchedAtMs - watchedAtMs) <= thresholdMs);
+      if (!group) {
+        group = {
+          ...item,
+          latestWatchedAtMs: watchedAtMs,
+          displayNames: item.displayName ? [item.displayName] : []
+        };
+        buckets.push(group);
+        groups.set(item.ratingKey, buckets);
+        continue;
+      }
+
+      if (item.displayName && !group.displayNames.includes(item.displayName)) {
+        group.displayNames.push(item.displayName);
+        group.displayName = group.displayNames.join(" + ");
+      }
+      if (watchedAtMs > group.latestWatchedAtMs) {
+        group.latestWatchedAtMs = watchedAtMs;
+        group.watchedAt = item.watchedAt;
+      }
+    }
+
+    return [...groups.values()]
+      .flat()
+      .sort((a, b) => b.latestWatchedAtMs - a.latestWatchedAtMs)
+      .slice(0, limit)
+      .map(({ latestWatchedAtMs, displayNames, ...rest }) => rest);
   }
 }

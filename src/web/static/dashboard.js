@@ -5,7 +5,16 @@ const form = document.querySelector("#dashboard-filters");
 const dialog = document.querySelector("#detail-dialog");
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmtDate = value => value ? new Intl.DateTimeFormat(undefined,{dateStyle:"medium",timeStyle:"short"}).format(new Date(value)) : "Unknown time";
-const fmtDuration = ms => ms ? Math.round(ms/60000)+" min" : "Duration unknown";
+const normalizeDurationSeconds = value => {
+  const raw = Number(value ?? 0);
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  return raw > 100000 ? raw / 1000 : raw;
+};
+const fmtDuration = value => {
+  if (value == null) return "Duration unknown";
+  const minutes = Math.round(normalizeDurationSeconds(value) / 60);
+  return minutes > 0 ? fmtHourValue(minutes) : "0m";
+};
 const safePrefs = () => { try { const v=JSON.parse(localStorage.getItem("cowatch.dashboard")||"{}"); return v&&typeof v==="object"?v:{}; } catch { return {}; } };
 const prefs=safePrefs(); state.layout=layouts.has(prefs.layout)?prefs.layout:"overview"; state.filters=prefs.filters&&typeof prefs.filters==="object"?prefs.filters:{};
 const save=()=>{try{localStorage.setItem("cowatch.dashboard",JSON.stringify({layout:state.layout,filters:state.filters}));}catch{}};
@@ -16,12 +25,42 @@ const art=x=>'<img class="poster" src="'+esc(x.artworkUrl)+'" alt="" loading="la
 const mediaTitle=x=>esc(x.displayTitle||x.title||x.showTitle||"");
 const mediaBadge=x=>x.displayName?'<span class="media-badge">'+esc(x.displayName)+'</span>':'';
 const cardArt=x=>'<div class="poster-frame">'+art(x)+mediaBadge(x)+'</div>';
+const groupRecentCards = items => {
+  const thresholdMs = 10 * 60 * 1000;
+  const groups = new Map();
+  for (const item of Array.isArray(items) ? items : []) {
+    if (!item || !item.ratingKey || !item.watchedAt) continue;
+    const watchedAtMs = new Date(item.watchedAt).getTime();
+    if (!Number.isFinite(watchedAtMs)) continue;
+    const buckets = groups.get(item.ratingKey) || [];
+    let group = buckets.find(candidate => Math.abs(candidate.latestWatchedAtMs - watchedAtMs) <= thresholdMs);
+    if (!group) {
+      group = {
+        ...item,
+        latestWatchedAtMs: watchedAtMs,
+        displayNames: item.displayName ? [item.displayName] : []
+      };
+      buckets.push(group);
+      groups.set(item.ratingKey, buckets);
+      continue;
+    }
+    if (item.displayName && !group.displayNames.includes(item.displayName)) {
+      group.displayNames.push(item.displayName);
+      group.displayName = group.displayNames.join(" + ");
+    }
+    if (watchedAtMs > group.latestWatchedAtMs) {
+      group.latestWatchedAtMs = watchedAtMs;
+      group.watchedAt = item.watchedAt;
+    }
+  }
+  return [...groups.values()].flat().sort((a, b) => b.latestWatchedAtMs - a.latestWatchedAtMs).map(({ latestWatchedAtMs, ...rest }) => rest);
+};
 const activityRow=x=>'<article class="activity-row" tabindex="0" data-item="'+encodeURIComponent(JSON.stringify(x))+'">'+art(x)+'<div class="activity-copy"><div class="activity-heading"><strong>'+mediaTitle(x)+'</strong><span>'+esc(x.categoryLabel)+'</span></div>'+(x.category==="audiobook"&&x.showTitle?'<p>By '+esc(x.showTitle)+'</p>':x.showTitle&&x.showTitle!==x.displayTitle?'<p>'+esc(x.title)+'</p>':'')+'<p>'+esc(x.displayName)+' &middot; '+fmtDate(x.watchedAt)+' &middot; '+fmtDuration(x.duration)+'</p>'+evidence(x)+'</div><div class="progress-ring">'+esc(x.percentComplete??"--")+'%</div></article>';
 const empty=label=>'<div class="panel-state"><h3>No '+esc(label)+' here yet</h3><p>Try broadening the filters. Missing evidence stays unknown.</p></div>';
 const encodeRoute=route=>encodeURIComponent(JSON.stringify(route));
 const fmtHourValue=minutes=>{
   const totalMinutes = Math.max(0, Number(minutes || 0));
-  if (totalMinutes === 0) return "0h";
+  if (totalMinutes === 0) return "0m";
   const hours = totalMinutes / 60;
   if (hours >= 10) return `${Math.round(hours).toLocaleString()}h`;
   if (hours >= 1) return `${hours.toFixed(1).replace(/\.0$/, "")}h`;
@@ -257,7 +296,7 @@ async function renderOverview() {
     ? `<div class="health-mini-grid">${readinessEntries.map(([k, v]) => `<article class="health-mini-card status-${esc(v.status)}"><strong>${esc(k)}</strong><p>${esc(v.message)}</p></article>`).join("")}</div>`
     : '<div class="panel-state"><p>Watch health is unavailable.</p></div>';
 
-  const recentPlaybackItems = Array.isArray(d.activity?.items) ? d.activity.items.slice(0, 18) : [];
+  const recentPlaybackItems = groupRecentCards(Array.isArray(d.recentPlayback) ? d.recentPlayback : Array.isArray(d.activity?.items) ? d.activity.items.slice(0, 24) : []);
   const cwHtml = recentPlaybackItems.length
     ? `<div class="cw-carousel cw-carousel-overview">${recentPlaybackItems.map(cw => `
         <article class="cw-card" tabindex="0" data-item="${encodeURIComponent(JSON.stringify(cw))}">
@@ -268,8 +307,9 @@ async function renderOverview() {
         </article>
       `).join("")}</div>`
     : '<div class="panel-state compact"><p>No recent playback to show right now.</p></div>';
-  const completedHtml = (d.recentlyCompleted || []).length
-    ? `<div class="overview-completed-list">${d.recentlyCompleted.map(item => `
+  const completedItems = groupRecentCards(d.recentlyCompleted || []);
+  const completedHtml = completedItems.length
+    ? `<div class="overview-completed-list">${completedItems.map(item => `
         <button class="overview-completed-row" data-item="${encodeURIComponent(JSON.stringify(item))}">
           ${art(item)}
           <div>
