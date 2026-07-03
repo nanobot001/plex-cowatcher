@@ -5,6 +5,7 @@
 - Added audiobook folder-path parsing, canonical `audiobook_books` linking, conservative Audnexus/Google enrichment, a dry-run-first resumable `project.audiobook_backfill` CLI workflow, and live rollout cleanup including Wheel of Time series normalization. (2026-06-28)
 - Refined the dashboard overview with collapsible summary cards, a desktop grid plus mobile carousel for in-progress media, and audiobook title normalization so `Cosmere Warbreaker` now displays as `Warbreaker`. (2026-06-30)
 - Polished the dashboard overview with reordered filters, corrected watched-time totals, and compact shared-watch badges that can show multiple people without crowding the cards. (2026-07-01)
+- Added the bounded Library category browser, corrected participant labels across cards and detail views, and introduced mandatory isolated Playwright regression and live dashboard verification gates for numbered blocks. (2026-07-03)
 
 ## [0.3.0] - 2026-06-27
 

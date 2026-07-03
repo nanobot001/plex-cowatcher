@@ -41,3 +41,4 @@ scratch/
 # Local tool state
 *.sqlite
 *.sqlite3
+*.sqlite-journal
