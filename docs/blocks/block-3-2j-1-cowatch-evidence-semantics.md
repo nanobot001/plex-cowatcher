@@ -1,7 +1,7 @@
 # Block 3-2j-1: Co-Watch Evidence Semantics
 
-> Status: Planned.
-> Result: Not implemented.
+> Status: Completed.
+> Result: Implemented and verified via verify:block.
 > Notes: Corrects the Phase 2 co-watch inference contract before rich detail and later dashboard work consume ambiguous relationship data.
 
 ## Goal

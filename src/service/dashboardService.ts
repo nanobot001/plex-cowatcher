@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Db } from "../db/database.js";
 import type { DashboardActivityItem, DashboardCategory, DashboardTimelineSession } from "../types/api.js";
+import { CowatchingIntelligenceService } from "./cowatchingIntelligenceService.js";
 
 const HOUSEHOLD_CATEGORIES = ["movie", "tv", "classic_tv", "anime", "audiobook"] as const;
 const SUMMARY_SAMPLE_LIMIT = 500;
@@ -201,7 +202,11 @@ export function deriveDashboardCategory(mediaType: string, libraryName?: string)
 }
 
 export class DashboardService {
-  constructor(private readonly db: Db) {}
+  private readonly cowatchingService: CowatchingIntelligenceService;
+
+  constructor(private readonly db: Db) {
+    this.cowatchingService = new CowatchingIntelligenceService(db);
+  }
 
   getActivity(input: unknown): { items: DashboardActivityItem[]; total: number; limit: number; offset: number } {
     const p = parseFilters(input);
@@ -225,7 +230,30 @@ export class DashboardService {
     const confirmedArgs = p.user ? [p.user] : [];
     const confirmedParticipantsSql = `(SELECT json_group_array(json_object('userId', confirmed_user.id, 'displayName', COALESCE(NULLIF(confirmed_user.dashboard_alias, ''), confirmed_user.plex_username))) FROM cowatch_confirmations confirmed JOIN users confirmed_user ON confirmed_user.id=confirmed.target_user_id WHERE confirmed.watch_event_id=we.id AND confirmed.status='confirmed' AND COALESCE(confirmed_user.dashboard_shown, confirmed_user.enabled)=1${confirmedUserFilter}) AS confirmed_participants_json`;
     const rows = this.db.prepare(`SELECT po.*,u.plex_username,u.display_name AS synced_display_name,u.dashboard_alias,u.dashboard_shown,we.prompt_status,cc.status confirmation_status,cc.plex_sync_status,cat.library_title AS catalog_library_title,groupcat.library_title AS group_catalog_library_title,cat.audiobook_id AS audiobook_id,ab.title AS audiobook_title,${confirmedParticipantsSql}${from}${where} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...confirmedArgs, ...args, p.limit, p.offset) as any[];
-    const items = rows.map((row) => this.mapActivity(row)).filter(Boolean) as DashboardActivityItem[];
+
+    const cowatchMap = new Map<number, { event: any; participant: any }>();
+    if (rows.length > 0) {
+      let minDate = rows[0].watched_at;
+      let maxDate = rows[0].watched_at;
+      for (const row of rows) {
+        if (row.watched_at < minDate) minDate = row.watched_at;
+        if (row.watched_at > maxDate) maxDate = row.watched_at;
+      }
+      const dateFrom = new Date(new Date(minDate).getTime() - 3 * 3600 * 1000).toISOString();
+      const dateTo = new Date(new Date(maxDate).getTime() + 3 * 3600 * 1000).toISOString();
+      const cowatchEvents = this.cowatchingService.getCowatchingEvents({ dateFrom, dateTo });
+      for (const ev of cowatchEvents) {
+        for (const part of ev.participants) {
+          if (part.supportingObservationIds) {
+            for (const obsId of part.supportingObservationIds) {
+              cowatchMap.set(obsId, { event: ev, participant: part });
+            }
+          }
+        }
+      }
+    }
+
+    const items = rows.map((row) => this.mapActivity(row, cowatchMap)).filter(Boolean) as DashboardActivityItem[];
     return { items, total, limit: p.limit, offset: p.offset };
   }
 
@@ -668,6 +696,15 @@ export class DashboardService {
     const timed = withTiming(() => {
       const p = parseFilters(input);
       const all = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0, sort: "recent" }).items;
+      
+      let allowedNames: Set<string> | null = null;
+      if (p.user) {
+        const u = this.db.prepare("SELECT dashboard_alias, plex_username FROM users WHERE plex_username = ?").get(p.user) as any;
+        if (u) {
+          allowedNames = new Set([u.dashboard_alias, u.plex_username].filter(Boolean));
+        }
+      }
+
       const groups = new Map<string, any>();
       for (const item of all) {
         if (!isRecognizedExplorerItem(item)) continue;
@@ -678,13 +715,17 @@ export class DashboardService {
           : (item.category === "tv" || item.category === "classic_tv" || item.category === "anime")
             ? item.grandparentRatingKey ?? item.ratingKey
             : item.ratingKey;
-        const group = groups.get(key) ?? { ...item, title, showTitle: undefined, displayTitle: title, groupKey: key, groupRatingKey, plays: 0, distinctItems: new Set<string>(), people: new Set<number>(), displayNames: new Set<string>(), latestWatchedAt: item.watchedAt, artworkUrl: this.resolveArtworkUrl(item, groupRatingKey) };
+        const group = groups.get(key) ?? { ...item, title, showTitle: undefined, displayTitle: title, groupKey: key, groupRatingKey, plays: 0, distinctItems: new Set<string>(), people: new Set<number>(), displayNames: new Set<string>(), latestWatchedAt: item.watchedAt, artworkUrl: this.resolveArtworkUrl(item, groupRatingKey), evidence: undefined };
       group.plays += 1;
       group.distinctItems.add(item.ratingKey);
       group.people.add(item.userId);
       for (const userId of item.confirmedUserIds ?? []) group.people.add(userId);
       for (const displayName of item.displayNames ?? [item.displayName]) {
-        if (displayName) group.displayNames.add(displayName);
+        if (displayName) {
+          if (!allowedNames || allowedNames.has(displayName)) {
+            group.displayNames.add(displayName);
+          }
+        }
       }
       if (item.watchedAt >= group.latestWatchedAt) {
         group.latestWatchedAt = item.watchedAt;
@@ -701,7 +742,7 @@ export class DashboardService {
           group.duration = item.duration;
           group.percentComplete = item.percentComplete;
           group.completed = item.completed;
-          group.evidence = item.evidence;
+          group.evidence = undefined;
           group.grandparentRatingKey = item.grandparentRatingKey;
           group.parentRatingKey = item.parentRatingKey;
           group.audiobookId = item.audiobookId;
@@ -919,16 +960,48 @@ export class DashboardService {
     return timed.value ? { ...timed.value, timingMs: timed.timingMs } : null;
   }
 
-  private mapActivity(row: any): DashboardActivityItem {
+  private mapActivity(row: any, cowatchMap?: Map<number, { event: any; participant: any }>): DashboardActivityItem {
     const libraryName = resolveLibraryName(row.library_name, row.catalog_library_title ?? row.group_catalog_library_title);
     const category = deriveDashboardCategory(row.media_type, libraryName);
     if (!isHouseholdCategory(category.category)) return null as any;
     const artworkKey = this.resolveArtworkKey(row, category.category);
     const displayName = resolveDashboardAlias(row.dashboard_alias, row.plex_username);
-    const confirmedParticipants = parseConfirmedParticipants(row.confirmed_participants_json);
-    const displayNames = [...new Set([displayName, ...confirmedParticipants.map((participant) => participant.displayName)])]
-      .filter(Boolean)
-      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+    
+    const cowatch = cowatchMap?.get(row.id);
+    let relationship = "watched_by";
+    if (cowatch) {
+      const hasConfirmed = cowatch.event.participants.some((p: any) => p.evidenceState === "confirmed");
+      const hasInferred = cowatch.event.participants.some((p: any) => p.evidenceState === "inferred");
+      if (hasConfirmed) {
+        relationship = "together";
+      } else if (hasInferred) {
+        relationship = "likely_together";
+      } else if (cowatch.event.participants.some((p: any) => p.evidenceState === "dismissed")) {
+        relationship = "none";
+      }
+    }
+
+    let displayNames: string[] = [];
+    let confirmedUserIds: number[] = [];
+    if (cowatch && (relationship === "together" || relationship === "likely_together")) {
+      const eventParts = cowatch.event.participants.filter((p: any) => {
+        if (p.userId === row.user_id) return true;
+        const u = this.db.prepare("SELECT dashboard_shown, enabled FROM users WHERE id = ?").get(p.userId) as any;
+        if (!u) return false;
+        const shown = u.dashboard_shown !== null ? u.dashboard_shown === 1 : u.enabled === 1;
+        if (!shown) return false;
+        return p.evidenceState === "confirmed" || p.evidenceState === "inferred" || p.role === "source";
+      });
+      displayNames = [...new Set<string>(eventParts.map((p: any) => String(p.displayName || "")))]
+        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+      confirmedUserIds = eventParts.filter((p: any) => p.evidenceState === "confirmed").map((p: any) => p.userId);
+    } else {
+      const confirmedParticipants = parseConfirmedParticipants(row.confirmed_participants_json);
+      displayNames = [...new Set([displayName, ...confirmedParticipants.map((participant) => participant.displayName)])]
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+      confirmedUserIds = confirmedParticipants.map((participant) => participant.userId);
+    }
     
     return { 
       id: row.id, 
@@ -936,7 +1009,7 @@ export class DashboardService {
       username: row.plex_username, 
       displayName,
       displayNames,
-      confirmedUserIds: confirmedParticipants.map((participant) => participant.userId),
+      confirmedUserIds,
       displayTitle: resolveDashboardDisplayTitle({
         category: category.category,
         title: row.title,
@@ -964,7 +1037,17 @@ export class DashboardService {
       episodeNumber: row.episode_number ?? undefined, 
         evidence: { 
           observed: true, 
-          confirmed: row.confirmation_status === "confirmed" || confirmedParticipants.length > 0,
+          confirmed: row.confirmation_status === "confirmed" || confirmedUserIds.length > 0 || Boolean(cowatch && cowatch.event.participants.some((p: any) => {
+            const u = this.db.prepare("SELECT dashboard_shown, enabled FROM users WHERE id = ?").get(p.userId) as any;
+            const shown = u ? (u.dashboard_shown !== null ? u.dashboard_shown === 1 : u.enabled === 1) : false;
+            return shown && p.evidenceState === "confirmed";
+          })),
+          relationship,
+          cowatchEventId: (relationship === "together" || relationship === "likely_together") ? (cowatch?.event.id ?? null) : null,
+          ruleVersion: cowatch?.event.ruleVersion ?? null,
+          timingRelationship: cowatch?.participant.timingRelationship ?? null,
+          reason: cowatch?.participant.reason ?? null,
+          confidence: cowatch?.participant.confidence ?? (relationship === "together" ? 1.0 : 0.0),
           promptStatus: row.prompt_status ?? null, 
           plexSyncStatus: row.plex_sync_status ?? null, 
           watchedAtProvenance: row.watched_at_provenance ?? "unknown", 
@@ -991,43 +1074,42 @@ export class DashboardService {
   }
 
   private buildRecentPlaybackCards(items: DashboardActivityItem[], limit: number): DashboardActivityItem[] {
-    const thresholdMs = 10 * 60 * 1000;
-    const groups = new Map<string, Array<DashboardActivityItem & { latestWatchedAtMs: number; displayNames: string[] }>>();
+    const groups = new Map<string, Array<DashboardActivityItem>>();
+    const result: DashboardActivityItem[] = [];
 
     for (const item of items) {
-      if (!item.ratingKey || !item.watchedAt) continue;
-      const watchedAtMs = new Date(item.watchedAt).getTime();
-      if (!Number.isFinite(watchedAtMs)) continue;
-
-      const buckets = groups.get(item.ratingKey) ?? [];
-      let group = buckets.find((candidate) => Math.abs(candidate.latestWatchedAtMs - watchedAtMs) <= thresholdMs);
-      if (!group) {
-        group = {
-          ...item,
-          latestWatchedAtMs: watchedAtMs,
-          displayNames: [...(item.displayNames ?? (item.displayName ? [item.displayName] : []))]
-        };
-        group.displayName = group.displayNames.join(" + ") || item.displayName;
-        buckets.push(group);
-        groups.set(item.ratingKey, buckets);
-        continue;
-      }
-
-      for (const displayName of item.displayNames ?? (item.displayName ? [item.displayName] : [])) {
-        if (!group.displayNames.includes(displayName)) group.displayNames.push(displayName);
-      }
-      group.displayNames.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-      group.displayName = group.displayNames.join(" + ");
-      if (watchedAtMs > group.latestWatchedAtMs) {
-        group.latestWatchedAtMs = watchedAtMs;
-        group.watchedAt = item.watchedAt;
+      const eventId = item.evidence?.cowatchEventId as string | null;
+      if (eventId) {
+        if (!groups.has(eventId)) {
+          groups.set(eventId, []);
+        }
+        groups.get(eventId)!.push(item);
+      } else {
+        result.push(item);
       }
     }
 
-    return [...groups.values()]
-      .flat()
-      .sort((a, b) => b.latestWatchedAtMs - a.latestWatchedAtMs)
-      .slice(0, limit)
-      .map(({ latestWatchedAtMs, displayNames, ...rest }) => ({ ...rest, displayNames }));
+    for (const [eventId, groupItems] of groups.entries()) {
+      groupItems.sort((a, b) => b.watchedAt.localeCompare(a.watchedAt));
+      const primary = groupItems[0];
+      const displayNames = [...new Set(groupItems.flatMap(it => it.displayNames ?? [it.displayName]))]
+        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+      const confirmedUserIds = [...new Set(groupItems.flatMap(it => it.confirmedUserIds ?? []))];
+      const relationship = groupItems.some(it => it.evidence?.relationship === "together") ? "together" : "likely_together";
+
+      const groupedItem: DashboardActivityItem = {
+        ...primary,
+        displayNames,
+        displayName: displayNames.join(" + "),
+        confirmedUserIds,
+        evidence: {
+          ...primary.evidence,
+          relationship
+        }
+      };
+      result.push(groupedItem);
+    }
+
+    return result.sort((a, b) => b.watchedAt.localeCompare(a.watchedAt)).slice(0, limit);
   }
 }

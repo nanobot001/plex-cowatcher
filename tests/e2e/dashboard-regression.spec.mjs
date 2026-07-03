@@ -2,7 +2,8 @@ import { test, expect } from "playwright/test";
 
 const watchedByNames = async (card) => {
   const label = await card.getByTestId("watched-by").getAttribute("aria-label");
-  return String(label || "").replace(/^Watched by /, "");
+  return String(label || "")
+    .replace(/^(Watched by|Together|Likely together) /, "");
 };
 
 const expectNoVisualOverflow = async (page) => {
@@ -38,8 +39,8 @@ test("participant evidence stays consistent from recent card to detail", async (
 
   const card = page.getByTestId("recent-playback-card").filter({ hasText: "Regression Show" }).first();
   await expect(card).toBeVisible();
-  await expect(card.getByTestId("viewer-badge")).toHaveAttribute("title", "Watched by Justin, Tony");
-  await expect(card.getByTestId("watched-by")).toHaveAttribute("aria-label", "Watched by Justin, Tony");
+  await expect(card.getByTestId("viewer-badge")).toHaveAttribute("title", "Together Justin, Tony");
+  await expect(card.getByTestId("watched-by")).toHaveAttribute("aria-label", "Together Justin, Tony");
   await expectBadgeRowsDoNotOverlap(card.getByTestId("viewer-badge"));
 
   const cardNames = await watchedByNames(card);

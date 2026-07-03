@@ -1137,6 +1137,61 @@ test("CowatchingIntelligenceService respects explicit Discord confirmations", as
   });
 });
 
+test("CowatchingIntelligenceService handles non-qualifying overlap, missing timing, and three-person fixtures", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+
+    const tonyId = db.prepare("SELECT id FROM users WHERE plex_username = 'Tony'").get().id;
+    const viewerId = db.prepare("SELECT id FROM users WHERE plex_username = 'Viewer'").get().id;
+
+    db.prepare(`
+      INSERT INTO users (
+        plex_username, plex_user_id, display_name, enabled, created_at, updated_at
+      ) VALUES ('user3', 'user3-id', 'User 3', 1, datetime('now'), datetime('now'))
+    `).run();
+    const user3Id = db.prepare("SELECT last_insert_rowid() as id").get().id;
+
+    // Tony watches at 11:00 (duration 3600 -> starts 10:00)
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, title, watched_at, completed, duration, created_at, updated_at
+      ) VALUES (?, 'movie-1', 'movie', 'Movie 1', '2026-05-30T11:00:00.000Z', 1, 3600, datetime('now'), datetime('now'))
+    `).run(tonyId);
+
+    // Viewer watches at 11:30 (starts 10:30, gap = 30m > 15m) -> non-qualifying
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, title, watched_at, completed, duration, created_at, updated_at
+      ) VALUES (?, 'movie-1', 'movie', 'Movie 1', '2026-05-30T11:30:00.000Z', 1, 3600, datetime('now'), datetime('now'))
+    `).run(viewerId);
+
+    // User 3 watches at 11:05 (duration 3600 -> starts 10:05, gap = 5m, overlap = 55m) -> qualifying!
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, title, watched_at, completed, duration, created_at, updated_at
+      ) VALUES (?, 'movie-1', 'movie', 'Movie 1', '2026-05-30T11:05:00.000Z', 1, 3600, datetime('now'), datetime('now'))
+    `).run(user3Id);
+
+    const service = new CowatchingIntelligenceService(db);
+    const events = service.getCowatchingEvents({ days: 100 });
+
+    // There should be 1 event (Tony & User 3). Viewer is not qualifying so they shouldn't be in the participants list.
+    assert.equal(events.length, 1);
+    const event = events[0];
+    
+    const tony = event.participants.find(p => p.userId === tonyId);
+    const viewer = event.participants.find(p => p.userId === viewerId);
+    const user3 = event.participants.find(p => p.userId === user3Id);
+
+    assert.ok(tony);
+    assert.ok(user3);
+    assert.ok(!viewer); // Viewer should be filtered out because they did not qualify
+
+    assert.equal(user3.evidenceState, "inferred");
+    assert.equal(user3.timingRelationship.startGapMinutes, 5);
+  });
+});
+
 test("Plex audiobook metadata extracts and unescapes the first Part file path", () => {
   const xml = '<Track title="Chapter"><Media><Part file="F:\\Audiobooks\\Tom &amp; Jerry\\Book\\01.mp3" /></Media></Track>';
   assert.equal(parsePartFilePath(xml), "F:\\Audiobooks\\Tom & Jerry\\Book\\01.mp3");

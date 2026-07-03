@@ -20,6 +20,10 @@ export interface CowatchingParticipant {
   confidence: number;
   supportingObservationIds?: number[];
   reason: string;
+  timingRelationship?: {
+    startGapMinutes: number;
+    overlapMinutes: number;
+  };
 }
 
 export interface CowatchingEvent {
@@ -82,7 +86,10 @@ export class CowatchingIntelligenceService {
 
     for (const [ratingKey, plays] of obsByRatingKey.entries()) {
       const playsWithIntervals = plays.map(obs => {
-        const durationSec = obs.duration ?? obs.viewOffset ?? 0;
+        let durationSec = obs.duration ?? obs.viewOffset ?? 0;
+        if (durationSec > 100000) {
+          durationSec = durationSec / 1000;
+        }
         const endTime = new Date(obs.watchedAt).getTime();
         const startTime = endTime - durationSec * 1000;
         return { obs, startTime, endTime };
@@ -128,7 +135,7 @@ export class CowatchingIntelligenceService {
           participantsMap.set(user.id, {
             userId: user.id,
             username: user.plex_username,
-            displayName: this.userService.findById(user.id)?.display_name || user.plex_username,
+            displayName: (this.userService.findById(user.id) as any)?.dashboard_alias || this.userService.findById(user.id)?.display_name || user.plex_username,
             role: "target",
             evidenceState: "none",
             confidence: 0.0,
@@ -169,11 +176,23 @@ export class CowatchingIntelligenceService {
               if (conf.status === "confirmed") {
                 userPart.evidenceState = "confirmed";
                 userPart.confidence = 1.0;
-                userPart.reason = "Explicitly confirmed via Discord prompt";
+                if (conf.confirmed_by_discord_user_id) {
+                  userPart.reason = `Confirmed by Discord user ${conf.confirmed_by_discord_user_id} via ${conf.confirmation_method || "prompt"}`;
+                } else if (conf.confirmation_method) {
+                  userPart.reason = `Household-confirmed via ${conf.confirmation_method}`;
+                } else {
+                  userPart.reason = "Explicitly confirmed via Discord prompt";
+                }
               } else if (conf.status === "dismissed") {
                 userPart.evidenceState = "dismissed";
                 userPart.confidence = 0.0;
-                userPart.reason = "Dismissed / explicitly denied via Discord prompt";
+                if (conf.confirmed_by_discord_user_id) {
+                  userPart.reason = `Denied by Discord user ${conf.confirmed_by_discord_user_id} via ${conf.confirmation_method || "prompt"}`;
+                } else if (conf.confirmation_method) {
+                  userPart.reason = `Household-denied via ${conf.confirmation_method}`;
+                } else {
+                  userPart.reason = "Dismissed / explicitly denied via Discord prompt";
+                }
               } else if (conf.plex_sync_status === "marked_watched" || conf.plex_sync_status === "already_watched") {
                 if (userPart.evidenceState === "none") {
                   userPart.reason = "Plex watched flag synchronized (does not prove co-watching)";
@@ -189,34 +208,82 @@ export class CowatchingIntelligenceService {
             if (play.obs.userId === sourceUserId) continue;
 
             const userPart = participantsMap.get(play.obs.userId);
-            if (userPart && userPart.evidenceState === "observed") {
-              const startGapMinutes = Math.abs(play.startTime - sourcePlay.startTime) / (60 * 1000);
-              
-              if (startGapMinutes <= maxStartGapMinutes) {
-                userPart.evidenceState = "inferred";
-                
-                if (startGapMinutes <= 5) {
-                  userPart.confidence = 0.85;
-                  userPart.reason = `Inferred co-watching: play started within ${Math.round(startGapMinutes)}m of source (Rule: 2.0-time-alignment)`;
-                } else if (startGapMinutes <= 10) {
-                  userPart.confidence = 0.65;
-                  userPart.reason = `Inferred co-watching: play started within ${Math.round(startGapMinutes)}m of source (Rule: 2.0-time-alignment)`;
+            if (userPart) {
+              if (userPart.evidenceState === "dismissed") {
+                continue;
+              }
+              if (userPart.evidenceState === "confirmed") {
+                continue;
+              }
+
+              if (userPart.evidenceState === "observed") {
+                let srcDurationSec = sourcePlay.obs.duration ?? sourcePlay.obs.viewOffset ?? 0;
+                let tgtDurationSec = play.obs.duration ?? play.obs.viewOffset ?? 0;
+                if (srcDurationSec > 100000) {
+                  srcDurationSec = srcDurationSec / 1000;
+                }
+                if (tgtDurationSec > 100000) {
+                  tgtDurationSec = tgtDurationSec / 1000;
+                }
+
+                const hasKnownTiming = srcDurationSec > 0 && tgtDurationSec > 0 &&
+                                       sourcePlay.obs.watchedAt && play.obs.watchedAt &&
+                                       !isNaN(Date.parse(sourcePlay.obs.watchedAt)) && !isNaN(Date.parse(play.obs.watchedAt));
+
+                if (!hasKnownTiming) {
+                  userPart.reason = `Observed playback at ${play.obs.watchedAt} but timing/duration is unknown (cannot infer co-watching)`;
+                  continue;
+                }
+
+                const srcStart = sourcePlay.startTime;
+                const srcEnd = sourcePlay.endTime;
+                const tgtStart = play.startTime;
+                const tgtEnd = play.endTime;
+
+                const startGapMinutes = Math.abs(tgtStart - srcStart) / (60 * 1000);
+                const overlapMs = Math.max(0, Math.min(srcEnd, tgtEnd) - Math.max(srcStart, tgtStart));
+                const overlapMinutes = overlapMs / (60 * 1000);
+
+                const srcDurationMinutes = (srcEnd - srcStart) / (60 * 1000);
+                const tgtDurationMinutes = (tgtEnd - tgtStart) / (60 * 1000);
+                const shorterIntervalMinutes = Math.min(srcDurationMinutes, tgtDurationMinutes);
+                const requiredOverlapMinutes = Math.min(10, 0.5 * shorterIntervalMinutes);
+
+                userPart.timingRelationship = {
+                  startGapMinutes,
+                  overlapMinutes
+                };
+
+                if (startGapMinutes <= maxStartGapMinutes && overlapMinutes >= requiredOverlapMinutes) {
+                  userPart.evidenceState = "inferred";
+                  
+                  if (startGapMinutes <= 5) {
+                    userPart.confidence = 0.85;
+                    userPart.reason = `Inferred co-watching: play started within ${Math.round(startGapMinutes)}m of source (Rule: 3.0-overlap-semantics)`;
+                  } else if (startGapMinutes <= 10) {
+                    userPart.confidence = 0.65;
+                    userPart.reason = `Inferred co-watching: play started within ${Math.round(startGapMinutes)}m of source (Rule: 3.0-overlap-semantics)`;
+                  } else {
+                    userPart.confidence = 0.45;
+                    userPart.reason = `Inferred co-watching (low confidence): play started within ${Math.round(startGapMinutes)}m of source (Rule: 3.0-overlap-semantics)`;
+                  }
                 } else {
-                  userPart.confidence = 0.45;
-                  userPart.reason = `Inferred co-watching (low confidence): play started within ${Math.round(startGapMinutes)}m of source (Rule: 2.0-time-alignment)`;
+                  userPart.reason = `Observed playback at ${play.obs.watchedAt} but does not meet co-watch alignment/overlap criteria (Rule: 3.0-overlap-semantics)`;
                 }
               }
             }
           }
         }
 
-        const participants = Array.from(participantsMap.values());
+        const participants = Array.from(participantsMap.values()).filter(p => 
+          p.userId === sourceUserId || ["confirmed", "inferred", "dismissed"].includes(p.evidenceState)
+        );
         
         const hasCoWatchers = participants.some(p => 
-          p.userId !== sourceUserId && ["confirmed", "inferred", "observed"].includes(p.evidenceState)
+          p.userId !== sourceUserId && ["confirmed", "inferred"].includes(p.evidenceState)
         );
 
-        if (hasCoWatchers || cluster.length > 1) {
+        if (hasCoWatchers) {
           const latestPlay = cluster[cluster.length - 1].obs;
           events.push({
             id: `cowatch-${ratingKey}-${firstPlay.startTime}`,
@@ -228,7 +295,7 @@ export class CowatchingIntelligenceService {
             episodeNumber: latestPlay.episodeNumber,
             watchedAt: new Date(firstPlay.startTime).toISOString(),
             participants,
-            ruleVersion: "2.0-time-alignment"
+            ruleVersion: "3.0-overlap-semantics"
           });
         }
       }

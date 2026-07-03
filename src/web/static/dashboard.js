@@ -1,4 +1,4 @@
-﻿const layouts = new Set(["overview","timeline","explorer","people","progress"]);
+const layouts = new Set(["overview","timeline","explorer","people","progress"]);
 const state = { layout: "overview", filters: {}, offset: 0, totals: null, users: null, libraries: null, explorer: { section: "", sort: "recent", offset: 0, selected: "" } };
 const content = document.querySelector("#dashboard-content");
 const form = document.querySelector("#dashboard-filters");
@@ -32,8 +32,16 @@ const watchedBy=x=>{
   if(!names.length)return "";
   const visible=names.slice(0,2);
   const remaining=names.length-visible.length;
-  const full=`Watched by ${names.join(", ")}`;
-  return `<span class="library-watched-by" data-testid="watched-by" aria-label="${esc(full)}" title="${esc(full)}"><span class="library-watched-label">Watched by</span> ${visible.map(esc).join(", ")}${remaining?` <span class="library-watched-more">+${remaining} more</span>`:""}</span>`;
+  
+  let labelPrefix = "Watched by";
+  if (x.evidence && x.evidence.relationship === "together") {
+    labelPrefix = "Together";
+  } else if (x.evidence && x.evidence.relationship === "likely_together") {
+    labelPrefix = "Likely together";
+  }
+
+  const full=`${labelPrefix} ${names.join(", ")}`;
+  return `<span class="library-watched-by" data-testid="watched-by" aria-label="${esc(full)}" title="${esc(full)}"><span class="library-watched-label">${esc(labelPrefix)}</span> ${visible.map(esc).join(", ")}${remaining?` <span class="library-watched-more">+${remaining} more</span>`:""}</span>`;
 };
 const viewerBadge=x=>{
   const rawNames = Array.isArray(x.displayNames) && x.displayNames.length
@@ -43,7 +51,17 @@ const viewerBadge=x=>{
       : [];
   const names = [...new Set(rawNames)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   if (!names.length) return "";
-  const badgeAttrs = `aria-hidden="true" title="${esc(`Watched by ${names.join(", ")}`)}"`;
+  
+  let labelPrefix = "Watched by";
+  if (x.evidence && x.evidence.relationship === "together") {
+    labelPrefix = "Together";
+  } else if (x.evidence && x.evidence.relationship === "likely_together") {
+    labelPrefix = "Likely together";
+  }
+
+  const badgeAttrs = labelPrefix === "Watched by"
+    ? `aria-hidden="true" title="${esc(`Watched by ${names.join(", ")}`)}"`
+    : `aria-hidden="true" title="${esc(`${labelPrefix} ${names.join(", ")}`)}"`;
   if (names.length === 1) return `<span class="media-badge" data-testid="viewer-badge" ${badgeAttrs}>${esc(names[0])}</span>`;
   const visibleNames = names.slice(0, 2);
   const remaining = names.length - visibleNames.length;
@@ -52,38 +70,59 @@ const viewerBadge=x=>{
     return `<span class="${spanClass}">${index > 0 ? '<span class="media-badge-sep">+</span> ' : ""}${esc(name)}</span>`;
   }).join("");
   const more = remaining > 0 ? `<span class="media-badge-more">+${remaining} more</span>` : "";
-  return `<span class="media-badge media-badge--multi" data-testid="viewer-badge" ${badgeAttrs}>${badgeLabel}${more}</span>`;
+  
+  const multiClass = x.evidence && (x.evidence.relationship === "together" || x.evidence.relationship === "likely_together")
+    ? `media-badge--multi media-badge--${x.evidence.relationship.replace("_", "-")}`
+    : "media-badge--multi";
+
+  return `<span class="media-badge ${multiClass}" data-testid="viewer-badge" ${badgeAttrs}>${badgeLabel}${more}</span>`;
 };
 const groupRecentCards = items => {
-  const thresholdMs = 10 * 60 * 1000;
   const groups = new Map();
+  const result = [];
   for (const item of Array.isArray(items) ? items : []) {
-    if (!item || !item.ratingKey || !item.watchedAt) continue;
-    const watchedAtMs = new Date(item.watchedAt).getTime();
-    if (!Number.isFinite(watchedAtMs)) continue;
-    const buckets = groups.get(item.ratingKey) || [];
-    let group = buckets.find(candidate => Math.abs(candidate.latestWatchedAtMs - watchedAtMs) <= thresholdMs);
-    if (!group) {
-      group = {
+    if (!item) continue;
+    const eventId = item.evidence && item.evidence.cowatchEventId;
+    if (eventId) {
+      if (!groups.has(eventId)) {
+        groups.set(eventId, []);
+      }
+      groups.get(eventId).push(item);
+    } else {
+      result.push({
         ...item,
-        latestWatchedAtMs: watchedAtMs,
-        displayNames: Array.isArray(item.displayNames) && item.displayNames.length ? [...item.displayNames] : item.displayName ? [item.displayName] : []
-      };
-      buckets.push(group);
-      groups.set(item.ratingKey, buckets);
-      continue;
-    }
-    for (const displayName of Array.isArray(item.displayNames) && item.displayNames.length ? item.displayNames : item.displayName ? [item.displayName] : []) {
-      if (!group.displayNames.includes(displayName)) group.displayNames.push(displayName);
-    }
-    group.displayNames.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-    group.displayName = group.displayNames.join(" + ");
-    if (watchedAtMs > group.latestWatchedAtMs) {
-      group.latestWatchedAtMs = watchedAtMs;
-      group.watchedAt = item.watchedAt;
+        displayNames: Array.isArray(item.displayNames) && item.displayNames.length
+          ? [...item.displayNames]
+          : item.displayName
+            ? [item.displayName]
+            : []
+      });
     }
   }
-  return [...groups.values()].flat().sort((a, b) => b.latestWatchedAtMs - a.latestWatchedAtMs).map(({ latestWatchedAtMs, ...rest }) => rest);
+  for (const [eventId, groupItems] of groups.entries()) {
+    groupItems.sort((a, b) => new Date(b.watchedAt) - new Date(a.watchedAt));
+    const primary = groupItems[0];
+    const displayNames = [...new Set(groupItems.flatMap(it => 
+      Array.isArray(it.displayNames) && it.displayNames.length
+        ? it.displayNames
+        : it.displayName
+          ? [it.displayName]
+          : []
+    ))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+    
+    const relationship = groupItems.some(it => it.evidence && it.evidence.relationship === "together") ? "together" : "likely_together";
+    
+    result.push({
+      ...primary,
+      displayNames,
+      displayName: displayNames.join(" + "),
+      evidence: {
+        ...primary.evidence,
+        relationship
+      }
+    });
+  }
+  return result.sort((a, b) => new Date(b.watchedAt) - new Date(a.watchedAt));
 };
 const activityRow=x=>'<article class="activity-row" tabindex="0" data-item="'+encodeURIComponent(JSON.stringify(x))+'">'+art(x)+'<div class="activity-copy"><div class="activity-heading"><strong>'+mediaTitle(x)+'</strong><span>'+esc(x.categoryLabel)+'</span></div>'+(x.category==="audiobook"&&x.showTitle?'<p>By '+esc(x.showTitle)+'</p>':x.showTitle&&x.showTitle!==x.displayTitle?'<p>'+esc(x.title)+'</p>':'')+'<p>'+esc(x.displayName)+' &middot; '+fmtDate(x.watchedAt)+' &middot; '+fmtDuration(x.duration)+'</p>'+evidence(x)+'</div><div class="progress-ring">'+esc(x.percentComplete??"--")+'%</div></article>';
 const empty=label=>'<div class="panel-state"><h3>No '+esc(label)+' here yet</h3><p>Try broadening the filters. Missing evidence stays unknown.</p></div>';
