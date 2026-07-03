@@ -10,8 +10,9 @@ Replace the generic modal with a reusable detail workspace that explains hierarc
 
 ## Dependencies And Entry Gate
 
-- Blocks 3-2g through 3-2j complete.
+- Blocks 3-2g through 3-2j and Block 3-2j-1 complete.
 - The selected-title contract from 3-2j is stable and URL serializable.
+- `Watched by`, `Together`, and `Likely together` use the authoritative evidence contract from 3-2j-1.
 
 ## Scope
 
@@ -25,11 +26,14 @@ Replace the generic modal with a reusable detail workspace that explains hierarc
 - Lazy-load hierarchy and session evidence only after selection or expansion.
 - Preserve the originating layout, filters, sort, pagination, and scroll position when detail closes.
 - Keep observed playback, explicit confirmation, inferred overlap, and Plex synchronization visually distinct.
+- Use `Watched by` for title-level participation, `Together` for human-confirmed exact-item co-watching, and `Likely together` for qualifying exact-item inference; do not show confidence percentages in the primary detail UI.
+- Show confirmation/inference provenance and timing support in the evidence detail, including an honest fallback when historical confirmer identity is unavailable.
 
 ## Out Of Scope
 
 - Playback/resume controls, ratings, notes, metadata editing, versions, subtitles, recommendations, or Plex mutations.
 - Changing hierarchy inference or canonical audiobook matching rules.
+- Confirm/deny review actions or Discord requests, deferred to 3-2m.
 
 ## Likely Files Or Areas
 
@@ -49,11 +53,13 @@ Replace the generic modal with a reusable detail workspace that explains hierarc
 - Detail is keyboard operable, focus trapped while modal on narrow screens, and focus restored on close.
 - Direct URL/reload restores the selected item or shows a clear unavailable state.
 - Detail artwork and participant tests cover canonical book-versus-author imagery, custom alias, username fallback, and hidden-user exclusion.
+- Different episodes watched by different people remain separate per-person evidence and cannot become a show-level togetherness claim.
+- Confirmed and inferred exact-item relationships use distinct labels, and unknown evidence remains unlabeled rather than becoming likely.
 
 ## Verification And Exit Gate
 
-- `npm run build`
-- `npm test`
+- `npm run verify:block`
+- `npm run verify:live-dashboard` after rebuilding or restarting the local service.
 - Playwright detail walkthrough for one movie, TV show, Classic TV show, anime series, and audiobook.
 - Verify back/forward, reload, close/focus restoration, stale identity, artwork failure, and partial metadata.
 - Confirm detail timing remains within the 3-2g budget.

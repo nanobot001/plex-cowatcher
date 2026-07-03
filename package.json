@@ -13,6 +13,9 @@
     "start": "node dist/server/app.js",
     "cli": "npm run build && node dist/cli/cli.js",
     "test": "npm run build && node tests/launch-tests.mjs",
+    "test:dashboard-regression": "npm run build && playwright test --config=playwright.config.mjs",
+    "verify:block": "npm test && npm run test:dashboard-regression && node --check src/web/static/dashboard.js && npm run verify:tools",
+    "verify:live-dashboard": "node tests/e2e/live-dashboard-smoke.mjs",
     "db:init": "npm run build && node dist/db/init.js",
     "discord:test-prompt": "npm run build && node dist/cli/cli.js test-discord-prompt",
     "verify:tools": "node scripts/verify-tools.js"

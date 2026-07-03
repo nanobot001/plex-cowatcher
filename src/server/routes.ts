@@ -155,6 +155,10 @@ export function buildRouter(
     try { res.json({ ok: true, data: dashboardService.getContinueWatching(req.query) }); }
     catch (e) { next(e); }
   });
+  router.get("/api/dashboard/continue-consuming", (req, res, next) => {
+    try { res.json({ ok: true, data: dashboardService.getContinueConsuming(req.query) }); }
+    catch (e) { next(e); }
+  });
   router.get("/api/dashboard/cowatch-patterns", (req, res, next) => {
     try { res.json({ ok: true, data: dashboardService.getCowatchPatterns() }); }
     catch (e) { next(e); }

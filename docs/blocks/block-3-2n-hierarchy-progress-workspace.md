@@ -52,8 +52,8 @@ Provide fast, honest progress exploration for episodic media and audiobooks whil
 
 ## Verification And Exit Gate
 
-- `npm run build`
-- `npm test`
+- `npm run verify:block`
+- `npm run verify:live-dashboard` after rebuilding or restarting the local service.
 - Playwright first-paint timing and interaction checks with large, partial, repeated, and unknown-total fixtures.
 - Drill through one TV, Classic TV, Anime, Audiobook, and Movie example.
 - Confirm bounded response and DOM counts in automated tests.

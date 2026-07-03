@@ -1,8 +1,9 @@
 ﻿const layouts = new Set(["overview","timeline","explorer","people","progress"]);
-const state = { layout: "overview", filters: {}, offset: 0, totals: null, users: null, libraries: null };
+const state = { layout: "overview", filters: {}, offset: 0, totals: null, users: null, libraries: null, explorer: { section: "", sort: "recent", offset: 0, selected: "" } };
 const content = document.querySelector("#dashboard-content");
 const form = document.querySelector("#dashboard-filters");
 const dialog = document.querySelector("#detail-dialog");
+let explorerRenderVersion=0;
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmtDate = value => value ? new Intl.DateTimeFormat(undefined,{dateStyle:"medium",timeStyle:"short"}).format(new Date(value)) : "Unknown time";
 const normalizeDurationSeconds = value => {
@@ -21,26 +22,37 @@ const save=()=>{try{localStorage.setItem("cowatch.dashboard",JSON.stringify({lay
 const query=(extra={})=>{const p=new URLSearchParams();Object.entries({...state.filters,...extra}).forEach(([k,v])=>{if(v!==""&&v!=null)p.set(k,String(v));});return p;};
 const fetchJson=async url=>{const r=await fetch(url);const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.message||"Panel could not load.");return j.data;};
 const evidence=x=>{const e=x.evidence||{};return '<div class="evidence"><span class="proof observed">Observed</span>'+(e.confirmed?'<span class="proof confirmed">Confirmed</span>':'')+(e.promptStatus?'<span class="proof">Prompt '+esc(e.promptStatus)+'</span>':'')+(e.plexSyncStatus?'<span class="proof synced">Plex '+esc(e.plexSyncStatus)+'</span>':'')+'</div>';};
-const art=x=>'<img class="poster" src="'+esc(x.artworkUrl)+'" alt="" loading="lazy" onerror="this.src=\'/static/icon.svg\'">';
+const art=x=>'<img class="poster" src="'+esc(x.artworkUrl)+'" alt="'+esc((x.displayTitle||x.title||x.showTitle||"Title")+" "+categoryLabel(x.category)+" artwork")+'" loading="lazy" onerror="this.src=\'/static/icon.svg\';this.classList.add(\'artwork-fallback\')">';
 const mediaTitle=x=>esc(x.displayTitle||x.title||x.showTitle||"");
 const mediaBadge=x=>x.displayName?'<span class="media-badge">'+esc(x.displayName)+'</span>':'';
 const cardArt=x=>'<div class="poster-frame">'+art(x)+mediaBadge(x)+'</div>';
+const libraryArt=x=>'<div class="poster-frame">'+art(x)+viewerBadge(x)+'</div>';
+const watchedBy=x=>{
+  const names=[...new Set(Array.isArray(x.displayNames)?x.displayNames.filter(Boolean):[])].sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:"base"}));
+  if(!names.length)return "";
+  const visible=names.slice(0,2);
+  const remaining=names.length-visible.length;
+  const full=`Watched by ${names.join(", ")}`;
+  return `<span class="library-watched-by" data-testid="watched-by" aria-label="${esc(full)}" title="${esc(full)}"><span class="library-watched-label">Watched by</span> ${visible.map(esc).join(", ")}${remaining?` <span class="library-watched-more">+${remaining} more</span>`:""}</span>`;
+};
 const viewerBadge=x=>{
-  const names = Array.isArray(x.displayNames) && x.displayNames.length
+  const rawNames = Array.isArray(x.displayNames) && x.displayNames.length
     ? x.displayNames.filter(Boolean)
     : x.displayName
       ? String(x.displayName).split(" + ").map(name => name.trim()).filter(Boolean)
       : [];
+  const names = [...new Set(rawNames)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   if (!names.length) return "";
-  if (names.length === 1) return `<span class="media-badge">${esc(names[0])}</span>`;
+  const badgeAttrs = `aria-hidden="true" title="${esc(`Watched by ${names.join(", ")}`)}"`;
+  if (names.length === 1) return `<span class="media-badge" data-testid="viewer-badge" ${badgeAttrs}>${esc(names[0])}</span>`;
   const visibleNames = names.slice(0, 2);
   const remaining = names.length - visibleNames.length;
   const badgeLabel = visibleNames.map((name, index) => {
     const spanClass = index === 0 ? "media-badge-name" : "media-badge-name media-badge-name-secondary";
-    return `<span class="${spanClass}">${esc(name)}</span>`;
-  }).join('<span class="media-badge-sep">+</span>');
+    return `<span class="${spanClass}">${index > 0 ? '<span class="media-badge-sep">+</span> ' : ""}${esc(name)}</span>`;
+  }).join("");
   const more = remaining > 0 ? `<span class="media-badge-more">+${remaining} more</span>` : "";
-  return `<span class="media-badge media-badge--multi">${badgeLabel}${more}</span>`;
+  return `<span class="media-badge media-badge--multi" data-testid="viewer-badge" ${badgeAttrs}>${badgeLabel}${more}</span>`;
 };
 const groupRecentCards = items => {
   const thresholdMs = 10 * 60 * 1000;
@@ -55,17 +67,17 @@ const groupRecentCards = items => {
       group = {
         ...item,
         latestWatchedAtMs: watchedAtMs,
-        displayNames: item.displayName ? [item.displayName] : []
+        displayNames: Array.isArray(item.displayNames) && item.displayNames.length ? [...item.displayNames] : item.displayName ? [item.displayName] : []
       };
       buckets.push(group);
       groups.set(item.ratingKey, buckets);
       continue;
     }
-    if (item.displayName && !group.displayNames.includes(item.displayName)) {
-      group.displayNames.push(item.displayName);
-      group.displayNames.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-      group.displayName = group.displayNames.join(" + ");
+    for (const displayName of Array.isArray(item.displayNames) && item.displayNames.length ? item.displayNames : item.displayName ? [item.displayName] : []) {
+      if (!group.displayNames.includes(displayName)) group.displayNames.push(displayName);
     }
+    group.displayNames.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+    group.displayName = group.displayNames.join(" + ");
     if (watchedAtMs > group.latestWatchedAtMs) {
       group.latestWatchedAtMs = watchedAtMs;
       group.watchedAt = item.watchedAt;
@@ -85,6 +97,38 @@ const fmtHourValue=minutes=>{
   return `${Math.round(totalMinutes)}m`;
 };
 const categoryLabel=category=>({movie:"Movies",tv:"TV",classic_tv:"Classic TV",anime:"Anime",audiobook:"Audiobooks"})[category]||String(category||"");
+const explorerSections=[
+  {id:"continue",label:"Continue Consuming"},
+  {id:"tv",label:"TV"},
+  {id:"classic_tv",label:"Classic TV"},
+  {id:"movie",label:"Movies"},
+  {id:"anime",label:"Anime"},
+  {id:"audiobook",label:"Audiobooks"}
+];
+const explorerFilterKeys=["dateFrom","dateTo","user","category","library","completed","search"];
+const routeQuery=()=>{
+  const p=query();
+  if(state.layout==="explorer"){
+    if(state.explorer.section)p.set("section",state.explorer.section);
+    if(state.explorer.sort!=="recent")p.set("sort",state.explorer.sort);
+    if(state.explorer.offset)p.set("offset",String(state.explorer.offset));
+    if(state.explorer.selected)p.set("selected",state.explorer.selected);
+  }
+  return p;
+};
+function restoreLocationState(){
+  const raw=location.hash.slice(1);
+  const [layoutName,rawQuery=""]=raw.split("?");
+  if(layouts.has(layoutName))state.layout=layoutName;
+  if(!raw.includes("?"))return;
+  const params=new URLSearchParams(rawQuery);
+  state.filters=Object.fromEntries(explorerFilterKeys.filter(key=>params.has(key)).map(key=>[key,params.get(key)]));
+  const section=params.get("section")||state.filters.category||"";
+  state.explorer.section=explorerSections.some(item=>item.id===section)?section:"";
+  state.explorer.sort=["recent","title","progress","plays"].includes(params.get("sort"))?params.get("sort"):"recent";
+  state.explorer.offset=Math.max(0,Number(params.get("offset"))||0);
+  state.explorer.selected=params.get("selected")||"";
+}
 const toneClass=status=>({failed:"is-danger",error:"is-danger",missing:"is-warning",review:"is-neutral",pending:"is-info",prompted:"is-info"})[status]||"is-neutral";
 const deltaText=value=>value==null?"":`${value>0?"+":value<0?"-":""}${fmtHourValue(Math.abs(value))}`;
 const progressText=value=>value==null?"Progress unknown":`${value}% finished`;
@@ -141,6 +185,9 @@ function applyRoute(route){
   state.filters=route.filters&&typeof route.filters==="object"?{...route.filters}:{};
   if(route.layout)state.layout=route.layout;
   state.offset=0;
+  state.explorer.section=state.layout==="explorer"?(state.filters.category||""):"";
+  state.explorer.offset=0;
+  state.explorer.selected="";
   syncFormToState();
   save();
   loadGlobals();
@@ -149,7 +196,7 @@ function applyRoute(route){
 
 async function openDetail(x){
   document.querySelector("#detail-content").innerHTML='<div class="panel-state">Loading rich detail.</div>';dialog.showModal();
-  let d;try{d=await fetchJson("/api/dashboard/detail/"+encodeURIComponent(x.ratingKey));}catch{d={item:x,plays:[x],people:[{displayName:x.displayName}],repeatCount:0,catalog:null,audiobook:null};}
+  let d;try{d=await fetchJson("/api/dashboard/detail/"+encodeURIComponent(x.ratingKey));}catch{d={item:x,plays:[x],people:(x.displayNames?.length?x.displayNames:[x.displayName]).filter(Boolean).map(displayName=>({displayName})),repeatCount:0,catalog:null,audiobook:null};}
   
   const a=d.audiobook;
   const isEpisode = x.category==="tv"||x.category==="anime"||x.category==="classic_tv";
@@ -189,7 +236,7 @@ async function openDetail(x){
         ${hierarchy ? `<div>${hierarchy}</div>` : ''}
         <dl class="detail-metadata">
           <dt>People</dt>
-          <dd>${d.people.map(p=>esc(p.displayName)).join(", ")}</dd>
+          <dd data-testid="detail-people">${d.people.map(p=>esc(p.displayName)).join(", ")}</dd>
           <dt>Plays</dt>
           <dd>${d.plays.length} (${d.repeatCount} repeats)</dd>
           <dt>Library</dt>
@@ -317,11 +364,12 @@ async function renderOverview() {
   const recentPlaybackItems = groupRecentCards(Array.isArray(d.recentPlayback) ? d.recentPlayback : Array.isArray(d.activity?.items) ? d.activity.items.slice(0, 24) : []);
   const cwHtml = recentPlaybackItems.length
     ? `<div class="cw-carousel cw-carousel-overview">${recentPlaybackItems.map(cw => `
-        <article class="cw-card" tabindex="0" data-item="${encodeURIComponent(JSON.stringify(cw))}">
-          ${cardArt(cw)}
+        <article class="cw-card" data-testid="recent-playback-card" tabindex="0" data-item="${encodeURIComponent(JSON.stringify(cw))}">
+          ${libraryArt(cw)}
           <div class="cw-bar"><i style="width:${esc(cw.percentComplete ?? 0)}%"></i></div>
           <p>${esc(cw.displayTitle || cw.title || '')}</p>
-          <span class="cw-meta">${viewerBadge(cw)} · ${fmtDate(cw.watchedAt)}</span>
+          ${watchedBy(cw)}
+          <span class="cw-meta">${fmtDate(cw.watchedAt)}</span>
         </article>
       `).join("")}</div>`
     : '<div class="panel-state compact"><p>No recent playback to show right now.</p></div>';
@@ -332,7 +380,8 @@ async function renderOverview() {
           ${art(item)}
           <div>
             <strong>${esc(item.displayTitle || item.title)}</strong>
-            <p>${esc(item.displayName)} · ${fmtDate(item.watchedAt)}</p>
+            ${watchedBy(item)}
+            <p>${fmtDate(item.watchedAt)}</p>
           </div>
         </button>
       `).join("")}</div>`
@@ -553,36 +602,55 @@ async function renderTimeline() {
 }
 
 async function renderExplorer() {
-  const cw = await fetchJson("/api/dashboard/continue-watching?" + query({limit: 20}));
-  const d = await fetchJson("/api/dashboard/media?" + query({limit: 48, offset: state.offset, sort: "title"}));
-  
-  const cwHtml = cw.length > 0 
-    ? '<section class="dashboard-panel mb-4"><div class="panel-title"><h3>Recently Enjoyed (In Progress)</h3></div><div class="poster-carousel">' + cw.map(x => '<article class="poster-card cw-poster" tabindex="0" data-item="'+encodeURIComponent(JSON.stringify(x))+'">'+cardArt(x)+'<div class="cw-bar"><i style="width:'+esc(x.percentComplete||0)+'%"></i></div><strong>'+esc(x.displayTitle||x.title)+'</strong></article>').join("") + '</div></section>'
-    : '';
+  const renderVersion=++explorerRenderVersion;
+  const section=state.explorer.section||state.filters.category||"";
+  const sectionLimit=6;
+  const pageLimit=24;
+  const endpoint=(id,options={})=>id==="continue"
+    ? "/api/dashboard/continue-consuming?"+query(options)
+    : "/api/dashboard/media?"+query({...options,category:id});
+  const secondary=x=>{
+    const count=Number(x.distinctItems||0);
+    if(x.category==="movie")return `${x.plays} play${x.plays===1?"":"s"}`;
+    if(x.category==="audiobook")return `${count} chapter${count===1?"":"s"} · ${x.plays} play${x.plays===1?"":"s"}`;
+    return `${count} episode${count===1?"":"s"} · ${x.plays} play${x.plays===1?"":"s"}`;
+  };
+  const card=x=>`<article class="poster-card library-card ${state.explorer.selected===x.groupKey?"selected":""}" data-testid="library-card" tabindex="0" role="button" aria-pressed="${state.explorer.selected===x.groupKey}" data-library-item="${encodeURIComponent(JSON.stringify(x))}" data-select-key="${esc(x.groupKey)}">${libraryArt(x)}${x.percentComplete!=null&&!x.completed?`<div class="cw-bar"><i style="width:${esc(x.percentComplete)}%"></i></div>`:""}<strong>${mediaTitle(x)}</strong><span>${esc(secondary(x))}</span>${watchedBy(x)}</article>`;
+  const detailRegion=selected=>`<aside class="library-detail-reserve" aria-live="polite">
+    <p class="eyebrow">Title workspace</p>
+    ${selected?`<h3>${mediaTitle(selected)}</h3><p>${esc(categoryLabel(selected.category))} selected. Rich hierarchy and evidence arrive in Block 3-2k.</p>`:'<h3>Select a title</h3><p>This reserved workspace will hold media-aware detail in the next block.</p>'}
+  </aside>`;
 
-  const cats = [
-    { id: "", label: "All Media" },
-    { id: "movie", label: "Movies" },
-    { id: "tv", label: "TV Shows" },
-    { id: "classic_tv", label: "Classic TV" },
-    { id: "anime", label: "Anime" },
-    { id: "audiobook", label: "Audiobooks" }
-  ];
-  const activeCat = state.filters.category || "";
-  const catTabsHtml = `<div class="explorer-tabs">
-    ${cats.map(c => `<button class="explorer-tab ${activeCat === c.id ? 'active' : ''}" data-category="${c.id}">${esc(c.label)}</button>`).join("")}
-  </div>`;
+  if(section){
+    const d=await fetchJson(endpoint(section,{limit:pageLimit,offset:state.explorer.offset,sort:state.explorer.sort}));
+    if(renderVersion!==explorerRenderVersion)return;
+    const selected=d.items.find(item=>item.groupKey===state.explorer.selected);
+    const label=explorerSections.find(item=>item.id===section)?.label||categoryLabel(section);
+    content.innerHTML=`<div class="library-workspace"><main>
+      <section class="dashboard-panel library-all-panel">
+        <div class="library-toolbar"><div><button class="text-button" data-library-home>All sections</button><h3>${esc(label)}</h3><p>${d.total} consumed title${d.total===1?"":"s"}</p></div>
+          <label>Sort<select data-library-sort><option value="recent">Recently consumed</option><option value="title">Title</option><option value="progress">Progress</option><option value="plays">Play count</option></select></label>
+        </div>
+        <div class="poster-grid">${d.items.length?d.items.map(card).join(""):empty("consumed titles")}</div>
+        ${libraryPager(d)}
+      </section>
+    </main>${detailRegion(selected)}</div>`;
+    const sortSelect=content.querySelector("[data-library-sort]");
+    if(sortSelect)sortSelect.value=state.explorer.sort;
+    return;
+  }
 
-  content.innerHTML = cwHtml + `
-    <section class="dashboard-panel">
-      <div class="panel-title"><h3>Household Library</h3><span>Categorized media explorer</span></div>
-      ${catTabsHtml}
-      <div class="poster-grid">
-                ${(d.items.length ? d.items.map(x=>'<article class="poster-card" tabindex="0" data-item="'+encodeURIComponent(JSON.stringify(x))+'">'+cardArt(x)+'<strong>'+mediaTitle(x)+'</strong><span>'+esc(x.categoryLabel)+' &middot; '+x.distinctItems+' '+(x.category==="movie"?"title":x.category==="audiobook"?"chapter":"episode")+(x.distinctItems===1?"":"s")+' &middot; '+x.plays+' play'+(x.plays===1?"":"s")+'</span></article>').join("") : empty("consumed titles"))}
-      </div>
-      ${pager(d)}
-    </section>
-  `;
+  const results=await Promise.all(explorerSections.map(item=>fetchJson(endpoint(item.id,{limit:sectionLimit,offset:0,sort:"recent"}))));
+  if(renderVersion!==explorerRenderVersion)return;
+  const selected=results.flatMap(result=>result.items).find(item=>item.groupKey===state.explorer.selected);
+  const sectionsHtml=explorerSections.map((item,index)=>{
+    const d=results[index];
+    return `<section class="dashboard-panel library-section" data-section="${item.id}">
+      <div class="panel-title"><div><h3>${esc(item.label)}</h3><span>${d.total} title${d.total===1?"":"s"}</span></div><button class="text-button" data-view-section="${item.id}">View all</button></div>
+      <div class="poster-grid library-preview-grid">${d.items.length?d.items.map(card).join(""):empty(item.label.toLowerCase())}</div>
+    </section>`;
+  }).join("");
+  content.innerHTML=`<div class="library-workspace"><main class="library-sections">${sectionsHtml}</main>${detailRegion(selected)}</div>`;
 }
 
 async function renderPeople() {
@@ -675,14 +743,15 @@ async function renderProgress() {
 // Core Initialization
 // ----------------------------------------------------
 function pager(d){if(d.total<=d.limit)return "";return '<nav class="pager" aria-label="Pagination"><button data-page="prev" '+(d.offset===0?"disabled":"")+'>Previous</button><span>'+(d.offset+1)+'-'+Math.min(d.total,d.offset+d.limit)+' of '+d.total+'</span><button data-page="next" '+(d.offset+d.limit>=d.total?"disabled":"")+'>Next</button></nav>';}
+function libraryPager(d){if(d.total<=d.limit)return "";return '<nav class="pager" aria-label="Library pagination"><button data-library-page="prev" '+(d.offset===0?"disabled":"")+'>Previous</button><span>'+(d.offset+1)+'-'+Math.min(d.total,d.offset+d.limit)+' of '+d.total+'</span><button data-library-page="next" '+(d.offset+d.limit>=d.total?"disabled":"")+'>Next</button></nav>';}
 function populateOptions(d){const user=form.elements.user,lib=form.elements.library;if(user && user.options.length===1)d.users.forEach(u=>user.add(new Option(u.display_name||u.plex_username,u.plex_username)));if(lib && lib.options.length===1)d.libraries.forEach(x=>lib.add(new Option(x,x)));}
 
 async function render(){
   setButtons();
   setSidebarOverview("");
   content.innerHTML='<div class="panel-state">Loading '+esc(state.layout)+'...</div>';
-  const targetHash="#"+state.layout+"?"+query();
-  if(location.hash!==targetHash)history.pushState({layout:state.layout,filters:state.filters},"",targetHash);
+  const targetHash="#"+state.layout+"?"+routeQuery();
+  if(location.hash!==targetHash)history.pushState({},"",targetHash);
   document.querySelector("#csv-export").href="/api/dashboard/export.csv?"+query();
   
   // Update page title/subtitle
@@ -717,8 +786,12 @@ document.querySelector("#layout-switcher").addEventListener("click",e=>{
 });
 
 form.addEventListener("change",()=>{
+  const previousCategory=state.filters.category||"";
   state.filters=Object.fromEntries(new FormData(form));
   state.offset=0;
+  if((state.filters.category||"")!==previousCategory)state.explorer.section=state.filters.category||"";
+  state.explorer.offset=0;
+  state.explorer.selected="";
   save();
   render();
   loadGlobals();
@@ -727,12 +800,19 @@ form.addEventListener("change",()=>{
 form.addEventListener("reset",()=>setTimeout(()=>{
   state.filters={};
   state.offset=0;
+  state.explorer={section:"",sort:"recent",offset:0,selected:""};
   save();
   render();
   loadGlobals();
 },0));
 
 content.addEventListener("click",async e=>{
+  const libraryItem=e.target.closest("[data-library-item]");
+  if(libraryItem){
+    const item=JSON.parse(decodeURIComponent(libraryItem.dataset.libraryItem));
+    state.explorer.selected=item.groupKey;
+    return render();
+  }
   const item=e.target.closest("[data-item]");
   if(item)return openDetail(JSON.parse(decodeURIComponent(item.dataset.item)));
   const routeButton=e.target.closest("[data-route]");
@@ -743,6 +823,31 @@ content.addEventListener("click",async e=>{
   const page=e.target.closest("[data-page]");
   if(page){
     state.offset=Math.max(0,state.offset+(page.dataset.page==="next"?50:-50));
+    return render();
+  }
+  const libraryPage=e.target.closest("[data-library-page]");
+  if(libraryPage){
+    state.explorer.offset=Math.max(0,state.explorer.offset+(libraryPage.dataset.libraryPage==="next"?24:-24));
+    state.explorer.selected="";
+    return render();
+  }
+  const viewSection=e.target.closest("[data-view-section]");
+  if(viewSection){
+    state.explorer.section=viewSection.dataset.viewSection;
+    state.explorer.offset=0;
+    state.explorer.sort="recent";
+    state.explorer.selected="";
+    return render();
+  }
+  if(e.target.closest("[data-library-home]")){
+    state.explorer.section="";
+    state.explorer.offset=0;
+    state.explorer.selected="";
+    if(state.filters.category){
+      delete state.filters.category;
+      if(form.elements.category)form.elements.category.value="";
+      save();
+    }
     return render();
   }
   const person=e.target.closest("[data-person]");
@@ -774,28 +879,39 @@ content.addEventListener("click",async e=>{
 });
 
 content.addEventListener("keydown",e=>{
+  if((e.key==="Enter"||e.key===" ")&&e.target.matches("[data-library-item]")){
+    e.preventDefault();
+    const item=JSON.parse(decodeURIComponent(e.target.dataset.libraryItem));
+    state.explorer.selected=item.groupKey;
+    render();
+    return;
+  }
   if((e.key==="Enter"||e.key===" ")&&e.target.matches("[data-item]")){
     e.preventDefault();
     openDetail(JSON.parse(decodeURIComponent(e.target.dataset.item)));
   }
 });
 
-dialog.querySelector(".dialog-close").addEventListener("click",()=>dialog.close());
-dialog.addEventListener("click",e=>{if(e.target===dialog)dialog.close();});
-
-window.addEventListener("popstate",e=>{
-  const h=location.hash.slice(1).split("?")[0];
-  if(layouts.has(h)){
-    state.layout=h;
-    state.filters=e.state?.filters||state.filters;
-    syncFormToState();
+content.addEventListener("change",e=>{
+  if(e.target.matches("[data-library-sort]")){
+    state.explorer.sort=e.target.value;
+    state.explorer.offset=0;
+    state.explorer.selected="";
     render();
   }
 });
 
+dialog.querySelector(".dialog-close").addEventListener("click",()=>dialog.close());
+dialog.addEventListener("click",e=>{if(e.target===dialog)dialog.close();});
+
+window.addEventListener("popstate",()=>{
+  restoreLocationState();
+  syncFormToState();
+  render();
+});
+
+restoreLocationState();
 syncFormToState();
-const hash=location.hash.slice(1).split("?")[0];
-if(layouts.has(hash))state.layout=hash;
 
 loadGlobals();
 render();

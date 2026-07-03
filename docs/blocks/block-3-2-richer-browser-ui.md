@@ -34,6 +34,7 @@ Blocks 3-2b through 3-2e extend that usable core with alternate layouts, deeper 
 - Friendly categories come from centralized structured rules; uncertain classification retains the raw Plex media type and library.
 - Audiobooks use canonical book, series, and subseries data rather than appearing as generic music.
 - Playback observation, explicit Discord confirmation, Plex synchronization, and inferred co-watching remain visibly distinct.
+- Title-level `Watched by` means participation at any time and never implies co-watching; `Together` is human-confirmed and `Likely together` is exact-item inference under the versioned shared rule.
 - Shared filters and selection survive layout changes.
 - Layout and display preferences stay client-local unless a future multi-device requirement justifies server persistence.
 - CSV is generated on demand and streamed to the browser; exports are not retained by default.
@@ -57,11 +58,12 @@ Blocks 3-2b through 3-2e extend that usable core with alternate layouts, deeper 
 8. [Block 3-2h: Dashboard Shell And Design System](block-3-2h-dashboard-shell-and-design-system.md)
 9. [Block 3-2i: Overview Decision Surface](block-3-2i-overview-decision-surface.md)
 10. [Block 3-2j: Library Category Browser](block-3-2j-library-category-browser.md)
-11. [Block 3-2k: Rich Media Detail Workspace](block-3-2k-rich-media-detail-workspace.md)
-12. [Block 3-2l: Daily Session Timeline](block-3-2l-daily-session-timeline.md)
-13. [Block 3-2m: People And Co-Watch Intelligence](block-3-2m-people-and-cowatch-intelligence.md)
-14. [Block 3-2n: Hierarchy Progress Workspace](block-3-2n-hierarchy-progress-workspace.md)
-15. [Block 3-2o: Dashboard Accessibility And Regression Gate](block-3-2o-dashboard-accessibility-and-regression-gate.md)
+11. [Block 3-2j-1: Co-Watch Evidence Semantics](block-3-2j-1-cowatch-evidence-semantics.md)
+12. [Block 3-2k: Rich Media Detail Workspace](block-3-2k-rich-media-detail-workspace.md)
+13. [Block 3-2l: Daily Session Timeline](block-3-2l-daily-session-timeline.md)
+14. [Block 3-2m: People And Co-Watch Intelligence](block-3-2m-people-and-cowatch-intelligence.md)
+15. [Block 3-2n: Hierarchy Progress Workspace](block-3-2n-hierarchy-progress-workspace.md)
+16. [Block 3-2o: Dashboard Accessibility And Regression Gate](block-3-2o-dashboard-accessibility-and-regression-gate.md)
 
 ## Corrective Sequence Authority
 
@@ -85,8 +87,8 @@ Blocks 3-2b through 3-2e extend that usable core with alternate layouts, deeper 
 ## Verification
 
 - Verify every child block independently.
-- After 3-2e: `npm run build`, `npm test`, and `npm run verify:tools`.
-- Complete a manual mixed-media, multi-user browser walkthrough at `http://localhost:8787`.
+- Every remaining corrective child block must pass `npm run verify:block` before completion.
+- After rebuilding or restarting the deployed dashboard, run `npm run verify:live-dashboard` and complete any block-specific manual mixed-media walkthrough at `http://localhost:8787`.
 
 ## Dependency And Drift Guardrails
 

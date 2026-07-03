@@ -66,7 +66,17 @@ export interface DashboardActivityItem {
   seasonNumber?: number; episodeNumber?: number;
   displayTitle?: string;
   displayNames?: string[];
+  confirmedUserIds?: number[];
   evidence: Record<string, unknown>;
+}
+
+export interface DashboardMediaItem extends DashboardActivityItem {
+  groupKey: string;
+  groupRatingKey: string;
+  latestWatchedAt: string;
+  plays: number;
+  distinctItems: number;
+  people: number[];
 }
 
 export interface DashboardTimelineSession {

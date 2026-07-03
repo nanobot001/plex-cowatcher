@@ -4,9 +4,9 @@ Blocks are numbered, bounded AI-buildable tickets for code, logic, docs, folder 
 
 ## Active Phase
 
-The project is currently in the Phase 3 refinement set. A live Playwright review found that the completed 3-2f redesign did not meet its intended usability, bounded-rendering, or responsive outcome. The next planned block is:
+The project is currently in the Phase 3 refinement set. A live Playwright review found that the completed 3-2f redesign did not meet its intended usability, bounded-rendering, or responsive outcome. The immediate next selected block is:
 
-- `block-3-2g-dashboard-contract-and-performance-baseline.md`
+- `block-3-2j-1-cowatch-evidence-semantics.md`
 
 Phase 3 builds on the completed playback-intelligence foundation with domain-specific refinement, richer operator ergonomics, and reporting.
 Blocks 3-2a through 3-2e form one sequential dashboard implementation path:
@@ -25,11 +25,12 @@ Corrective sequence:
 2. `block-3-2h-dashboard-shell-and-design-system.md`
 3. `block-3-2i-overview-decision-surface.md`
 4. `block-3-2j-library-category-browser.md`
-5. `block-3-2k-rich-media-detail-workspace.md`
-6. `block-3-2l-daily-session-timeline.md`
-7. `block-3-2m-people-and-cowatch-intelligence.md`
-8. `block-3-2n-hierarchy-progress-workspace.md`
-9. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
+5. `block-3-2j-1-cowatch-evidence-semantics.md`
+6. `block-3-2k-rich-media-detail-workspace.md`
+7. `block-3-2l-daily-session-timeline.md`
+8. `block-3-2m-people-and-cowatch-intelligence.md`
+9. `block-3-2n-hierarchy-progress-workspace.md`
+10. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
 
 Do not implement a later corrective block until the previous block's exit gate is recorded as passing. A later block must not conceal, waive, or silently absorb a failed earlier acceptance criterion.
 
@@ -78,6 +79,15 @@ Before editing, briefly state:
 - expected verification command
 
 Make the smallest code/docs changes needed to satisfy the selected block acceptance criteria.
+
+## Shared Regression Gate
+
+- Every numbered block must run `npm run verify:block` before its status becomes Implemented.
+- This command includes compilation, the full service suite, deterministic desktop/narrow Playwright regression coverage, static dashboard syntax, and tool-contract verification.
+- Do not replace the shared command with a subset of its component commands.
+- UI blocks must add or update semantic regression assertions when they change a durable invariant; do not use broad pixel snapshots to freeze design.
+- After a deployed dashboard rebuild or PM2 restart, run the separate read-only `npm run verify:live-dashboard` gate.
+- See `docs/testing/dashboard-regression-contract.md` for the authoritative fixture, isolation, and anti-drift contract.
 
 ## Block Shape
 

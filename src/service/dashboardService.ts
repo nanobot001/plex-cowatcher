@@ -26,7 +26,7 @@ const filterSchema = z.object({
     return Math.min(Number(value), 1000);
   }, z.number().int().min(1).max(1000)),
   offset: z.preprocess((value) => value === undefined ? 0 : Number(value), z.number().int().min(0).max(100000)),
-  sort: z.enum(["recent", "title", "progress"]).default("recent")
+  sort: z.enum(["recent", "title", "progress", "plays"]).default("recent")
 });
 
 const timelineFilterSchema = filterSchema.extend({
@@ -110,6 +110,26 @@ function explorerGroupKey(item: DashboardActivityItem): string {
   return `other:${library}:${item.ratingKey}`;
 }
 
+function parseConfirmedParticipants(value: unknown): Array<{ userId: number; displayName: string }> {
+  if (typeof value !== "string" || !value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((participant) => Number.isInteger(participant?.userId) && typeof participant?.displayName === "string" && participant.displayName.trim());
+  } catch {
+    return [];
+  }
+}
+
+function explorerSortTitle(value: string): string {
+  const trimmed = value.trim();
+  const withoutPrefix = trimmed
+    .replace(/^[\s\p{P}\p{S}]+/gu, "")
+    .replace(/^\d{4}\s*[-\u2013\u2014:]\s*/, "")
+    .trim();
+  return (withoutPrefix || trimmed).toLocaleLowerCase();
+}
+
 function isRecognizedExplorerItem(item: DashboardActivityItem): boolean {
   return Boolean(explorerTitle(item).trim()) && (item.category === "audiobook" || Boolean(item.libraryName));
 }
@@ -117,9 +137,12 @@ function isRecognizedExplorerItem(item: DashboardActivityItem): boolean {
 function compareExplorerItems(a: any, b: any, sort: string): number {
   const aTitle = a.displayTitle ?? a.title;
   const bTitle = b.displayTitle ?? b.title;
-  if (sort === "title") return aTitle.localeCompare(bTitle, undefined, { sensitivity: "base" }) || b.latestWatchedAt.localeCompare(a.latestWatchedAt);
-  if (sort === "progress") return (b.percentComplete ?? -1) - (a.percentComplete ?? -1) || b.plays - a.plays || b.latestWatchedAt.localeCompare(a.latestWatchedAt);
-  return b.latestWatchedAt.localeCompare(a.latestWatchedAt) || aTitle.localeCompare(bTitle, undefined, { sensitivity: "base" });
+  const titleOrder = explorerSortTitle(aTitle).localeCompare(explorerSortTitle(bTitle), undefined, { sensitivity: "base" });
+  const stableIdentityOrder = String(a.groupKey ?? "").localeCompare(String(b.groupKey ?? ""), undefined, { sensitivity: "base" });
+  if (sort === "title") return titleOrder || aTitle.localeCompare(bTitle, undefined, { sensitivity: "base" }) || stableIdentityOrder;
+  if (sort === "progress") return (b.percentComplete ?? -1) - (a.percentComplete ?? -1) || b.plays - a.plays || b.latestWatchedAt.localeCompare(a.latestWatchedAt) || stableIdentityOrder;
+  if (sort === "plays") return b.plays - a.plays || b.latestWatchedAt.localeCompare(a.latestWatchedAt) || titleOrder || stableIdentityOrder;
+  return b.latestWatchedAt.localeCompare(a.latestWatchedAt) || titleOrder || stableIdentityOrder;
 }
 
 function isoDay(value: string): string {
@@ -198,25 +221,64 @@ export class DashboardService {
     const from = ` FROM playback_observations po JOIN users u ON u.id=po.user_id LEFT JOIN content_catalog cat ON cat.rating_key=po.rating_key LEFT JOIN content_catalog groupcat ON groupcat.rating_key=po.grandparent_rating_key LEFT JOIN audiobook_books ab ON ab.id=cat.audiobook_id LEFT JOIN watch_events we ON we.rating_key=po.rating_key AND we.source_user_id=po.user_id AND abs(strftime('%s',we.watched_at)-strftime('%s',po.watched_at))<=600 LEFT JOIN cowatch_confirmations cc ON cc.watch_event_id=we.id AND cc.target_user_id=po.user_id`;
     const total = Number((this.db.prepare(`SELECT count(*) total${from}${where}`).get(...args) as any).total);
     const order = p.sort === "title" ? "po.title COLLATE NOCASE, po.rating_key, po.watched_at DESC, po.id DESC" : p.sort === "progress" ? "po.percent_complete DESC, po.watched_at DESC, po.id DESC" : "po.watched_at DESC, po.id DESC";
-    const rows = this.db.prepare(`SELECT po.*,u.plex_username,u.display_name AS synced_display_name,u.dashboard_alias,u.dashboard_shown,we.prompt_status,cc.status confirmation_status,cc.plex_sync_status,cat.library_title AS catalog_library_title,groupcat.library_title AS group_catalog_library_title,cat.audiobook_id AS audiobook_id,ab.title AS audiobook_title${from}${where} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...args, p.limit, p.offset) as any[];
+    const confirmedUserFilter = p.user ? " AND confirmed_user.plex_username = ?" : "";
+    const confirmedArgs = p.user ? [p.user] : [];
+    const confirmedParticipantsSql = `(SELECT json_group_array(json_object('userId', confirmed_user.id, 'displayName', COALESCE(NULLIF(confirmed_user.dashboard_alias, ''), confirmed_user.plex_username))) FROM cowatch_confirmations confirmed JOIN users confirmed_user ON confirmed_user.id=confirmed.target_user_id WHERE confirmed.watch_event_id=we.id AND confirmed.status='confirmed' AND COALESCE(confirmed_user.dashboard_shown, confirmed_user.enabled)=1${confirmedUserFilter}) AS confirmed_participants_json`;
+    const rows = this.db.prepare(`SELECT po.*,u.plex_username,u.display_name AS synced_display_name,u.dashboard_alias,u.dashboard_shown,we.prompt_status,cc.status confirmation_status,cc.plex_sync_status,cat.library_title AS catalog_library_title,groupcat.library_title AS group_catalog_library_title,cat.audiobook_id AS audiobook_id,ab.title AS audiobook_title,${confirmedParticipantsSql}${from}${where} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...confirmedArgs, ...args, p.limit, p.offset) as any[];
     const items = rows.map((row) => this.mapActivity(row)).filter(Boolean) as DashboardActivityItem[];
     return { items, total, limit: p.limit, offset: p.offset };
   }
 
   getContinueWatching(input: unknown) {
+    return this.getContinueConsuming({ ...(input as object), offset: 0 }).items;
+  }
+
+  getContinueConsuming(input: unknown) {
     const p = parseFilters(input);
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const all = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0 }).items;
+    const all = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0, sort: "recent" }).items;
     const groups = new Map<string, any>();
     for (const item of all) {
       if (!isRecognizedExplorerItem(item) || item.completed) continue;
       if (item.watchedAt < thirtyDaysAgo) continue;
       const key = explorerGroupKey(item);
-      if (!groups.has(key)) {
-        groups.set(key, { ...item, displayTitle: explorerTitle(item) });
+      const group = groups.get(key) ?? {
+        ...item,
+        displayTitle: explorerTitle(item),
+        groupKey: key,
+        plays: 0,
+        distinctItems: new Set<string>(),
+        people: new Set<number>(),
+        displayNames: new Set<string>(),
+        latestWatchedAt: item.watchedAt
+      };
+      group.plays += 1;
+      group.distinctItems.add(item.ratingKey);
+      group.people.add(item.userId);
+      for (const userId of item.confirmedUserIds ?? []) group.people.add(userId);
+      const displayNames = group.displayNames as Set<string>;
+      for (const displayName of item.displayNames ?? [item.displayName]) {
+        if (displayName) displayNames.add(displayName);
       }
+      if (item.watchedAt >= group.latestWatchedAt) {
+        Object.assign(group, item, {
+          displayTitle: explorerTitle(item),
+          groupKey: key,
+          latestWatchedAt: item.watchedAt
+        });
+        group.displayNames = displayNames;
+      }
+      groups.set(key, group);
     }
-    return [...groups.values()].slice(0, p.limit);
+    const items = [...groups.values()]
+      .map((group) => ({
+        ...group,
+        distinctItems: group.distinctItems.size,
+        people: [...group.people],
+        displayNames: [...group.displayNames].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
+      }))
+      .sort((a, b) => compareExplorerItems(a, b, p.sort));
+    return { items: items.slice(p.offset, p.offset + p.limit), total: items.length, limit: p.limit, offset: p.offset };
   }
 
   getOverview(input: unknown) {
@@ -605,7 +667,7 @@ export class DashboardService {
   getMedia(input: unknown) {
     const timed = withTiming(() => {
       const p = parseFilters(input);
-      const all = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0 }).items;
+      const all = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0, sort: "recent" }).items;
       const groups = new Map<string, any>();
       for (const item of all) {
         if (!isRecognizedExplorerItem(item)) continue;
@@ -616,10 +678,14 @@ export class DashboardService {
           : (item.category === "tv" || item.category === "classic_tv" || item.category === "anime")
             ? item.grandparentRatingKey ?? item.ratingKey
             : item.ratingKey;
-        const group = groups.get(key) ?? { ...item, title, showTitle: undefined, displayTitle: title, groupRatingKey, plays: 0, distinctItems: new Set<string>(), people: new Set<number>(), latestWatchedAt: item.watchedAt, artworkUrl: this.resolveArtworkUrl(item, groupRatingKey) };
+        const group = groups.get(key) ?? { ...item, title, showTitle: undefined, displayTitle: title, groupKey: key, groupRatingKey, plays: 0, distinctItems: new Set<string>(), people: new Set<number>(), displayNames: new Set<string>(), latestWatchedAt: item.watchedAt, artworkUrl: this.resolveArtworkUrl(item, groupRatingKey) };
       group.plays += 1;
       group.distinctItems.add(item.ratingKey);
       group.people.add(item.userId);
+      for (const userId of item.confirmedUserIds ?? []) group.people.add(userId);
+      for (const displayName of item.displayNames ?? [item.displayName]) {
+        if (displayName) group.displayNames.add(displayName);
+      }
       if (item.watchedAt >= group.latestWatchedAt) {
         group.latestWatchedAt = item.watchedAt;
           group.ratingKey = item.ratingKey;
@@ -640,10 +706,16 @@ export class DashboardService {
           group.parentRatingKey = item.parentRatingKey;
           group.audiobookId = item.audiobookId;
           group.audiobookTitle = item.audiobookTitle;
+          group.groupKey = key;
         }
         groups.set(key, group);
       }
-      const items = [...groups.values()].map((group) => ({ ...group, distinctItems: group.distinctItems.size, people: [...group.people] })).sort((a, b) => compareExplorerItems(a, b, p.sort));
+      const items = [...groups.values()].map((group) => ({
+        ...group,
+        distinctItems: group.distinctItems.size,
+        people: [...group.people],
+        displayNames: [...group.displayNames].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
+      })).sort((a, b) => compareExplorerItems(a, b, p.sort));
       return { items: items.slice(p.offset, p.offset + p.limit), total: items.length, limit: p.limit, offset: p.offset };
     });
     return { ...timed.value, timingMs: timed.timingMs };
@@ -830,7 +902,19 @@ export class DashboardService {
       const first = plays[0];
       const catalog = this.db.prepare(`SELECT media_type,title,duration,library_title,grandparent_title,parent_title,leaf_count,source_provenance,audiobook_id FROM content_catalog WHERE rating_key=?`).get(ratingKey) as any;
       const audiobook = catalog?.audiobook_id ? this.db.prepare(`SELECT title,subtitle,authors_json,narrators_json,parent_series_title,subseries_title,series_title,series_index,chapter_count,total_duration_seconds,source_provenance,enrichment_status FROM audiobook_books WHERE id=?`).get(catalog.audiobook_id) : null;
-      return { item: first, plays, people: [...new Map(plays.map((item) => [item.userId, { userId: item.userId, displayName: item.displayName }])).values()], repeatCount: Math.max(0, plays.length - 1), catalog: catalog ?? null, audiobook };
+      const peopleByName = new Map<string, { userId: number | null; displayName: string }>();
+      for (const play of plays) {
+        const names = play.displayNames?.length ? play.displayNames : [play.displayName];
+        for (const displayName of names) {
+          const sourceUserId = displayName === play.displayName ? play.userId : null;
+          const existing = peopleByName.get(displayName);
+          if (!existing || (existing.userId == null && sourceUserId != null)) {
+            peopleByName.set(displayName, { userId: sourceUserId, displayName });
+          }
+        }
+      }
+      const people = [...peopleByName.values()].sort((a, b) => a.displayName.localeCompare(b.displayName, undefined, { sensitivity: "base" }));
+      return { item: first, plays, people, repeatCount: Math.max(0, plays.length - 1), catalog: catalog ?? null, audiobook };
     });
     return timed.value ? { ...timed.value, timingMs: timed.timingMs } : null;
   }
@@ -840,12 +924,19 @@ export class DashboardService {
     const category = deriveDashboardCategory(row.media_type, libraryName);
     if (!isHouseholdCategory(category.category)) return null as any;
     const artworkKey = this.resolveArtworkKey(row, category.category);
+    const displayName = resolveDashboardAlias(row.dashboard_alias, row.plex_username);
+    const confirmedParticipants = parseConfirmedParticipants(row.confirmed_participants_json);
+    const displayNames = [...new Set([displayName, ...confirmedParticipants.map((participant) => participant.displayName)])]
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
     
     return { 
       id: row.id, 
       userId: row.user_id, 
       username: row.plex_username, 
-      displayName: resolveDashboardAlias(row.dashboard_alias, row.plex_username), 
+      displayName,
+      displayNames,
+      confirmedUserIds: confirmedParticipants.map((participant) => participant.userId),
       displayTitle: resolveDashboardDisplayTitle({
         category: category.category,
         title: row.title,
@@ -873,7 +964,7 @@ export class DashboardService {
       episodeNumber: row.episode_number ?? undefined, 
         evidence: { 
           observed: true, 
-          confirmed: row.confirmation_status === "confirmed", 
+          confirmed: row.confirmation_status === "confirmed" || confirmedParticipants.length > 0,
           promptStatus: row.prompt_status ?? null, 
           plexSyncStatus: row.plex_sync_status ?? null, 
           watchedAtProvenance: row.watched_at_provenance ?? "unknown", 
@@ -914,18 +1005,19 @@ export class DashboardService {
         group = {
           ...item,
           latestWatchedAtMs: watchedAtMs,
-          displayNames: item.displayName ? [item.displayName] : []
+          displayNames: [...(item.displayNames ?? (item.displayName ? [item.displayName] : []))]
         };
+        group.displayName = group.displayNames.join(" + ") || item.displayName;
         buckets.push(group);
         groups.set(item.ratingKey, buckets);
         continue;
       }
 
-      if (item.displayName && !group.displayNames.includes(item.displayName)) {
-        group.displayNames.push(item.displayName);
-        group.displayNames.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-        group.displayName = group.displayNames.join(" + ");
+      for (const displayName of item.displayNames ?? (item.displayName ? [item.displayName] : [])) {
+        if (!group.displayNames.includes(displayName)) group.displayNames.push(displayName);
       }
+      group.displayNames.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+      group.displayName = group.displayNames.join(" + ");
       if (watchedAtMs > group.latestWatchedAtMs) {
         group.latestWatchedAtMs = watchedAtMs;
         group.watchedAt = item.watchedAt;

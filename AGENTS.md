@@ -6,6 +6,14 @@ When implementing a block, update project docs only when the work creates or cha
 
 For numbered block work, use the global `implement-block` skill. Do not create project-specific local skills unless a repeated workflow becomes too specialized for this file and the project docs.
 
+## Mandatory Block Verification
+
+- Before marking any numbered block implemented, run `npm run verify:block`; individual build or test commands do not substitute for this gate.
+- Dashboard changes must extend `tests/e2e/dashboard-regression.spec.mjs` when they add or alter a durable cross-surface invariant.
+- The deterministic block gate must use its isolated fixture database and test-owned port. It must never depend on PM2, the live SQLite database, or external services.
+- After rebuilding or restarting the deployed dashboard, run `npm run verify:live-dashboard` as the separate read-only live smoke gate.
+- Follow `docs/testing/dashboard-regression-contract.md` for selector, fixture, and anti-drift rules.
+
 ## Tool-Friendly Project Rules
 
 This project may be called by another program, bot, supervisor, CLI wrapper, local HTTP API, or future MCP-style wrapper.

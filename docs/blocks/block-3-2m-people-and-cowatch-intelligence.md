@@ -23,21 +23,29 @@ Make the People workspace explain who is active, what each person consumes, and 
 - Replace category-pair co-watch cards with actual person pairings, shared time, shared titles, session count, and provenance mix.
 - Surface unresolved Discord prompts and delivery/sync failures in the shared operations lane, preserving confirmed/inferred/synchronized distinctions.
 - Open person/session/title context through existing shared navigation and 3-2k detail.
+- Add a bounded review queue for `Likely together` exact-item events with `Yes`, `No`, and `Not sure` decisions plus an optional operator-triggered `Ask in Discord` action.
+- Persist review decisions as reversible, idempotent, audited adjudications without rewriting playback observations; `Yes` becomes `Together`, `No` suppresses that matched inference unless new evidence appears, and `Not sure` preserves `Likely together`.
+- Keep review provenance available in detail while using compact primary labels: `Watched by`, `Together`, and `Likely together`.
 
 ## Out Of Scope
 
 - Destructive user merges, account management, profile photos from third parties, social features, or changing co-watch inference.
 - Scheduled household reports from Block 3-3.
+- Automatic Discord prompting for every inference, live-presence claims, bilateral-confirmation requirements, or unexplained confidence percentages in the primary UI.
 
 ## Likely Files Or Areas
 
 - `src/service/dashboardService.ts`
 - `src/service/cowatchingIntelligenceService.ts`
+- `src/db/schema.sql`
 - `src/server/routes.ts`
 - `src/types/api.ts`
 - `src/web/static/dashboard.js`
 - `src/web/static/styles.css`
 - `tests/run-tests.mjs`
+- `docs/tool-surface.md`
+- `docs/permissions.md`
+- `docs/event-log-schema.md`
 
 ## Acceptance Criteria
 
@@ -48,13 +56,14 @@ Make the People workspace explain who is active, what each person consumes, and 
 - Co-watch pairings name people and link to supporting sessions/titles.
 - Confirmed, inferred, and synchronized evidence cannot be mistaken for one another.
 - Existing eligible dismiss/re-prompt actions remain confirmed, idempotent, audited, and isolated from read-only exploration.
+- Review actions are explicit, reversible, idempotent, permission-classified, and audited; three-person events update only the selected participants.
+- `Ask in Discord` is always operator-triggered and cannot create notification loops or silently convert inference into confirmation.
 - One failed People or operations panel does not blank the workspace.
 
 ## Verification And Exit Gate
 
-- `npm run build`
-- `npm test`
-- `npm run verify:tools`
+- `npm run verify:block`
+- `npm run verify:live-dashboard` after rebuilding or restarting the local service.
 - Playwright active/empty/duplicate identity, person filter, co-watch pairing, prompt action, failure, and narrow-screen checks.
 - Audit-log verification for every exercised mutation.
 

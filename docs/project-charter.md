@@ -98,6 +98,8 @@ Phase 2 remains read-oriented. Inferred participation must never trigger Plex wa
 
 Blocks are the executable planning units for AI-assisted development. Every block should advance a goal, reduce a risk, validate an assumption, or prepare the foundation for later work.
 
+Every numbered block must pass `npm run verify:block` before it is marked implemented. Dashboard deployments also require the separate read-only `npm run verify:live-dashboard` smoke check after rebuild or restart. The authoritative invariant and fixture rules live in `docs/testing/dashboard-regression-contract.md`.
+
 When a block creates durable project knowledge, update the relevant docs area so future blocks inherit that context.
 
 ## Block Index And Next Steps

@@ -140,11 +140,12 @@ The corrective sequence is mandatory and ordered:
 2. **3-2h - Dashboard Shell And Design System:** Build visible navigation, shared filters, responsive shell, reusable accessible primitives, and Settings controls for dashboard user visibility and aliases.
 3. **3-2i - Overview Decision Surface:** Deliver mixed-media summary, continue consumption, household activity, and evidence-backed attention work.
 4. **3-2j - Library Category Browser:** Replace the undifferentiated alphabetical grid with bounded category-led consumed-title browsing.
-5. **3-2k - Rich Media Detail Workspace:** Add one shared movie, episodic, and audiobook hierarchy/evidence detail system.
-6. **3-2l - Daily Session Timeline:** Replace multi-month rendering with a bounded day/week investigation view and separate activity feed.
-7. **3-2m - People And Co-Watch Intelligence:** Clarify identities, per-person behavior, real person pairings, and prompt/evidence state.
-8. **3-2n - Hierarchy Progress Workspace:** Provide lazy, bounded progress for episodic media, audiobooks, and movies.
-9. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
+5. **3-2j-1 - Co-Watch Evidence Semantics:** Separate title-level `Watched by` participation from human-confirmed `Together` and exact-item inferred `Likely together` before rich detail consumes relationship data.
+6. **3-2k - Rich Media Detail Workspace:** Add one shared movie, episodic, and audiobook hierarchy/evidence detail system.
+7. **3-2l - Daily Session Timeline:** Replace multi-month rendering with a bounded day/week investigation view and separate activity feed.
+8. **3-2m - People And Co-Watch Intelligence:** Clarify identities, per-person behavior, real person pairings, evidence review, and prompt state.
+9. **3-2n - Hierarchy Progress Workspace:** Provide lazy, bounded progress for episodic media, audiobooks, and movies.
+10. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
 
 Each block must pass its own exit gate before the next begins. Block 3-3 is paused until 3-2o completes.
 

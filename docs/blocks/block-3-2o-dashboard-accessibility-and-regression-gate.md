@@ -22,6 +22,7 @@ Prove the redesigned dashboard is coherent, responsive, accessible, performant, 
 - Verify loading, empty, partial failure, stale item, artwork failure, no-results, and offline-adapter states.
 - Verify every media card/detail surface uses the correct canonical poster/cover, including audiobook cases where book, author, artist, series, album, and chapter artwork differ.
 - Verify Dashboard People settings end to end: default shown state, exact-username default label, alias set/reset, hide/show, service-restart persistence, exclusion from every dashboard layout/aggregate, and no effect on ingestion, Discord, copy history, audit, or stored evidence.
+- Verify `Watched by`, `Together`, and `Likely together` semantics end to end, including different episodes, non-overlapping exact-item plays, confirmed, denied, unknown-timing, three-person, hidden-user, and reviewed inference cases.
 - Re-run realistic performance budgets and record payload size, DOM size, and interactive timing for each layout.
 - Verify CSV privacy/content, browser-history restoration, localStorage migration/fallback, and no private paths, tokens, Discord IDs, or authenticated URLs in public responses/markup.
 - Run regression checks for Copy History, Audit, Settings, Discord prompt actions, PM2 single-process behavior, API/CLI contracts, and artwork proxy.
@@ -51,15 +52,14 @@ Prove the redesigned dashboard is coherent, responsive, accessible, performant, 
 - Public-read dashboard surfaces and CSV contain no secrets or private local data.
 - No audiobook card or detail uses author/artist artwork when a canonical book cover exists, and no media card with an available canonical poster/cover shows a generic play icon.
 - Hidden users and their activity are absent from every dashboard view and aggregate; aliases are consistent, presentation-only, and never alter stable identity or tool-facing records.
+- No title-level participant list, ordinary overlap, synchronized Plex flag, or missing-timing case is presented as confirmed or likely co-watching.
 - Existing non-dashboard workflows and tool contracts pass unchanged.
 - The final browser review demonstrates the redesign contract rather than merely resembling a mockup.
 
 ## Verification And Release Gate
 
-- `npm run build`
-- `npm test`
-- `npm run verify:tools`
-- `node --check src/web/static/dashboard.js`
+- `npm run verify:block`
+- `npm run verify:live-dashboard` after rebuilding or restarting the local service.
 - Complete and attach the documented Playwright matrix results.
 - Restart the PM2 service and perform a live localhost smoke test.
 - Do not move these blocks to `completed/` or resume Block 3-3 until every release criterion passes.

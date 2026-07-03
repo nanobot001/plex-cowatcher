@@ -1830,6 +1830,146 @@ test("dashboard service falls back to catalog libraries and groups explorer card
   });
 });
 
+test("dashboard library browser sorts canonical titles and excludes hidden-user aggregates", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const users = db.prepare("SELECT id, plex_username FROM users ORDER BY plex_username").all();
+    const byName = Object.fromEntries(users.map((user) => [user.plex_username, user]));
+    db.prepare("UPDATE users SET dashboard_shown = 0 WHERE plex_username = 'Viewer'").run();
+    const now = new Date();
+    const insert = db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+    const add = (userId, key, title, minutesAgo, completed = true, progress = 100) => {
+      const watchedAt = new Date(now.getTime() - minutesAgo * 60 * 1000).toISOString();
+      insert.run(userId, key, "movie", "Movies", title, watchedAt, progress, 7200000, completed ? 1 : 0, watchedAt, watchedAt);
+    };
+    add(byName.Tony.id, "movie-zulu", "2020 - Zulu", 5);
+    add(byName.Tony.id, "movie-alpha", "!Alpha", 10);
+    add(byName.Tony.id, "movie-bravo", "Bravo", 15);
+    add(byName.Tony.id, "movie-bravo", "Bravo", 20);
+    add(byName.Tony.id, "movie-continue", "Continuing", 2, false, 42);
+    add(byName.Viewer.id, "movie-hidden", "Hidden Favorite", 1);
+    add(byName.Viewer.id, "movie-hidden", "Hidden Favorite", 3);
+
+    const service = new DashboardService(db);
+    const titleSorted = service.getMedia({ category: "movie", sort: "title" });
+    assert.deepEqual(titleSorted.items.map((item) => item.title), ["!Alpha", "Bravo", "Continuing", "2020 - Zulu"]);
+    assert.equal(titleSorted.items.some((item) => item.title === "Hidden Favorite"), false);
+    assert.equal(titleSorted.items.every((item) => typeof item.groupKey === "string" && item.groupKey.length > 0), true);
+
+    const playsSorted = service.getMedia({ category: "movie", sort: "plays" });
+    assert.equal(playsSorted.items[0].title, "Bravo");
+    assert.equal(playsSorted.items[0].plays, 2);
+
+    const firstPage = service.getMedia({ category: "movie", sort: "title", limit: 2, offset: 0 });
+    const secondPage = service.getMedia({ category: "movie", sort: "title", limit: 2, offset: 2 });
+    assert.equal(firstPage.total, 4);
+    assert.deepEqual(firstPage.items.map((item) => item.groupKey), service.getMedia({ category: "movie", sort: "title", limit: 2, offset: 0 }).items.map((item) => item.groupKey));
+    assert.equal(firstPage.items.some((item) => secondPage.items.some((candidate) => candidate.groupKey === item.groupKey)), false);
+
+    const continuePage = service.getContinueConsuming({ category: "movie", sort: "progress", limit: 1, offset: 0 });
+    assert.equal(continuePage.total, 1);
+    assert.equal(continuePage.items[0].title, "Continuing");
+    assert.equal(continuePage.items[0].percentComplete, 42);
+    assert.equal(Array.isArray(service.getContinueWatching({ category: "movie", limit: 1 })), true);
+  });
+});
+
+test("dashboard library participant labels aggregate visible aliases without implying co-watching", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const now = new Date();
+    const nowIso = now.toISOString();
+    db.prepare("UPDATE users SET dashboard_alias = 'Big T' WHERE plex_username = 'Tony'").run();
+    db.prepare(`INSERT INTO users
+      (plex_username,display_name,dashboard_alias,dashboard_shown,is_source_user,is_typical_cowatcher,enabled,created_at,updated_at)
+      VALUES ('Alex','Alex','Ace',1,0,1,1,?,?)`).run(nowIso, nowIso);
+    db.prepare(`INSERT INTO users
+      (plex_username,display_name,dashboard_alias,dashboard_shown,is_source_user,is_typical_cowatcher,enabled,created_at,updated_at)
+      VALUES ('Hidden','Hidden','Secret',0,0,1,1,?,?)`).run(nowIso, nowIso);
+    const users = db.prepare("SELECT id, plex_username FROM users").all();
+    const byName = Object.fromEntries(users.map((user) => [user.plex_username, user]));
+    const insert = db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,grandparent_rating_key,parent_rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    const addEpisode = (username, ratingKey, minutesAgo) => {
+      const watchedAt = new Date(now.getTime() - minutesAgo * 60 * 1000).toISOString();
+      insert.run(byName[username].id, ratingKey, "show-shared", "season-shared", "episode", "TV Shows", `Episode ${ratingKey}`, "Shared Show", watchedAt, 45, 1800000, 0, watchedAt, watchedAt);
+    };
+    addEpisode("Alex", "episode-1", 1);
+    addEpisode("Tony", "episode-2", 2);
+    addEpisode("Tony", "episode-2", 3);
+    addEpisode("Hidden", "episode-4", 4);
+    addEpisode("Viewer", "episode-3", 2 * 24 * 60);
+
+    const service = new DashboardService(db);
+    const media = service.getMedia({ category: "tv", search: "Shared Show", completed: false });
+    assert.equal(media.total, 1);
+    assert.deepEqual(media.items[0].displayNames, ["Ace", "Big T", "Viewer"]);
+    assert.equal(media.items[0].people.length, 3);
+    assert.equal(media.items[0].displayName, "Ace");
+
+    const continuing = service.getContinueConsuming({ category: "tv", search: "Shared Show" });
+    assert.equal(continuing.total, 1);
+    assert.deepEqual(continuing.items[0].displayNames, ["Ace", "Big T", "Viewer"]);
+
+    const personFiltered = service.getMedia({ category: "tv", user: "Tony" });
+    assert.deepEqual(personFiltered.items[0].displayNames, ["Big T"]);
+    const dateFiltered = service.getMedia({ category: "tv", dateFrom: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString() });
+    assert.deepEqual(dateFiltered.items[0].displayNames, ["Ace", "Big T"]);
+  });
+});
+
+test("dashboard cards and detail include explicit confirmed participants without duplicate playback", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const now = new Date().toISOString();
+    const users = db.prepare("SELECT id, plex_username FROM users").all();
+    const byName = Object.fromEntries(users.map((user) => [user.plex_username, user]));
+    db.prepare("UPDATE users SET dashboard_alias = 'Just J' WHERE plex_username = 'Viewer'").run();
+    db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,grandparent_rating_key,parent_rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(byName.Tony.id, "confirmed-episode", "confirmed-show", "confirmed-season", "episode", "TV Shows", "Only Source Observed", "Confirmed Show", now, 100, 1800000, 1, now, now);
+    const event = db.prepare(`INSERT INTO watch_events
+      (source_user_id,rating_key,media_type,library_name,title,show_title,watched_at,prompt_status,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      .run(byName.Tony.id, "confirmed-episode", "episode", "TV Shows", "Only Source Observed", "Confirmed Show", now, "resolved", now, now);
+    db.prepare(`INSERT INTO cowatch_confirmations
+      (watch_event_id,target_user_id,confirmation_method,status,plex_sync_status,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?)`)
+      .run(event.lastInsertRowid, byName.Viewer.id, "discord", "confirmed", "marked_watched", now, now);
+
+    const service = new DashboardService(db);
+    const activity = service.getActivity({ ratingKey: "confirmed-episode" }).items[0];
+    assert.deepEqual(activity.displayNames, ["Just J", "Tony"]);
+    assert.deepEqual(activity.confirmedUserIds, [byName.Viewer.id]);
+    assert.equal(activity.evidence.confirmed, true);
+
+    const media = service.getMedia({ category: "tv", search: "Confirmed Show" });
+    assert.deepEqual(media.items[0].displayNames, ["Just J", "Tony"]);
+    assert.deepEqual(new Set(media.items[0].people), new Set([byName.Tony.id, byName.Viewer.id]));
+    const recent = service.getOverview({}).recentPlayback.find((item) => item.ratingKey === "confirmed-episode");
+    assert.ok(recent);
+    assert.deepEqual(recent.displayNames, ["Just J", "Tony"]);
+    assert.deepEqual(service.getDetail("confirmed-episode").people.map((person) => person.displayName), ["Just J", "Tony"]);
+
+    db.prepare("UPDATE users SET dashboard_shown = 0 WHERE plex_username = 'Viewer'").run();
+    const hiddenActivity = service.getActivity({ ratingKey: "confirmed-episode" }).items[0];
+    assert.deepEqual(hiddenActivity.displayNames, ["Tony"]);
+    assert.deepEqual(hiddenActivity.confirmedUserIds, []);
+    assert.equal(hiddenActivity.evidence.confirmed, false);
+  });
+});
+
+test("dashboard poster cards retain visual viewer badges and accessible watched-by text", () => {
+  const dashboardSource = fs.readFileSync(path.resolve("src/web/static/dashboard.js"), "utf8");
+  assert.match(dashboardSource, /const libraryArt=x=>[^;]+viewerBadge\(x\)/);
+  assert.match(dashboardSource, /const card=x=>[^;]+\$\{libraryArt\(x\)\}[^;]+\$\{watchedBy\(x\)\}/);
+  assert.match(dashboardSource, /aria-hidden="true" title="\$\{esc\(`Watched by/);
+});
+
 test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed prompt actions", async () => {
   await withTestDb(async (db) => {
     seedUsers(db);
@@ -1867,6 +2007,14 @@ test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed promp
       assert.equal(timeline.data.items.length,1);
       assert.equal(timeline.data.sessions.length,1);
       assert.equal(timeline.data.sessions[0].itemCount,1);
+      const media = await (await fetch(base+"/api/dashboard/media?category=movie&sort=plays&limit=1")).json();
+      assert.equal(media.ok,true);
+      assert.equal(media.data.items[0].groupKey,"movie:Movies:movie-http");
+      const continueConsuming = await (await fetch(base+"/api/dashboard/continue-consuming?limit=1")).json();
+      assert.equal(continueConsuming.ok,true);
+      assert.equal(continueConsuming.data.total,0);
+      const continueWatching = await (await fetch(base+"/api/dashboard/continue-watching?limit=1")).json();
+      assert.equal(Array.isArray(continueWatching.data),true);
       const detail = await (await fetch(base+"/api/dashboard/detail/movie-http")).json();
       assert.equal(detail.ok,true);
       assert.equal(detail.data.item.title,"HTTP Movie");
