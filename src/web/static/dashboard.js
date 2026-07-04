@@ -124,7 +124,7 @@ const groupRecentCards = items => {
   }
   return result.sort((a, b) => new Date(b.watchedAt) - new Date(a.watchedAt));
 };
-const activityRow=x=>'<article class="activity-row" tabindex="0" data-item="'+encodeURIComponent(JSON.stringify(x))+'">'+art(x)+'<div class="activity-copy"><div class="activity-heading"><strong>'+mediaTitle(x)+'</strong><span>'+esc(x.categoryLabel)+'</span></div>'+(x.category==="audiobook"&&x.showTitle?'<p>By '+esc(x.showTitle)+'</p>':x.showTitle&&x.showTitle!==x.displayTitle?'<p>'+esc(x.title)+'</p>':'')+'<p>'+esc(x.displayName)+' &middot; '+fmtDate(x.watchedAt)+' &middot; '+fmtDuration(x.duration)+'</p>'+evidence(x)+'</div><div class="progress-ring">'+esc(x.percentComplete??"--")+'%</div></article>';
+const activityRow=x=>'<article class="activity-row" tabindex="0" data-select-key="'+esc(x.groupKey || x.ratingKey)+'" data-item="'+encodeURIComponent(JSON.stringify(x))+'">'+art(x)+'<div class="activity-copy"><div class="activity-heading"><strong>'+mediaTitle(x)+'</strong><span>'+esc(x.categoryLabel)+'</span></div>'+(x.category==="audiobook"&&x.showTitle?'<p>By '+esc(x.showTitle)+'</p>':x.showTitle&&x.showTitle!==x.displayTitle?'<p>'+esc(x.title)+'</p>':'')+'<p>'+esc(x.displayName)+' &middot; '+fmtDate(x.watchedAt)+' &middot; '+fmtDuration(x.duration)+'</p>'+evidence(x)+'</div><div class="progress-ring">'+esc(x.percentComplete??"--")+'%</div></article>';
 const empty=label=>'<div class="panel-state"><h3>No '+esc(label)+' here yet</h3><p>Try broadening the filters. Missing evidence stays unknown.</p></div>';
 const encodeRoute=route=>encodeURIComponent(JSON.stringify(route));
 const fmtHourValue=minutes=>{
@@ -151,8 +151,8 @@ const routeQuery=()=>{
     if(state.explorer.section)p.set("section",state.explorer.section);
     if(state.explorer.sort!=="recent")p.set("sort",state.explorer.sort);
     if(state.explorer.offset)p.set("offset",String(state.explorer.offset));
-    if(state.explorer.selected)p.set("selected",state.explorer.selected);
   }
+  if(state.explorer.selected)p.set("selected",state.explorer.selected);
   return p;
 };
 function restoreLocationState(){
@@ -233,12 +233,161 @@ function applyRoute(route){
   render();
 }
 
-async function openDetail(x){
-  document.querySelector("#detail-content").innerHTML='<div class="panel-state">Loading rich detail.</div>';dialog.showModal();
-  let d;try{d=await fetchJson("/api/dashboard/detail/"+encodeURIComponent(x.ratingKey));}catch{d={item:x,plays:[x],people:(x.displayNames?.length?x.displayNames:[x.displayName]).filter(Boolean).map(displayName=>({displayName})),repeatCount:0,catalog:null,audiobook:null};}
-  
-  const a=d.audiobook;
-  const isEpisode = x.category==="tv"||x.category==="anime"||x.category==="classic_tv";
+function getRatingKeyFromSelected(selected) {
+  if (!selected) return "";
+  const parts = selected.split(":");
+  return parts[parts.length - 1];
+}
+
+function selectCardInDOM(selectedKey) {
+  document.querySelectorAll(".poster-card.selected, .cw-card.selected, .activity-row.selected").forEach(el => {
+    el.classList.remove("selected");
+    el.setAttribute("aria-pressed", "false");
+  });
+  if (selectedKey) {
+    const card = document.querySelector(`[data-select-key="${selectedKey}"]`);
+    if (card) {
+      card.classList.add("selected");
+      card.setAttribute("aria-pressed", "true");
+    }
+  }
+}
+
+async function openDetail(x) {
+  state.explorer.selected = x.groupKey || x.ratingKey;
+  save();
+  selectCardInDOM(state.explorer.selected);
+  const targetHash = "#" + state.layout + "?" + routeQuery();
+  if (location.hash !== targetHash) {
+    history.replaceState({}, "", targetHash);
+  }
+  await syncDetailFromURL();
+}
+
+let activeDetailFetchAbortController = null;
+
+async function syncDetailFromURL() {
+  if (activeDetailFetchAbortController) {
+    activeDetailFetchAbortController.abort();
+    activeDetailFetchAbortController = null;
+  }
+
+  if (!state.explorer.selected) {
+    if (dialog.hasAttribute("open")) {
+      dialog.close();
+    }
+    return;
+  }
+
+  const ratingKey = getRatingKeyFromSelected(state.explorer.selected);
+  if (!ratingKey) {
+    if (dialog.hasAttribute("open")) {
+      dialog.close();
+    }
+    return;
+  }
+
+  // Open dialog as modal universally (handles overlay, dim backdrop, and focus trap natively)
+  if (!dialog.hasAttribute("open")) {
+    dialog.showModal();
+  }
+
+  // Optimistic rendering from active DOM card to eliminate loading lag
+  const cardElement = document.querySelector(`[data-select-key="${state.explorer.selected}"]`);
+  let optimisticItem = null;
+  if (cardElement) {
+    const rawData = cardElement.dataset.libraryItem || cardElement.dataset.item;
+    if (rawData) {
+      try {
+        optimisticItem = JSON.parse(decodeURIComponent(rawData));
+      } catch (e) {}
+    }
+  }
+
+  if (optimisticItem) {
+    renderDetailContent({
+      item: optimisticItem,
+      plays: [],
+      people: [],
+      repeatCount: 0,
+      catalog: null,
+      audiobook: null,
+      hierarchy: null,
+      isOptimistic: true
+    });
+  } else {
+    document.querySelector("#detail-content").innerHTML = '<div class="panel-state">Loading rich detail.</div>';
+  }
+
+  activeDetailFetchAbortController = new AbortController();
+  const signal = activeDetailFetchAbortController.signal;
+
+  try {
+    const d = await fetchJson("/api/dashboard/detail/" + encodeURIComponent(ratingKey), { signal });
+    if (signal.aborted) return;
+    if (d) {
+      renderDetailContent(d);
+    } else {
+      document.querySelector("#detail-content").innerHTML = '<div class="panel-state error">Detail unavailable.</div>';
+    }
+  } catch (err) {
+    if (signal.aborted) return;
+    document.querySelector("#detail-content").innerHTML = '<div class="panel-state error">Could not load details.</div>';
+  }
+}
+
+async function toggleEpisodeLazyPlays(event, episodeRatingKey) {
+  event.stopPropagation();
+  const container = document.getElementById("lazy-ep-" + episodeRatingKey);
+  if (!container) return;
+
+  if (container.style.display === "block") {
+    container.style.display = "none";
+    return;
+  }
+
+  container.style.display = "block";
+  container.innerHTML = "Loading plays...";
+
+  try {
+    const d = await fetchJson("/api/dashboard/detail/" + encodeURIComponent(episodeRatingKey));
+    if (!d || !d.plays || d.plays.length === 0) {
+      container.innerHTML = "No session history recorded.";
+      return;
+    }
+    
+    const playsHtml = d.plays.map(p => {
+      const label = p.evidence?.confirmed ? "Together" : p.evidence?.timingRelationship === "overlap" ? "Likely together" : "Watched by";
+      const badgeClass = p.evidence?.confirmed ? "confirmed" : p.evidence?.timingRelationship === "overlap" ? "observed" : "synced";
+      const dateStr = fmtDate(p.watchedAt);
+      const userText = p.displayNames?.length ? p.displayNames.join(", ") : p.displayName;
+      return `
+        <div class="detail-lazy-play-item">
+          <div>
+            <span class="proof ${badgeClass}">${esc(label)}</span>
+            <strong>${esc(userText)}</strong>
+          </div>
+          <span class="text-muted">${esc(dateStr)}</span>
+        </div>
+      `;
+    }).join('');
+
+    container.innerHTML = `
+      <div class="detail-lazy-plays">
+        ${playsHtml}
+      </div>
+    `;
+  } catch (err) {
+    container.innerHTML = "Error loading play history.";
+  }
+}
+
+window.toggleEpisodeLazyPlays = toggleEpisodeLazyPlays;
+
+function renderDetailContent(d) {
+  const x = d.item;
+  const a = d.audiobook;
+  const isEpisode = x.category === "tv" || x.category === "anime" || x.category === "classic_tv";
   const seasonEp = isEpisode && (x.seasonNumber != null || x.episodeNumber != null)
     ? `Season ${x.seasonNumber ?? '?'}, Episode ${x.episodeNumber ?? '?'}`
     : '';
@@ -259,25 +408,133 @@ async function openDetail(x){
     headerHtml = '<p class="eyebrow">'+esc(x.categoryLabel)+'</p><h2 style="margin-bottom: 12px;">'+esc(x.title)+'</h2>';
   }
 
-  const hierarchy = a 
-    ? '<h3>Audiobook hierarchy</h3><p>'+[a.parent_series_title,a.subseries_title,a.series_title,a.title].filter(Boolean).map(esc).join(" > ")+'</p><p>'+esc(a.chapter_count??"Unknown")+' chapters &middot; '+esc(a.enrichment_status)+'</p>'
-    : '';
+  let artHtml = '';
+  if (x.category === "audiobook" && a) {
+    artHtml = `<img class="poster" src="/api/artwork/${encodeURIComponent(x.ratingKey)}" alt="${esc(a.title)}" onerror="this.src='/api/artwork/${encodeURIComponent(x.parentRatingKey || x.ratingKey)}'">`;
+  } else {
+    artHtml = art(x);
+  }
+
+  let hierarchyHtml = '';
+  let evidenceHtml = '';
+
+  if (d.isOptimistic) {
+    hierarchyHtml = `
+      <div class="detail-hierarchy-section">
+        <h3>Hierarchy</h3>
+        <div class="panel-state compact">Loading hierarchy...</div>
+      </div>
+    `;
+    evidenceHtml = `
+      <div class="detail-evidence-section">
+        <h3>Playback Sessions & Evidence</h3>
+        <div class="panel-state compact">Loading playback details...</div>
+      </div>
+    `;
+  } else {
+    if (d.hierarchy && d.hierarchy.type === "tv") {
+      hierarchyHtml = `
+        <div class="detail-hierarchy-section">
+          <h3>Show Hierarchy</h3>
+          <div class="detail-hierarchy-tree">
+            ${d.hierarchy.seasons.map(s => `
+              <div class="detail-tree-season" data-season-num="${s.seasonNumber}">
+                <div class="detail-tree-season-header" onclick="this.parentElement.classList.toggle('expanded')">
+                  <span>${esc(s.seasonName)}</span>
+                  <span class="chevron">▼</span>
+                </div>
+                <div class="detail-tree-season-episodes">
+                  ${s.episodes.map(ep => {
+                    const stateBadges = Object.entries(ep.watchedStates).map(([person, state]) => `
+                      <span class="state-badge ${esc(state)}" title="${esc(person)}: ${esc(state)}">${esc(person)}</span>
+                    `).join('');
+                    return `
+                      <div class="detail-tree-episode-row" data-episode-key="${esc(ep.ratingKey)}" onclick="toggleEpisodeLazyPlays(event, '${esc(ep.ratingKey)}')">
+                        <div class="detail-tree-episode-meta">
+                          <strong>Ep ${ep.episodeNumber != null ? ep.episodeNumber : '?'}: ${esc(ep.title)}</strong>
+                          <div class="state-badge-group">${stateBadges}</div>
+                        </div>
+                        <div class="detail-tree-episode-lazy" id="lazy-ep-${esc(ep.ratingKey)}" style="display:none;"></div>
+                      </div>
+                    `;
+                  }).join('')}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    } else if (d.hierarchy && d.hierarchy.type === "audiobook") {
+      const parentInfo = [d.hierarchy.parentSeries, d.hierarchy.subseries, d.hierarchy.series].filter(Boolean).map(esc).join(" &middot; ");
+      hierarchyHtml = `
+        <div class="detail-hierarchy-section">
+          <h3>Book Hierarchy</h3>
+          ${parentInfo ? `<p class="detail-episode-meta">${parentInfo}</p>` : ''}
+          <div class="detail-hierarchy-tree">
+            ${d.hierarchy.chapters.map(ch => {
+              const stateBadges = Object.entries(ch.watchedStates).map(([person, state]) => `
+                <span class="state-badge ${esc(state)}" title="${esc(person)}: ${esc(state)}">${esc(person)}</span>
+              `).join('');
+              return `
+                <div class="detail-tree-episode-row" data-episode-key="${esc(ch.ratingKey)}" onclick="toggleEpisodeLazyPlays(event, '${esc(ch.ratingKey)}')">
+                  <div class="detail-tree-episode-meta">
+                    <strong>${esc(ch.title)}</strong>
+                    <div class="state-badge-group">${stateBadges}</div>
+                  </div>
+                  <div class="detail-tree-episode-lazy" id="lazy-ep-${esc(ch.ratingKey)}" style="display:none;"></div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    if (d.plays && d.plays.length > 0) {
+      evidenceHtml = `
+        <div class="detail-evidence-section">
+          <h3>Playback Sessions & Evidence</h3>
+          <div class="detail-lazy-plays">
+            ${d.plays.map(p => {
+              const label = p.evidence?.confirmed ? "Together" : p.evidence?.timingRelationship === "overlap" ? "Likely together" : "Watched by";
+              const badgeClass = p.evidence?.confirmed ? "confirmed" : p.evidence?.timingRelationship === "overlap" ? "observed" : "synced";
+              const dateStr = fmtDate(p.watchedAt);
+              const userText = p.displayNames?.length ? p.displayNames.join(", ") : p.displayName;
+              return `
+                <div class="detail-lazy-play-item">
+                  <div>
+                    <span class="proof ${badgeClass}">${esc(label)}</span>
+                    <strong>${esc(userText)}</strong>
+                  </div>
+                  <span class="text-muted">${esc(dateStr)}</span>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    }
+  }
 
   const durationText = fmtDuration(d.catalog?.duration || x.duration);
+  const peopleList = d.isOptimistic
+    ? (x.displayNames?.length ? x.displayNames : [x.displayName]).filter(Boolean).map(n => ({ displayName: n }))
+    : d.people || [];
+  const playsCount = d.isOptimistic ? "..." : d.plays.length;
+  const repeatCount = d.isOptimistic ? "..." : d.repeatCount;
 
   const detailHtml = `
     <div class="detail-layout">
       <div class="detail-poster-wrapper">
-        ${art(x)}
+        ${artHtml}
       </div>
       <div class="detail-info-wrapper">
         <div>${headerHtml}</div>
-        ${hierarchy ? `<div>${hierarchy}</div>` : ''}
         <dl class="detail-metadata">
           <dt>People</dt>
-          <dd data-testid="detail-people">${d.people.map(p=>esc(p.displayName)).join(", ")}</dd>
+          <dd data-testid="detail-people">${peopleList.map(p=>esc(p.displayName)).join(", ")}</dd>
           <dt>Plays</dt>
-          <dd>${d.plays.length} (${d.repeatCount} repeats)</dd>
+          <dd>${playsCount} (${repeatCount} repeats)</dd>
           <dt>Library</dt>
           <dd>${esc(x.libraryName||"Unknown")}</dd>
           <dt>Consumed</dt>
@@ -289,11 +546,12 @@ async function openDetail(x){
           <dt>Raw type</dt>
           <dd>${esc(x.mediaType)}${x.categoryDerived ? " (category derived)" : ""}</dd>
         </dl>
-        ${evidence(x)}
+        ${hierarchyHtml}
+        ${evidenceHtml}
       </div>
     </div>
   `;
-  
+
   document.querySelector("#detail-content").innerHTML = detailHtml;
 }
 
@@ -403,7 +661,7 @@ async function renderOverview() {
   const recentPlaybackItems = groupRecentCards(Array.isArray(d.recentPlayback) ? d.recentPlayback : Array.isArray(d.activity?.items) ? d.activity.items.slice(0, 24) : []);
   const cwHtml = recentPlaybackItems.length
     ? `<div class="cw-carousel cw-carousel-overview">${recentPlaybackItems.map(cw => `
-        <article class="cw-card" data-testid="recent-playback-card" tabindex="0" data-item="${encodeURIComponent(JSON.stringify(cw))}">
+        <article class="cw-card" data-testid="recent-playback-card" tabindex="0" data-select-key="${esc(cw.groupKey || cw.ratingKey)}" data-item="${encodeURIComponent(JSON.stringify(cw))}">
           ${libraryArt(cw)}
           <div class="cw-bar"><i style="width:${esc(cw.percentComplete ?? 0)}%"></i></div>
           <p>${esc(cw.displayTitle || cw.title || '')}</p>
@@ -655,15 +913,9 @@ async function renderExplorer() {
     return `${count} episode${count===1?"":"s"} · ${x.plays} play${x.plays===1?"":"s"}`;
   };
   const card=x=>`<article class="poster-card library-card ${state.explorer.selected===x.groupKey?"selected":""}" data-testid="library-card" tabindex="0" role="button" aria-pressed="${state.explorer.selected===x.groupKey}" data-library-item="${encodeURIComponent(JSON.stringify(x))}" data-select-key="${esc(x.groupKey)}">${libraryArt(x)}${x.percentComplete!=null&&!x.completed?`<div class="cw-bar"><i style="width:${esc(x.percentComplete)}%"></i></div>`:""}<strong>${mediaTitle(x)}</strong><span>${esc(secondary(x))}</span>${watchedBy(x)}</article>`;
-  const detailRegion=selected=>`<aside class="library-detail-reserve" aria-live="polite">
-    <p class="eyebrow">Title workspace</p>
-    ${selected?`<h3>${mediaTitle(selected)}</h3><p>${esc(categoryLabel(selected.category))} selected. Rich hierarchy and evidence arrive in Block 3-2k.</p>`:'<h3>Select a title</h3><p>This reserved workspace will hold media-aware detail in the next block.</p>'}
-  </aside>`;
-
   if(section){
     const d=await fetchJson(endpoint(section,{limit:pageLimit,offset:state.explorer.offset,sort:state.explorer.sort}));
     if(renderVersion!==explorerRenderVersion)return;
-    const selected=d.items.find(item=>item.groupKey===state.explorer.selected);
     const label=explorerSections.find(item=>item.id===section)?.label||categoryLabel(section);
     content.innerHTML=`<div class="library-workspace"><main>
       <section class="dashboard-panel library-all-panel">
@@ -673,7 +925,7 @@ async function renderExplorer() {
         <div class="poster-grid">${d.items.length?d.items.map(card).join(""):empty("consumed titles")}</div>
         ${libraryPager(d)}
       </section>
-    </main>${detailRegion(selected)}</div>`;
+    </main></div>`;
     const sortSelect=content.querySelector("[data-library-sort]");
     if(sortSelect)sortSelect.value=state.explorer.sort;
     return;
@@ -681,7 +933,6 @@ async function renderExplorer() {
 
   const results=await Promise.all(explorerSections.map(item=>fetchJson(endpoint(item.id,{limit:sectionLimit,offset:0,sort:"recent"}))));
   if(renderVersion!==explorerRenderVersion)return;
-  const selected=results.flatMap(result=>result.items).find(item=>item.groupKey===state.explorer.selected);
   const sectionsHtml=explorerSections.map((item,index)=>{
     const d=results[index];
     return `<section class="dashboard-panel library-section" data-section="${item.id}">
@@ -689,7 +940,7 @@ async function renderExplorer() {
       <div class="poster-grid library-preview-grid">${d.items.length?d.items.map(card).join(""):empty(item.label.toLowerCase())}</div>
     </section>`;
   }).join("");
-  content.innerHTML=`<div class="library-workspace"><main class="library-sections">${sectionsHtml}</main>${detailRegion(selected)}</div>`;
+  content.innerHTML=`<div class="library-workspace"><main class="library-sections">${sectionsHtml}</main></div>`;
 }
 
 async function renderPeople() {
@@ -807,6 +1058,7 @@ async function render(){
 
   try{
     await ({overview:renderOverview,timeline:renderTimeline,explorer:renderExplorer,people:renderPeople,progress:renderProgress}[state.layout])();
+    await syncDetailFromURL();
   }catch(e){
     content.innerHTML='<div class="panel-state error"><h3>This panel could not load</h3><p>'+esc(e.message)+'</p><button class="btn" data-retry>Try again</button></div>';
   }
@@ -942,6 +1194,24 @@ content.addEventListener("change",e=>{
 
 dialog.querySelector(".dialog-close").addEventListener("click",()=>dialog.close());
 dialog.addEventListener("click",e=>{if(e.target===dialog)dialog.close();});
+dialog.addEventListener("close",()=>{
+  if(state.explorer.selected){
+    const closedKey = state.explorer.selected;
+    state.explorer.selected="";
+    save();
+    selectCardInDOM("");
+    const targetHash = "#" + state.layout + "?" + routeQuery();
+    if (location.hash !== targetHash) {
+      history.replaceState({}, "", targetHash);
+    }
+    if (closedKey) {
+      const card = document.querySelector(`[data-select-key="${closedKey}"]`);
+      if (card) {
+        card.focus();
+      }
+    }
+  }
+});
 
 window.addEventListener("popstate",()=>{
   restoreLocationState();

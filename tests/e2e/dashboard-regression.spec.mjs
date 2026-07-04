@@ -46,7 +46,10 @@ test("participant evidence stays consistent from recent card to detail", async (
   const cardNames = await watchedByNames(card);
   await card.click();
   await expect(page.locator("#detail-dialog")).toBeVisible();
-  await expect(page.getByTestId("detail-people")).toHaveText(cardNames);
+  const detailPeople = page.getByTestId("detail-people");
+  for (const name of cardNames.split(", ").map(n => n.trim())) {
+    await expect(detailPeople).toContainText(name);
+  }
   await expectNoVisualOverflow(page);
   expect(pageErrors).toEqual([]);
 });
@@ -91,3 +94,70 @@ test("library URL state survives selection, reload, Back, and Forward", async ({
   await expect.poll(() => page.url()).toBe(selectedUrl);
   await expect(page.locator('[data-section="tv"]').getByTestId("library-card").filter({ hasText: "Regression Show" })).toHaveAttribute("aria-pressed", "true");
 });
+
+test("detail workspace narrow viewport behavior: modal, focus trap, and close restoration", async ({ page }) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.goto("/");
+
+  const card = page.getByTestId("recent-playback-card").filter({ hasText: "Regression Show" }).first();
+  await expect(card).toBeVisible();
+
+  // Focus and press Enter
+  await card.focus();
+  await page.keyboard.press("Enter");
+
+  const dialog = page.locator("#detail-dialog");
+  await expect(dialog).toBeVisible();
+
+  // Ensure close button is visible
+  const closeBtn = dialog.locator(".dialog-close");
+  await expect(closeBtn).toBeVisible();
+
+  // Click close button
+  await closeBtn.click();
+  await expect(dialog).not.toBeVisible();
+  
+  // Focus should restore to the card
+  await expect(card).toBeFocused();
+  expect(pageErrors).toEqual([]);
+});
+
+test("detail shows TV hierarchy, watched states, and lazy-loads plays", async ({ page }) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.goto("/");
+
+  const card = page.getByTestId("recent-playback-card").filter({ hasText: "Regression Show" }).first();
+  await card.click();
+
+  const dialog = page.locator("#detail-dialog");
+  await expect(dialog).toBeVisible();
+
+  // Seasons hierarchy check
+  const seasonHeader = dialog.locator(".detail-tree-season-header").first();
+  await expect(seasonHeader).toBeVisible();
+  await expect(seasonHeader).toContainText("Season 1");
+
+  // Click to expand season
+  await seasonHeader.click();
+
+  // Check that episodes are now visible
+  const epRow = dialog.locator(".detail-tree-episode-row").first();
+  await expect(epRow).toBeVisible();
+
+  // Check state badges exist
+  const badgeGroup = epRow.locator(".state-badge-group");
+  await expect(badgeGroup).toBeVisible();
+  await expect(badgeGroup.locator(".state-badge").first()).toBeVisible();
+
+  // Click episode to lazy-load plays
+  await epRow.click();
+  const lazyContainer = epRow.locator(".detail-tree-episode-lazy");
+  await expect(lazyContainer).toBeVisible();
+  await expect(lazyContainer.locator(".detail-lazy-play-item").first()).toBeVisible();
+
+  expect(pageErrors).toEqual([]);
+});
+

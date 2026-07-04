@@ -18,6 +18,8 @@ const filterSchema = z.object({
   dateTo: z.string().optional(),
   user: z.string().optional(),
   ratingKey: z.string().max(200).optional(),
+  grandparentRatingKey: z.string().max(200).optional(),
+  audiobookId: z.preprocess((value) => value === undefined ? undefined : Number(value), z.number().int().optional()),
   category: z.enum(HOUSEHOLD_CATEGORIES).optional(),
   library: z.string().optional(),
   completed: z.preprocess((value) => value === "true" ? true : value === "false" ? false : value, z.boolean().optional()),
@@ -216,6 +218,8 @@ export class DashboardService {
     if (p.dateTo) { where += " AND po.watched_at <= ?"; args.push(new Date(p.dateTo).toISOString()); }
     if (p.user) { where += " AND u.plex_username = ?"; args.push(p.user); }
     if (p.ratingKey) { where += " AND po.rating_key = ?"; args.push(p.ratingKey); }
+    if (p.grandparentRatingKey) { where += " AND (po.grandparent_rating_key = ? OR po.rating_key = ?)"; args.push(p.grandparentRatingKey, p.grandparentRatingKey); }
+    if (p.audiobookId) { where += " AND cat.audiobook_id = ?"; args.push(p.audiobookId); }
     if (p.library) { where += " AND COALESCE(NULLIF(po.library_name, ''), cat.library_title, groupcat.library_title) = ?"; args.push(p.library); }
     if (p.completed !== undefined) { where += " AND po.completed = ?"; args.push(p.completed ? 1 : 0); }
     if (p.search) { where += " AND (po.title LIKE ? OR po.show_title LIKE ?)"; args.push(`%${p.search}%`, `%${p.search}%`); }
@@ -938,11 +942,104 @@ export class DashboardService {
 
   getDetail(ratingKey: string) {
     const timed = withTiming(() => {
-      const plays = this.getActivity({ ratingKey, limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
-      if (!plays.length) return null;
-      const first = plays[0];
-      const catalog = this.db.prepare(`SELECT media_type,title,duration,library_title,grandparent_title,parent_title,leaf_count,source_provenance,audiobook_id FROM content_catalog WHERE rating_key=?`).get(ratingKey) as any;
-      const audiobook = catalog?.audiobook_id ? this.db.prepare(`SELECT title,subtitle,authors_json,narrators_json,parent_series_title,subseries_title,series_title,series_index,chapter_count,total_duration_seconds,source_provenance,enrichment_status FROM audiobook_books WHERE id=?`).get(catalog.audiobook_id) : null;
+      // 1. Resolve top-level metadata from content_catalog or fallback
+      let catalog = this.db.prepare(`SELECT media_type,title,duration,library_title,grandparent_title,parent_title,leaf_count,source_provenance,audiobook_id,grandparent_rating_key,parent_rating_key FROM content_catalog WHERE rating_key=?`).get(ratingKey) as any;
+
+      if (!catalog) {
+        // Check if there are episodes under this grandparent key (meaning the clicked key is a TV show rating key)
+        const ep = this.db.prepare(`SELECT media_type,library_title,grandparent_title,grandparent_rating_key,leaf_count FROM content_catalog WHERE grandparent_rating_key=? LIMIT 1`).get(ratingKey) as any;
+        if (ep) {
+          catalog = {
+            media_type: "show",
+            title: ep.grandparent_title,
+            library_title: ep.library_title,
+            grandparent_title: null,
+            parent_title: null,
+            grandparent_rating_key: null,
+            parent_rating_key: null,
+            leaf_count: ep.leaf_count,
+            audiobook_id: null,
+          };
+        } else {
+          // Check if it's an audiobook book
+          const book = this.db.prepare(`SELECT id,title FROM audiobook_books WHERE id=? LIMIT 1`).get(ratingKey) as any;
+          if (book) {
+            catalog = {
+              media_type: "audiobook",
+              title: book.title,
+              library_title: "Audiobooks",
+              audiobook_id: book.id,
+            };
+          } else {
+            const ab = this.db.prepare(`SELECT cat.audiobook_id, ab.title FROM content_catalog cat JOIN audiobook_books ab ON ab.id = cat.audiobook_id WHERE cat.parent_rating_key=? OR cat.rating_key=? LIMIT 1`).get(ratingKey, ratingKey) as any;
+            if (ab) {
+              catalog = {
+                media_type: "audiobook",
+                title: ab.title,
+                library_title: "Audiobooks",
+                audiobook_id: ab.audiobook_id,
+              };
+            }
+          }
+        }
+      }
+
+      if (!catalog) {
+        // Check if we can get it from playback_observations
+        const obs = this.db.prepare(`SELECT media_type,title,duration,library_name,show_title,season_number,episode_number,grandparent_rating_key,parent_rating_key FROM playback_observations WHERE rating_key=? LIMIT 1`).get(ratingKey) as any;
+        if (obs) {
+          catalog = {
+            media_type: obs.media_type,
+            title: obs.title,
+            duration: obs.duration,
+            library_title: obs.library_name,
+            grandparent_title: obs.show_title,
+            parent_title: obs.season_number != null ? `Season ${obs.season_number}` : null,
+            grandparent_rating_key: obs.grandparent_rating_key,
+            parent_rating_key: obs.parent_rating_key,
+          };
+        }
+      }
+
+      if (!catalog) return null;
+
+      // 2. Fetch audiobook details if applicable
+      const audiobook = catalog.audiobook_id ? this.db.prepare(`SELECT id,title,subtitle,authors_json,narrators_json,parent_series_title,subseries_title,series_title,series_index,chapter_count,total_duration_seconds,source_provenance,enrichment_status FROM audiobook_books WHERE id=?`).get(catalog.audiobook_id) : null;
+
+      // 3. Derive category
+      const libraryName = catalog.library_title || "";
+      const mediaType = catalog.media_type || "";
+      const categoryObj = deriveDashboardCategory(mediaType, libraryName);
+      const category = categoryObj.category;
+
+      // 4. Fetch all plays (playback observations) for the item / show / audiobook
+      let plays: DashboardActivityItem[] = [];
+      if (category === "tv" || category === "classic_tv" || category === "anime") {
+        const showKey = catalog.grandparent_rating_key || ratingKey;
+        plays = this.getActivity({ grandparentRatingKey: showKey, limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
+      } else if (category === "audiobook" && catalog.audiobook_id) {
+        plays = this.getActivity({ audiobookId: catalog.audiobook_id, limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
+      } else {
+        plays = this.getActivity({ ratingKey, limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
+      }
+
+      if (!plays.length) {
+        plays = this.getActivity({ ratingKey, limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
+      }
+
+      const first = plays[0] || {
+        ratingKey,
+        title: catalog.title,
+        showTitle: catalog.grandparent_title,
+        libraryName: catalog.library_title,
+        mediaType: catalog.media_type,
+        category,
+        categoryLabel: categoryObj.label,
+        duration: catalog.duration,
+        watchedAt: new Date().toISOString(),
+      };
+
+      // 5. Exclude hidden/disabled users from aggregate details
       const peopleByName = new Map<string, { userId: number | null; displayName: string }>();
       for (const play of plays) {
         const names = play.displayNames?.length ? play.displayNames : [play.displayName];
@@ -955,7 +1052,154 @@ export class DashboardService {
         }
       }
       const people = [...peopleByName.values()].sort((a, b) => a.displayName.localeCompare(b.displayName, undefined, { sensitivity: "base" }));
-      return { item: first, plays, people, repeatCount: Math.max(0, plays.length - 1), catalog: catalog ?? null, audiobook };
+
+      // 6. Build the rich hierarchy
+      let hierarchy: any = null;
+
+      if (category === "tv" || category === "classic_tv" || category === "anime") {
+        const showKey = catalog.grandparent_rating_key || ratingKey;
+        // Query distinct episodes belonging to this show
+        const episodesCatalog = this.db.prepare(`
+          SELECT rating_key, title, parent_title, parent_rating_key, leaf_count
+          FROM content_catalog
+          WHERE grandparent_rating_key = ?
+          UNION
+          SELECT rating_key, title, 'Season ' || season_number AS parent_title, parent_rating_key, NULL as leaf_count
+          FROM playback_observations
+          WHERE grandparent_rating_key = ?
+        `).all(showKey, showKey) as any[];
+
+        const episodePlays = new Map<string, DashboardActivityItem[]>();
+        for (const play of plays) {
+          if (!episodePlays.has(play.ratingKey)) {
+            episodePlays.set(play.ratingKey, []);
+          }
+          episodePlays.get(play.ratingKey)!.push(play);
+        }
+
+        const seasonsMap = new Map<string, { seasonName: string; episodes: any[] }>();
+        const seenEpisodes = new Set<string>();
+
+        for (const ep of episodesCatalog) {
+          if (seenEpisodes.has(ep.rating_key)) continue;
+          seenEpisodes.add(ep.rating_key);
+
+          const epPlays = episodePlays.get(ep.rating_key) || [];
+          const watchedStates: { [displayName: string]: string } = {};
+
+          for (const person of people) {
+            const userPlays = epPlays.filter(p => {
+              const names = p.displayNames?.length ? p.displayNames : [p.displayName];
+              return names.includes(person.displayName);
+            });
+            if (userPlays.length === 0) {
+              watchedStates[person.displayName] = "unknown";
+            } else if (userPlays.length === 1) {
+              watchedStates[person.displayName] = userPlays[0].completed ? "watched" : "partial";
+            } else {
+              watchedStates[person.displayName] = "repeated";
+            }
+          }
+
+          const seasonName = ep.parent_title || "Season 1";
+          if (!seasonsMap.has(seasonName)) {
+            seasonsMap.set(seasonName, { seasonName, episodes: [] });
+          }
+
+          let episodeNumber = null;
+          const match = ep.title.match(/(?:Episode|Ep\.)\s*(\d+)/i);
+          if (match) {
+            episodeNumber = Number(match[1]);
+          } else if (epPlays.length > 0) {
+            episodeNumber = epPlays[0].episodeNumber;
+          }
+
+          seasonsMap.get(seasonName)!.episodes.push({
+            ratingKey: ep.rating_key,
+            title: ep.title,
+            episodeNumber,
+            duration: epPlays[0]?.duration || 0,
+            watchedStates
+          });
+        }
+
+        const seasons = [...seasonsMap.values()].map(s => {
+          const seasonNum = Number(s.seasonName.replace(/\D/g, "")) || 1;
+          s.episodes.sort((a, b) => (a.episodeNumber || 0) - (b.episodeNumber || 0) || a.title.localeCompare(b.title));
+          return { ...s, seasonNumber: seasonNum };
+        }).sort((a, b) => a.seasonNumber - b.seasonNumber);
+
+        hierarchy = {
+          type: "tv",
+          showTitle: catalog.grandparent_title || catalog.title,
+          seasons
+        };
+
+      } else if (category === "audiobook" && audiobook) {
+        const chaptersCatalog = this.db.prepare(`
+          SELECT rating_key, title, duration
+          FROM content_catalog
+          WHERE audiobook_id = ?
+          ORDER BY title, rating_key
+        `).all(audiobook.id) as any[];
+
+        const chapterPlays = new Map<string, DashboardActivityItem[]>();
+        for (const play of plays) {
+          if (!chapterPlays.has(play.ratingKey)) {
+            chapterPlays.set(play.ratingKey, []);
+          }
+          chapterPlays.get(play.ratingKey)!.push(play);
+        }
+
+        const chapters = chaptersCatalog.map(ch => {
+          const chPlays = chapterPlays.get(ch.rating_key) || [];
+          const watchedStates: { [displayName: string]: string } = {};
+
+          for (const person of people) {
+            const userPlays = chPlays.filter(p => {
+              const names = p.displayNames?.length ? p.displayNames : [p.displayName];
+              return names.includes(person.displayName);
+            });
+            if (userPlays.length === 0) {
+              watchedStates[person.displayName] = "unknown";
+            } else if (userPlays.length === 1) {
+              watchedStates[person.displayName] = userPlays[0].completed ? "watched" : "partial";
+            } else {
+              watchedStates[person.displayName] = "repeated";
+            }
+          }
+
+          return {
+            ratingKey: ch.rating_key,
+            title: ch.title,
+            duration: ch.duration || chPlays[0]?.duration || 0,
+            watchedStates
+          };
+        });
+
+        hierarchy = {
+          type: "audiobook",
+          parentSeries: audiobook.parent_series_title,
+          subseries: audiobook.subseries_title,
+          series: audiobook.series_title,
+          bookTitle: audiobook.title,
+          chapters
+        };
+      } else {
+        hierarchy = {
+          type: "movie"
+        };
+      }
+
+      return {
+        item: first,
+        plays,
+        people,
+        repeatCount: Math.max(0, plays.length - 1),
+        catalog,
+        audiobook,
+        hierarchy
+      };
     });
     return timed.value ? { ...timed.value, timingMs: timed.timingMs } : null;
   }

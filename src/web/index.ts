@@ -47,11 +47,11 @@ export function registerWebRoutes(router: Router): void {
           <p id="active-filters" class="active-filters"></p>
           <div id="dashboard-content"></div>
         </div>
+        <dialog id="detail-dialog">
+          <button class="dialog-close" formmethod="dialog">&times;</button>
+          <div id="detail-content"></div>
+        </dialog>
       </div>
-      <dialog id="detail-dialog">
-        <button class="dialog-close" formmethod="dialog">&times;</button>
-        <div id="detail-content"></div>
-      </dialog>
       <script src="/static/dashboard.js"></script>
     `));
   });

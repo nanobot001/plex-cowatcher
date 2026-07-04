@@ -1061,26 +1061,101 @@ legend { font-size: 0.9rem; font-weight: 600; color: #06B6D4; padding: 0 12px; }
 
 /* Dialog Modal */
 dialog {
-  color: var(--text-main); background: rgba(15,20,25,0.95); backdrop-filter: blur(30px);
-  border: 1px solid rgba(255,255,255,0.1); border-radius: 24px;
-  max-width: 700px; width: 90%; box-shadow: 0 40px 100px rgba(0,0,0,0.8);
-  padding: 32px;
+  display: none;
 }
-dialog::backdrop { background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); }
-.dialog-close { float: right; background: none; border: 0; color: var(--text-muted); font-size: 2rem; cursor: pointer; transition: color 0.2s; }
+
+dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+@media (min-width: 1025px) {
+  #detail-dialog[open] {
+    all: unset;
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    height: 85vh;
+    width: 680px;
+    max-width: 90vw;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 20px;
+    background: rgba(15, 20, 25, 0.95);
+    backdrop-filter: blur(25px);
+    box-shadow: 0 40px 100px rgba(0,0,0,0.8);
+    padding: 32px;
+    box-sizing: border-box;
+    overflow-y: auto;
+    color: var(--text-main);
+  }
+  #detail-dialog::backdrop {
+    background: rgba(0,0,0,0.85);
+    backdrop-filter: blur(6px);
+  }
+}
+
+@media (max-width: 1024px) {
+  #detail-dialog[open] {
+    all: unset;
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    max-width: 100vw;
+    max-height: 100vh;
+    border: none;
+    border-radius: 0;
+    margin: 0;
+    padding: 24px;
+    background: rgba(15,20,25,0.98);
+    backdrop-filter: blur(30px);
+    box-shadow: none;
+    box-sizing: border-box;
+    overflow-y: auto;
+    color: var(--text-main);
+  }
+  #detail-dialog::backdrop {
+    background: rgba(0,0,0,0.8);
+    backdrop-filter: blur(5px);
+  }
+}
+
+.dialog-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  background: none;
+  border: 0;
+  color: var(--text-muted);
+  font-size: 2rem;
+  cursor: pointer;
+  transition: color 0.2s;
+  z-index: 10;
+}
 .dialog-close:hover { color: #fff; }
+
 .detail-layout {
-  display: grid;
-  grid-template-columns: 180px 1fr;
-  gap: 32px;
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  align-items: stretch;
+}
+.detail-poster-wrapper {
+  display: flex;
+  justify-content: center;
 }
 .detail-poster-wrapper .poster {
-  width: 100%;
-  aspect-ratio: 2/3;
+  width: 150px;
+  height: 225px;
   object-fit: cover;
-  border-radius: 16px;
-  box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
 }
 .detail-info-wrapper {
   display: flex;
@@ -1088,21 +1163,16 @@ dialog::backdrop { background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); }
   gap: 12px;
 }
 .detail-info-wrapper h2 {
-  font-size: 2.2rem;
-  line-height: 1.15;
+  font-size: 1.6rem;
+  line-height: 1.2;
   margin: 0;
   font-weight: 700;
 }
 .detail-metadata {
   display: grid;
-  grid-template-columns: 90px 1fr;
+  grid-template-columns: 100px 1fr;
   gap: 8px 16px;
   margin: 0;
-  font-size: 0.95rem;
-  background: rgba(0, 0, 0, 0.25);
-  padding: 16px;
-  border-radius: 16px;
-  border: 1px solid var(--panel-border);
 }
 .detail-metadata dt {
   color: var(--text-muted);
@@ -1895,3 +1965,124 @@ dialog::backdrop { background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); }
     font-size: 1.8rem;
   }
 }
+
+/* Watched State Badges for Hierarchy Views */
+.state-badge-group {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 8px;
+}
+.state-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.68rem;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 1px 5px;
+  border: 1px solid rgba(255,255,255,0.06);
+  text-transform: capitalize;
+}
+.state-badge.watched {
+  color: #10B981;
+  background: rgba(16,185,129,0.08);
+  border-color: rgba(16,185,129,0.25);
+}
+.state-badge.partial {
+  color: #F59E0B;
+  background: rgba(245,158,11,0.08);
+  border-color: rgba(245,158,11,0.25);
+  border-style: dashed;
+}
+.state-badge.repeated {
+  color: #8B5CF6;
+  background: rgba(139,92,246,0.08);
+  border-color: rgba(139,92,246,0.3);
+}
+.state-badge.unknown {
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.02);
+  opacity: 0.5;
+}
+
+/* Detail Hierarchy Tree Styles */
+.detail-hierarchy-tree {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.detail-tree-season {
+  border: 1px solid rgba(255,255,255,0.04);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.01);
+  overflow: hidden;
+}
+.detail-tree-season-header {
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.02);
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+  font-size: 0.92rem;
+  user-select: none;
+}
+.detail-tree-season-header:hover {
+  background: rgba(255,255,255,0.04);
+}
+.detail-tree-season-episodes {
+  display: none;
+  padding: 8px 12px;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid rgba(255,255,255,0.03);
+}
+.detail-tree-season.expanded .detail-tree-season-episodes {
+  display: flex;
+}
+.detail-tree-episode-row {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  border-radius: 6px;
+  background: rgba(0,0,0,0.15);
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+.detail-tree-episode-row:hover {
+  background: rgba(255,255,255,0.03);
+  border-color: rgba(255,255,255,0.05);
+}
+.detail-tree-episode-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85rem;
+}
+.detail-tree-episode-meta strong {
+  font-weight: 500;
+  color: var(--text-main);
+}
+.detail-tree-episode-lazy {
+  margin-top: 8px;
+  padding: 8px;
+  border-top: 1px dotted rgba(255,255,255,0.06);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.detail-lazy-plays {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+.detail-lazy-play-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 6px;
+  background: rgba(255,255,255,0.02);
+  border-radius: 4px;
+  font-size: 0.76rem;
+}
+

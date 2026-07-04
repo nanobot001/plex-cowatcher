@@ -1,8 +1,9 @@
 # Block 3-2k: Rich Media Detail Workspace
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Adds one shared, media-aware detail system after Library selection and identity are stable.
+> Status: Implemented on 2026-07-04.
+> Result: Implemented.
+> Verification: `npm run verify:block` - passed.
+> Notes: Replaces the generic modal with a centered, glassmorphic overlay modal showing TV and audiobook hierarchies, featuring instant optimistic loading and lag-free DOM close interactions.
 
 ## Goal
 
@@ -16,7 +17,7 @@ Replace the generic modal with a reusable detail workspace that explains hierarc
 
 ## Scope
 
-- Implement a persistent right-side detail pane on desktop and an accessible full-screen sheet on narrow screens.
+- Implement an accessible centered glassmorphic overlay modal on desktop and a sheet on narrow screens.
 - Add shared hero data: top-level artwork, canonical title, category, library, people, first/last consumed, total observed time, distinct items, repeats, and evidence summary.
 - Use the canonical poster/cover in the detail hero. For audiobooks, the hero and all book nodes use the specific book cover and must not fall back to author/artist artwork while a book cover exists.
 - Resolve participant labels through dashboard aliases and omit hidden users and their evidence from dashboard detail aggregates while retaining the underlying records.

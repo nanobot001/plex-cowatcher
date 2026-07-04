@@ -1,5 +1,21 @@
 # Continue Here
 
+## 2026-07-04
+
+Current state:
+- Block 3-2j-1 (Co-Watch Evidence Semantics) is completed, committed, and pushed to `main`.
+- The dashboard successfully distinguishes between `Together` (human confirmed), `Likely together` (start time aligned and overlapped plays), and `Watched by` (default fallback and library summaries).
+- Aggregated Media Explorer cards filter names by selected user and default to `"Watched by"` instead of claiming simultaneity.
+- Verification passed: `npm run verify:block` (65/65 unit, 6/6 E2E Playwright tests, syntax and tool verifications).
+
+Next step:
+- Implement **Block 3-2k: Rich Media Detail Workspace** (`docs/blocks/block-3-2k-rich-media-detail-workspace.md`).
+
+Do-not-forget checks:
+- Keep the 3-2 corrective blocks sequential.
+- Run `npm run verify:block` before marking any block as completed.
+- Run `npm run verify:live-dashboard` after starting the live deployment service.
+
 ## 2026-07-02
 
 Current state:
