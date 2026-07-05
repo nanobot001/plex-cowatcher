@@ -546,9 +546,9 @@ function renderDetailContent(d) {
           <dt>Raw type</dt>
           <dd>${esc(x.mediaType)}${x.categoryDerived ? " (category derived)" : ""}</dd>
         </dl>
-        ${hierarchyHtml}
-        ${evidenceHtml}
       </div>
+      ${hierarchyHtml}
+      ${evidenceHtml}
     </div>
   `;
 

@@ -1143,34 +1143,54 @@ dialog[open] {
 .detail-layout {
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  align-items: stretch;
+  gap: 24px;
 }
+
+@media (min-width: 768px) {
+  .detail-layout {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+}
+
 .detail-poster-wrapper {
   display: flex;
   justify-content: center;
 }
+
+@media (min-width: 768px) {
+  .detail-poster-wrapper {
+    position: sticky;
+    top: 0;
+  }
+}
+
 .detail-poster-wrapper .poster {
-  width: 150px;
-  height: 225px;
+  width: 100%;
+  max-width: 240px;
+  height: auto;
+  aspect-ratio: 2 / 3;
   object-fit: cover;
   border-radius: 12px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.4);
 }
+
 .detail-info-wrapper {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 .detail-info-wrapper h2 {
-  font-size: 1.6rem;
+  font-size: 2rem;
   line-height: 1.2;
   margin: 0;
   font-weight: 700;
 }
 .detail-metadata {
   display: grid;
-  grid-template-columns: 100px 1fr;
+  grid-template-columns: 120px 1fr;
   gap: 8px 16px;
   margin: 0;
 }
