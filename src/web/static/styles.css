@@ -2218,9 +2218,7 @@ dialog[open] {
   }
   .detail-lazy-play-item .play-user {
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    word-break: break-word;
   }
   .detail-lazy-play-item .play-date {
     white-space: nowrap;
