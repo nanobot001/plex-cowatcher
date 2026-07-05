@@ -38,3 +38,36 @@ Rules:
 - Keep a cheap verification command for the tool contract.
 - Preserve the project's normal runtime model, including PM2, cron, Task Scheduler, Docker Compose, or systemd if used.
 - **Safe File Editing**: Never use the `write_to_file` tool to overwrite an existing file. Always use targeted `replace_file_content` or `multi_replace_file_content` tools to prevent accidental full-file deletions or destructive overwrites.
+
+## Dashboard & UI Design Standards
+
+All dashboard and web UI changes must follow these layout and spacing principles. Treat violations as bugs, not style preferences.
+
+### Spacing & Negative Space
+
+- **Balanced padding**: Every container, card, and section must have enough internal padding that text never touches the edge. Minimum `12px` on small containers, `16px–24px` on cards and modals.
+- **No excessive negative space**: Modals and panels must size to their content. Use `max-height` (not fixed `height`) for containers whose content length varies. Empty space > 25% of a container's visible area is a defect.
+- **Element separation**: Adjacent text elements (badges, names, dates, labels) must have at least `8px` gap or margin between them. Crowded or touching elements are a defect.
+
+### Overflow & Scrolling
+
+- **No horizontal scroll**: Content must never overflow its container horizontally. Use `min-width: 0` on grid/flex children, proportional column sizing (`auto`, `1fr`), and `overflow: hidden; text-overflow: ellipsis` on text that might be long.
+- **Vertical scroll only where intended**: Only explicitly scrollable regions (e.g. `.detail-scroll-container`) should scroll. The outer dialog or page should not scroll if an inner region already handles it.
+- **Thin, subtle scrollbars**: Use `scrollbar-width: thin` and semi-transparent custom scrollbar styling. Never leave default OS scrollbars on dark-themed containers.
+
+### Grid & Table Layouts
+
+- **Proportional columns**: Prefer `auto` and `1fr` grid columns over fixed pixel widths. Fixed widths break at different viewport sizes and content lengths.
+- **Aligned columns across rows**: When multiple rows display the same data shape (badge + name + date), they must use a shared grid or table layout so columns align vertically across all rows.
+- **Text truncation**: Long text in constrained columns must truncate with ellipsis rather than expanding the column or wrapping unpredictably.
+
+### Cards & Modals
+
+- **Content-first sizing**: Modals shrink to fit short content and grow (up to a max) for long content.
+- **Fixed reference elements**: In two-column detail layouts, the reference column (poster, artwork) stays fixed or sticky while the content column scrolls.
+- **Hierarchy placement**: TV season/chapter hierarchies belong in the poster column (left), not in the scrolling content column.
+
+### Responsive Behavior
+
+- **Mobile-first flex, desktop grid**: Use `flex-direction: column` as the base layout and switch to `grid` at `min-width: 768px` breakpoints.
+- **No viewport assumptions**: Never assume a specific modal or container width. Test that layouts work from 320px to 1440px without horizontal overflow.

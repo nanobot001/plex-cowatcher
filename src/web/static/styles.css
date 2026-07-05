@@ -2188,16 +2188,16 @@ dialog[open] {
 @media (min-width: 600px) {
   .detail-lazy-play-item {
     display: grid;
-    grid-template-columns: 140px 180px 1fr;
-    justify-content: stretch;
-    justify-items: start;
+    grid-template-columns: auto 1fr auto;
+    gap: 12px;
+    align-items: center;
     text-align: left;
   }
   .detail-lazy-play-item .play-user {
-    white-space: nowrap;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 170px;
+    white-space: nowrap;
   }
 }
 
