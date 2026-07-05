@@ -84,6 +84,17 @@ export class CowatchingIntelligenceService {
 
     const events: CowatchingEvent[] = [];
 
+    // Pre-cache enabled users to avoid loop-level DB queries
+    const enabledUsersRaw = this.userService.listEnabledUsers();
+    const enabledUsers = enabledUsersRaw.map(user => {
+      const fullUser = this.userService.findById(user.id);
+      return {
+        id: user.id,
+        plex_username: user.plex_username,
+        displayName: (fullUser as any)?.dashboard_alias || fullUser?.display_name || user.plex_username
+      };
+    });
+
     for (const [ratingKey, plays] of obsByRatingKey.entries()) {
       const playsWithIntervals = plays.map(obs => {
         let durationSec = obs.duration ?? obs.viewOffset ?? 0;
@@ -121,21 +132,22 @@ export class CowatchingIntelligenceService {
       for (const cluster of clusters) {
         const firstPlay = cluster[0];
         
+        const firstPlayIso = new Date(firstPlay.startTime).toISOString();
         const matchedWatchEvent = this.db.prepare(`
           SELECT * FROM watch_events 
           WHERE rating_key = ? 
-            AND ABS(strftime('%s', watched_at) - strftime('%s', ?)) <= 3600
+            AND watched_at >= strftime('%Y-%m-%dT%H:%M:%fZ', ?, '-3600 seconds')
+            AND watched_at <= strftime('%Y-%m-%dT%H:%M:%fZ', ?, '+3600 seconds')
           LIMIT 1
-        `).get(ratingKey, new Date(firstPlay.startTime).toISOString()) as any;
+        `).get(ratingKey, firstPlayIso, firstPlayIso) as any;
 
         const participantsMap = new Map<number, CowatchingParticipant>();
 
-        const enabledUsers = this.userService.listEnabledUsers();
         for (const user of enabledUsers) {
           participantsMap.set(user.id, {
             userId: user.id,
             username: user.plex_username,
-            displayName: (this.userService.findById(user.id) as any)?.dashboard_alias || this.userService.findById(user.id)?.display_name || user.plex_username,
+            displayName: user.displayName,
             role: "target",
             evidenceState: "none",
             confidence: 0.0,

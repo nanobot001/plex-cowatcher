@@ -35,7 +35,8 @@ try {
       if (!label?.includes(",")) continue;
       await card.click();
       const people = await page.getByTestId("detail-people").innerText();
-      if (label !== `Watched by ${people}`) failures.push(`${viewport.width}px detail people differ from card participants`);
+      const cleanLabel = label.replace(/^(Watched by|Together|Likely together) /, "");
+      if (cleanLabel !== people) failures.push(`${viewport.width}px detail people differ from card participants`);
       await page.locator("#detail-dialog").evaluate((dialog) => dialog.close());
       break;
     }

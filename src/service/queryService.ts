@@ -73,7 +73,8 @@ export class QueryService {
       LEFT JOIN content_catalog cat ON po.rating_key = cat.rating_key
       LEFT JOIN watch_events we ON 
         we.rating_key = po.rating_key 
-        AND ABS(strftime('%s', we.watched_at) - strftime('%s', po.watched_at)) <= 600
+        AND we.watched_at >= strftime('%Y-%m-%dT%H:%M:%fZ', po.watched_at, '-600 seconds')
+        AND we.watched_at <= strftime('%Y-%m-%dT%H:%M:%fZ', po.watched_at, '+600 seconds')
       LEFT JOIN cowatch_confirmations cc ON 
         cc.watch_event_id = we.id 
         AND cc.target_user_id = po.user_id

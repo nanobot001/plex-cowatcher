@@ -40,6 +40,7 @@ export function buildRouter(
   const cowatchingIntelligenceService = new CowatchingIntelligenceService(db);
   const dashboardPreferences = new DashboardPreferenceService(db);
   const dashboardService = new DashboardService(db);
+  const artworkUrlCache = new Map<string, string>();
 
   if (!options.skipStartupUserSync) {
     users.syncConfiguredUsers();
@@ -421,22 +422,38 @@ export function buildRouter(
 
   async function serveArtwork(rawKey: string, res: express.Response): Promise<void> {
     const decodedKey = decodeURIComponent(rawKey);
+
+    const cachedUrl = artworkUrlCache.get(decodedKey);
+    if (cachedUrl) {
+      await proxyArtworkSource(cachedUrl, res);
+      return;
+    }
+
     const localSource = await resolveLocalArtworkSource(decodedKey);
     if (localSource) {
+      artworkUrlCache.set(decodedKey, localSource);
       await proxyArtworkSource(localSource, res);
       return;
     }
 
     const remoteSource = await resolvePlexArtworkSource(decodedKey);
     if (remoteSource) {
+      artworkUrlCache.set(decodedKey, remoteSource);
       await proxyArtworkSource(remoteSource, res);
       return;
     }
 
     const audiobookRatingKey = resolveAudiobookRatingKey(decodedKey);
     if (audiobookRatingKey && audiobookRatingKey !== decodedKey) {
+      const cachedFallback = artworkUrlCache.get(audiobookRatingKey);
+      if (cachedFallback) {
+        await proxyArtworkSource(cachedFallback, res);
+        return;
+      }
       const fallbackRemoteSource = await resolvePlexArtworkSource(audiobookRatingKey);
       if (fallbackRemoteSource) {
+        artworkUrlCache.set(audiobookRatingKey, fallbackRemoteSource);
+        artworkUrlCache.set(decodedKey, fallbackRemoteSource);
         await proxyArtworkSource(fallbackRemoteSource, res);
         return;
       }
@@ -521,11 +538,16 @@ export function buildRouter(
     if (/^data:/i.test(source) || /^https?:\/\//i.test(source)) {
       return source;
     }
-    const url = new URL(source, appConfig.PLEX_BASE_URL);
-    if (appConfig.PLEX_TOKEN && !url.searchParams.has("X-Plex-Token")) {
-      url.searchParams.set("X-Plex-Token", appConfig.PLEX_TOKEN);
+    const transcodeUrl = new URL("/photo/:/transcode", appConfig.PLEX_BASE_URL);
+    transcodeUrl.searchParams.set("width", "300");
+    transcodeUrl.searchParams.set("height", "450");
+    transcodeUrl.searchParams.set("minSize", "1");
+    transcodeUrl.searchParams.set("upscale", "1");
+    transcodeUrl.searchParams.set("url", source);
+    if (appConfig.PLEX_TOKEN) {
+      transcodeUrl.searchParams.set("X-Plex-Token", appConfig.PLEX_TOKEN);
     }
-    return url.toString();
+    return transcodeUrl.toString();
   }
 
   async function proxyArtworkSource(sourceUrl: string, res: express.Response): Promise<void> {
@@ -540,7 +562,7 @@ export function buildRouter(
       const contentType = response.headers.get("content-type") || "image/jpeg";
       const body = Buffer.from(await response.arrayBuffer());
       res.setHeader("Content-Type", contentType);
-      res.setHeader("Cache-Control", "public, max-age=3600");
+      res.setHeader("Cache-Control", "public, max-age=604800, immutable");
       res.status(200).send(body);
     } finally {
       clearTimeout(timeout);

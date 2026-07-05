@@ -2139,6 +2139,130 @@ test("dashboard overview attention lane stays evidence-backed", () => {
     assert.equal(overview.needsAttention.some(item => item.kind === "plex_sync_failed"), true);
   });
 });
+
+test("artwork endpoint uses transcoding, caching headers, and optimizes loading", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    
+    let richMetadataCallCount = 0;
+    class TranscodeMockPlexAdapter extends MockPlexAdapter {
+      async getRichMetadataByRatingKey(ratingKey, plexGuid) {
+        richMetadataCallCount++;
+        if (ratingKey === "transcode-test") {
+          return {
+            ratingKey,
+            mediaType: "movie",
+            title: "Transcode Test Movie",
+            thumb: "/library/metadata/123/thumb/456",
+            genres: []
+          };
+        }
+        return super.getRichMetadataByRatingKey(ratingKey, plexGuid);
+      }
+    }
+
+    const { createApp } = await import("../dist/server/app.js");
+    const app = createApp(db, new TranscodeMockPlexAdapter(), { skipStartupUserSync: true });
+    const server = await new Promise((resolve) => {
+      const s = app.listen(0, "127.0.0.1", () => resolve(s));
+    });
+    const base = `http://127.0.0.1:${server.address().port}`;
+
+    const originalFetch = globalThis.fetch;
+    let lastFetchedUrl = null;
+    globalThis.fetch = async (url, options) => {
+      lastFetchedUrl = String(url);
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "image/jpeg" }),
+        arrayBuffer: async () => new ArrayBuffer(8)
+      };
+    };
+
+    try {
+      // 1. Fetch artwork for the first time
+      const res1 = await originalFetch(base + "/api/artwork/transcode-test");
+      assert.equal(res1.status, 200);
+      assert.equal(res1.headers.get("cache-control"), "public, max-age=604800, immutable");
+      
+      // Verify the server fetched the transcoded Plex URL
+      assert.ok(lastFetchedUrl);
+      assert.match(lastFetchedUrl, /\/photo\/\:\/transcode/);
+      assert.match(lastFetchedUrl, /width=300/);
+      assert.match(lastFetchedUrl, /height=450/);
+      assert.match(lastFetchedUrl, /url=%2Flibrary%2Fmetadata%2F123%2Fthumb%2F456/);
+
+      // Verify Plex adapter was called once
+      assert.equal(richMetadataCallCount, 1);
+
+      // Reset fetch spy
+      lastFetchedUrl = null;
+
+      // 2. Fetch artwork for the second time (should hit in-memory cache)
+      const res2 = await originalFetch(base + "/api/artwork/transcode-test");
+      assert.equal(res2.status, 200);
+      assert.equal(res2.headers.get("cache-control"), "public, max-age=604800, immutable");
+
+      // Verify it still proxy fetched the image, but did NOT resolve metadata again
+      assert.ok(lastFetchedUrl);
+      assert.equal(richMetadataCallCount, 1); // Should still be 1 (cached!)
+
+    } finally {
+      globalThis.fetch = originalFetch;
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
+test("dashboard service meets latency budget under load", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    
+    const users = db.prepare("SELECT id FROM users ORDER BY id").all();
+    const userIds = users.map(u => u.id);
+
+    const now = Date.now();
+    const insertStmt = db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, rating_key, media_type, library_name, title, watched_at, percent_complete, duration, completed, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    db.exec("BEGIN TRANSACTION");
+    for (let i = 0; i < 500; i++) {
+      const userId = userIds[i % userIds.length];
+      const ratingKey = `movie-${Math.floor(i / 5)}`;
+      const watchedAt = new Date(now - i * 15 * 60 * 1000).toISOString();
+      insertStmt.run(
+        userId,
+        ratingKey,
+        "movie",
+        "Movies",
+        `Movie ${ratingKey}`,
+        watchedAt,
+        100,
+        7200000,
+        1,
+        watchedAt,
+        watchedAt
+      );
+    }
+    db.exec("COMMIT");
+
+    const { DashboardService } = await import("../dist/service/dashboardService.js");
+    const service = new DashboardService(db);
+
+    const tStart = performance.now();
+    const overview = service.getOverview({});
+    const duration = performance.now() - tStart;
+
+    console.log(`[Perf] getOverview with 500 rows took ${duration.toFixed(2)} ms`);
+    
+    assert.ok(duration < 300, `getOverview was too slow: ${duration} ms (limit: 300 ms)`);
+  });
+});
+
 let passed = 0;
 for (const { name, fn } of tests) {
   try {
