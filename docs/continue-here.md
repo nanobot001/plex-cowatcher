@@ -1,5 +1,18 @@
 # Continue Here
 
+## 2026-07-05
+
+Current state:
+- Block 3-2l (Daily Session Timeline) is completed, verified, and merged.
+- The dashboard timeline has been refactored from a multi-month Gantt chart to a bounded, single-day workspace with previous/next navigation, date picker, lanes grouped by user, and active-user filters.
+- A co-watching moments section was added below the lanes chart.
+- The chronological Activity Feed has been relocated below the chart with independent pagination.
+- Fixed layout wrapping bug where play lists in detail views truncated multi-person viewer lists.
+- Verification passed: `npm run verify:block` (67/67 unit, 10/10 E2E Playwright tests, tool contracts) plus live dashboard verification.
+
+Next step:
+- Implement **Block 3-2m: People and Co-Watch Intelligence** (`docs/blocks/block-3-2m-people-and-cowatch-intelligence.md`).
+
 ## 2026-07-04
 
 Current state:
@@ -50,7 +63,7 @@ Do-not-forget checks:
 
 ## Next Recommended Step
 
-- Start with **Block 3-2j-1: Co-Watch Evidence Semantics**.
-- Do not start 3-2k until Block 3-2j-1 has passed its exit gate.
+- Start with **Block 3-2m: People and Co-Watch Intelligence**.
+- Do not start 3-2n until Block 3-2m has passed its exit gate.
 - Implement only one corrective block at a time and do not begin the next block until the current block's exit gate is recorded as passing.
 - Resume Block 3-3 only after Block 3-2o completes the final dashboard release gate.
