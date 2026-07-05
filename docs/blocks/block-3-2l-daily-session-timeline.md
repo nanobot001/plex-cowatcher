@@ -1,8 +1,9 @@
 # Block 3-2l: Daily Session Timeline
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Replaces the multi-month 500-record Gantt wall with a bounded daily investigation workspace inspired by Mockup 3.
+> Status: Implemented on 2026-07-05.
+> Result: Implemented.
+> Verification: `npm run verify:block` - passed.
+> Notes: Bounded daily timeline workspace with lane aggregation, date picker navigation, co-watching moments, and paginated history feed.
 
 ## Goal
 

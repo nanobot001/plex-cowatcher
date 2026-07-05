@@ -2218,9 +2218,137 @@ dialog[open] {
   }
   .detail-lazy-play-item .play-user {
     min-width: 0;
-    word-break: break-word;
+    overflow-wrap: break-word;
+    word-break: normal;
   }
   .detail-lazy-play-item .play-date {
     white-space: nowrap;
   }
 }
+
+/* Custom styling for Timeline blocks */
+.gantt-block.completed {
+  border-bottom: 3px solid #10B981;
+}
+.gantt-block.paused-fragmented {
+  opacity: 0.85;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.05),
+    rgba(255, 255, 255, 0.05) 5px,
+    rgba(0, 0, 0, 0) 5px,
+    rgba(0, 0, 0, 0) 10px
+  );
+}
+.gantt-block.together {
+  box-shadow: 0 0 12px var(--accent-movie), inset 0 0 6px rgba(255, 255, 255, 0.3);
+  border: 1.5px solid #fff;
+}
+.gantt-block.likely-together {
+  box-shadow: 0 0 8px var(--accent-tv);
+  border: 1.5px dashed rgba(255, 255, 255, 0.6);
+}
+
+/* Date Pickers & Headers for Timeline Navigation */
+.timeline-nav-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  padding: 12px 20px;
+}
+.timeline-nav-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.timeline-nav-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #fff;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+.timeline-nav-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.15);
+}
+.timeline-nav-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.timeline-date-picker {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: #fff;
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.95rem;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+/* Co-watching moments */
+.cowatch-moments-panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 20px;
+  padding: 24px;
+  margin-bottom: 24px;
+}
+.cowatch-moments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+.cowatch-moment-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: rgba(0,0,0,0.15);
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.02);
+  transition: all 0.2s;
+  cursor: pointer;
+}
+.cowatch-moment-row:hover {
+  background: rgba(255,255,255,0.03);
+}
+.cowatch-moment-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cowatch-moment-title {
+  font-weight: 700;
+  color: #fff;
+}
+.cowatch-moment-meta {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.cowatch-moment-badge {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.cowatch-moment-badge.together {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10B981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+.cowatch-moment-badge.likely-together {
+  background: rgba(245, 158, 11, 0.15);
+  color: #F59E0B;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+

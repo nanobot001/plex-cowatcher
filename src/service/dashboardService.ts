@@ -14,6 +14,7 @@ const OVERVIEW_ACTIVITY_LIMIT = 4;
 const OVERVIEW_ATTENTION_LIMIT = 4;
 
 const filterSchema = z.object({
+  date: z.string().optional(),
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
   user: z.string().optional(),
@@ -789,45 +790,190 @@ export class DashboardService {
   getTimeline(input: unknown) {
     const timed = withTiming(() => {
       const p = parseTimelineFilters(input);
-      const cappedDays = Math.min(Math.max(p.days ?? TIMELINE_DEFAULT_DAYS, 1), TIMELINE_MAX_DAYS);
-      const now = p.dateTo ? new Date(p.dateTo) : new Date();
-      const defaultStart = new Date(now.getTime() - (cappedDays * 24 * 60 * 60 * 1000));
-      const dateFrom = p.dateFrom ? new Date(p.dateFrom) : defaultStart;
-      const dateTo = p.dateTo ? new Date(p.dateTo) : now;
-      const maxWindowMs = TIMELINE_MAX_DAYS * 24 * 60 * 60 * 1000;
-      if (dateTo.getTime() - dateFrom.getTime() > maxWindowMs) {
-        dateFrom.setTime(dateTo.getTime() - maxWindowMs);
+      
+      let selectedDate = typeof (input as any).date === "string" && /^\d{4}-\d{2}-\d{2}$/.test((input as any).date) ? (input as any).date : "";
+      
+      let where = " WHERE COALESCE(u.dashboard_shown, u.enabled) = 1";
+      const args: any[] = [];
+      if (p.user) { where += " AND u.plex_username = ?"; args.push(p.user); }
+      if (p.ratingKey) { where += " AND po.rating_key = ?"; args.push(p.ratingKey); }
+      if (p.grandparentRatingKey) { where += " AND (po.grandparent_rating_key = ? OR po.rating_key = ?)"; args.push(p.grandparentRatingKey, p.grandparentRatingKey); }
+      if (p.audiobookId) { where += " AND cat.audiobook_id = ?"; args.push(p.audiobookId); }
+      if (p.library) { where += " AND COALESCE(NULLIF(po.library_name, ''), cat.library_title, groupcat.library_title) = ?"; args.push(p.library); }
+      if (p.completed !== undefined) { where += " AND po.completed = ?"; args.push(p.completed ? 1 : 0); }
+      if (p.search) { where += " AND (po.title LIKE ? OR po.show_title LIKE ?)"; args.push(`%${p.search}%`, `%${p.search}%`); }
+
+      const categorySql = `CASE WHEN lower(po.media_type)='audiobook' OR lower(coalesce(NULLIF(po.library_name, ''), cat.library_title, groupcat.library_title, '')) LIKE '%audiobook%' THEN 'audiobook' WHEN lower(coalesce(NULLIF(po.library_name, ''), cat.library_title, groupcat.library_title, '')) LIKE '%anime%' THEN 'anime' WHEN lower(coalesce(NULLIF(po.library_name, ''), cat.library_title, groupcat.library_title, '')) LIKE '%classic%' THEN 'classic_tv' WHEN lower(po.media_type)='movie' AND (coalesce(NULLIF(po.library_name, ''), cat.library_title, groupcat.library_title) IS NULL OR lower(coalesce(NULLIF(po.library_name, ''), cat.library_title, groupcat.library_title))='movies') THEN 'movie' WHEN lower(po.media_type) IN ('episode', 'show', 'season') AND (coalesce(NULLIF(po.library_name, ''), cat.library_title, groupcat.library_title) IS NULL OR lower(coalesce(NULLIF(po.library_name, ''), cat.library_title, groupcat.library_title)) IN ('tv shows','etv','jdrama')) THEN 'tv' ELSE 'other' END`;
+      where += ` AND ${categorySql} != 'other'`;
+      if (p.category) { where += ` AND ${categorySql} = ?`; args.push(p.category); }
+
+      if (!selectedDate) {
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const todayCheck = this.db.prepare(`
+          SELECT 1 FROM playback_observations po
+          JOIN users u ON u.id = po.user_id
+          LEFT JOIN content_catalog cat ON cat.rating_key=po.rating_key
+          LEFT JOIN content_catalog groupcat ON groupcat.rating_key=po.grandparent_rating_key
+          ${where} AND substr(po.watched_at, 1, 10) = ?
+          LIMIT 1
+        `).get(...args, todayStr);
+        if (todayCheck) {
+          selectedDate = todayStr;
+        } else {
+          const maxDayRow = this.db.prepare(`
+            SELECT substr(po.watched_at, 1, 10) as day FROM playback_observations po
+            JOIN users u ON u.id = po.user_id
+            LEFT JOIN content_catalog cat ON cat.rating_key=po.rating_key
+            LEFT JOIN content_catalog groupcat ON groupcat.rating_key=po.grandparent_rating_key
+            ${where}
+            ORDER BY po.watched_at DESC
+            LIMIT 1
+          `).get(...args) as any;
+          selectedDate = maxDayRow ? maxDayRow.day : todayStr;
+        }
       }
 
-      const activity = this.getActivity({
+      // Prev and Next active dates
+      const prevRow = this.db.prepare(`
+        SELECT substr(po.watched_at, 1, 10) as day FROM playback_observations po
+        JOIN users u ON u.id = po.user_id
+        LEFT JOIN content_catalog cat ON cat.rating_key=po.rating_key
+        LEFT JOIN content_catalog groupcat ON groupcat.rating_key=po.grandparent_rating_key
+        ${where} AND substr(po.watched_at, 1, 10) < ?
+        ORDER BY po.watched_at DESC
+        LIMIT 1
+      `).get(...args, selectedDate) as any;
+      const prevActiveDate = prevRow ? prevRow.day : null;
+
+      const nextRow = this.db.prepare(`
+        SELECT substr(po.watched_at, 1, 10) as day FROM playback_observations po
+        JOIN users u ON u.id = po.user_id
+        LEFT JOIN content_catalog cat ON cat.rating_key=po.rating_key
+        LEFT JOIN content_catalog groupcat ON groupcat.rating_key=po.grandparent_rating_key
+        ${where} AND substr(po.watched_at, 1, 10) > ?
+        ORDER BY po.watched_at ASC
+        LIMIT 1
+      `).get(...args, selectedDate) as any;
+      const nextActiveDate = nextRow ? nextRow.day : null;
+
+      // Fetch all activity items for selectedDate
+      const dateFrom = selectedDate + "T00:00:00.000Z";
+      const dateTo = selectedDate + "T23:59:59.999Z";
+      const dailyActivity = this.getActivity({
         ...(input as object),
-        dateFrom: dateFrom.toISOString(),
-        dateTo: dateTo.toISOString(),
+        dateFrom,
+        dateTo,
+        limit: 1000,
+        offset: 0,
+        sort: "recent"
+      });
+
+      // Group into lanes and sessions
+      const userItemsMap = new Map<number, DashboardActivityItem[]>();
+      for (const item of dailyActivity.items) {
+        if (!userItemsMap.has(item.userId)) {
+          userItemsMap.set(item.userId, []);
+        }
+        userItemsMap.get(item.userId)!.push(item);
+      }
+
+      const sessions: any[] = [];
+      for (const [userId, items] of userItemsMap.entries()) {
+        const itemsWithIntervals = items.map(item => {
+          const durationSec = item.duration ?? 0;
+          const endTime = new Date(item.watchedAt).getTime();
+          const startTime = endTime - durationSec * 1000;
+          return { item, startTime, endTime };
+        }).sort((a, b) => a.startTime - b.startTime);
+
+        let currentSessionItems: typeof itemsWithIntervals = [];
+        for (const x of itemsWithIntervals) {
+          if (currentSessionItems.length === 0) {
+            currentSessionItems.push(x);
+            continue;
+          }
+          const last = currentSessionItems[currentSessionItems.length - 1];
+          const gapMs = x.startTime - last.endTime;
+          if (gapMs < 2 * 60 * 60 * 1000) {
+            currentSessionItems.push(x);
+          } else {
+            sessions.push(buildTimelineSession(currentSessionItems));
+            currentSessionItems = [x];
+          }
+        }
+        if (currentSessionItems.length > 0) {
+          sessions.push(buildTimelineSession(currentSessionItems));
+        }
+      }
+
+      function buildTimelineSession(group: Array<{ item: DashboardActivityItem; startTime: number; endTime: number }>) {
+        const first = group[0];
+        const last = group[group.length - 1];
+        const startTimeMs = first.startTime;
+        const endTimeMs = group.reduce((max, x) => Math.max(max, x.endTime), first.endTime);
+        
+        const groupItems = group.map(x => x.item);
+        const isCompleted = groupItems.some(it => it.completed);
+        const isPaused = groupItems.length > 1;
+
+        let relationship = "watched_by";
+        if (groupItems.some(it => it.evidence?.relationship === "together")) {
+          relationship = "together";
+        } else if (groupItems.some(it => it.evidence?.relationship === "likely_together")) {
+          relationship = "likely_together";
+        }
+
+        const cowatchEventId = groupItems.find(it => it.evidence?.cowatchEventId)?.evidence?.cowatchEventId || null;
+
+        return {
+          id: `${first.item.userId}-${startTimeMs}`,
+          userId: first.item.userId,
+          displayName: first.item.displayName,
+          username: first.item.username,
+          date: selectedDate,
+          startTime: new Date(startTimeMs).toISOString(),
+          endTime: new Date(endTimeMs).toISOString(),
+          itemCount: groupItems.length,
+          category: first.item.category,
+          isCompleted,
+          isPaused,
+          relationship,
+          cowatchEventId,
+          item: first.item
+        };
+      }
+
+      // Fetch co-watch moments
+      const coWatchEvents = this.cowatchingService.getCowatchingEvents({
+        dateFrom,
+        dateTo
+      });
+      const coWatchMoments = coWatchEvents.filter(ev => {
+        if (p.user) {
+          return ev.participants.some(part => part.username === p.user);
+        }
+        return true;
+      });
+
+      // Fetch feed activity
+      const activityFeed = this.getActivity({
+        ...(input as object),
         limit: p.limit,
         offset: p.offset
       });
 
-      const sessionsByKey = new Map<string, DashboardTimelineSession>();
-      for (const item of activity.items) {
-        const day = item.watchedAt ? item.watchedAt.slice(0, 10) : "unknown";
-        const key = `${item.userId}:${day}`;
-        const existing = sessionsByKey.get(key);
-        const startTime = existing ? (item.watchedAt < existing.startTime ? item.watchedAt : existing.startTime) : item.watchedAt;
-        const endTime = existing ? (item.watchedAt > existing.endTime ? item.watchedAt : existing.endTime) : item.watchedAt;
-        sessionsByKey.set(key, {
-          id: `${item.userId}-${day}`,
-          userId: item.userId,
-          displayName: item.displayName,
-          date: day,
-          startTime,
-          endTime,
-          itemCount: (existing?.itemCount ?? 0) + 1,
-          category: existing?.category ?? item.category
-        });
-      }
-
-      const sessions = [...sessionsByKey.values()].sort((a, b) => b.date.localeCompare(a.date) || a.displayName.localeCompare(b.displayName));
-      return { ...activity, windowDays: cappedDays, sessions };
+      return {
+        selectedDate,
+        prevActiveDate,
+        nextActiveDate,
+        sessions,
+        coWatchMoments,
+        windowDays: p.days,
+        items: activityFeed.items,
+        total: activityFeed.total,
+        limit: activityFeed.limit,
+        offset: activityFeed.offset
+      };
     });
     return { ...timed.value, timingMs: timed.timingMs };
   }
