@@ -363,11 +363,9 @@ async function toggleEpisodeLazyPlays(event, episodeRatingKey) {
       const userText = p.displayNames?.length ? p.displayNames.join(", ") : p.displayName;
       return `
         <div class="detail-lazy-play-item">
-          <div>
-            <span class="proof ${badgeClass}">${esc(label)}</span>
-            <strong>${esc(userText)}</strong>
-          </div>
-          <span class="text-muted">${esc(dateStr)}</span>
+          <span class="proof ${badgeClass}">${esc(label)}</span>
+          <strong class="play-user">${esc(userText)}</strong>
+          <span class="play-date text-muted">${esc(dateStr)}</span>
         </div>
       `;
     }).join('');
@@ -427,7 +425,7 @@ function renderDetailContent(d) {
     `;
     evidenceHtml = `
       <div class="detail-evidence-section">
-        <h3>Playback Sessions & Evidence</h3>
+        <h3>Playback Sessions</h3>
         <div class="panel-state compact">Loading playback details...</div>
       </div>
     `;
@@ -493,7 +491,7 @@ function renderDetailContent(d) {
     if (d.plays && d.plays.length > 0) {
       evidenceHtml = `
         <div class="detail-evidence-section">
-          <h3>Playback Sessions & Evidence</h3>
+          <h3>Playback Sessions</h3>
           <div class="detail-lazy-plays">
             ${d.plays.map(p => {
               const label = p.evidence?.confirmed ? "Together" : p.evidence?.timingRelationship === "overlap" ? "Likely together" : "Watched by";
@@ -502,11 +500,9 @@ function renderDetailContent(d) {
               const userText = p.displayNames?.length ? p.displayNames.join(", ") : p.displayName;
               return `
                 <div class="detail-lazy-play-item">
-                  <div>
-                    <span class="proof ${badgeClass}">${esc(label)}</span>
-                    <strong>${esc(userText)}</strong>
-                  </div>
-                  <span class="text-muted">${esc(dateStr)}</span>
+                  <span class="proof ${badgeClass}">${esc(label)}</span>
+                  <strong class="play-user">${esc(userText)}</strong>
+                  <span class="play-date text-muted">${esc(dateStr)}</span>
                 </div>
               `;
             }).join('')}
@@ -525,8 +521,11 @@ function renderDetailContent(d) {
 
   const detailHtml = `
     <div class="detail-layout">
-      <div class="detail-poster-wrapper">
-        ${artHtml}
+      <div class="detail-poster-column">
+        <div class="detail-poster-wrapper">
+          ${artHtml}
+        </div>
+        ${hierarchyHtml}
       </div>
       <div class="detail-scroll-container">
         <div class="detail-info-wrapper">
@@ -548,7 +547,6 @@ function renderDetailContent(d) {
             <dd>${esc(x.mediaType)}${x.categoryDerived ? " (category derived)" : ""}</dd>
           </dl>
         </div>
-        ${hierarchyHtml}
         ${evidenceHtml}
       </div>
     </div>
