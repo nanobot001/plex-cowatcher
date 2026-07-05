@@ -528,27 +528,29 @@ function renderDetailContent(d) {
       <div class="detail-poster-wrapper">
         ${artHtml}
       </div>
-      <div class="detail-info-wrapper">
-        <div>${headerHtml}</div>
-        <dl class="detail-metadata">
-          <dt>People</dt>
-          <dd data-testid="detail-people">${peopleList.map(p=>esc(p.displayName)).join(", ")}</dd>
-          <dt>Plays</dt>
-          <dd>${playsCount} (${repeatCount} repeats)</dd>
-          <dt>Library</dt>
-          <dd>${esc(x.libraryName||"Unknown")}</dd>
-          <dt>Consumed</dt>
-          <dd>${fmtDate(x.watchedAt)}</dd>
-          <dt>Duration</dt>
-          <dd>${esc(durationText)}</dd>
-          <dt>Progress</dt>
-          <dd>${esc(x.percentComplete??"Unknown")}%</dd>
-          <dt>Raw type</dt>
-          <dd>${esc(x.mediaType)}${x.categoryDerived ? " (category derived)" : ""}</dd>
-        </dl>
+      <div class="detail-scroll-container">
+        <div class="detail-info-wrapper">
+          <div>${headerHtml}</div>
+          <dl class="detail-metadata">
+            <dt>People</dt>
+            <dd data-testid="detail-people">${peopleList.map(p=>esc(p.displayName)).join(", ")}</dd>
+            <dt>Plays</dt>
+            <dd>${playsCount} (${repeatCount} repeats)</dd>
+            <dt>Library</dt>
+            <dd>${esc(x.libraryName||"Unknown")}</dd>
+            <dt>Consumed</dt>
+            <dd>${fmtDate(x.watchedAt)}</dd>
+            <dt>Duration</dt>
+            <dd>${esc(durationText)}</dd>
+            <dt>Progress</dt>
+            <dd>${esc(x.percentComplete??"Unknown")}%</dd>
+            <dt>Raw type</dt>
+            <dd>${esc(x.mediaType)}${x.categoryDerived ? " (category derived)" : ""}</dd>
+          </dl>
+        </div>
+        ${hierarchyHtml}
+        ${evidenceHtml}
       </div>
-      ${hierarchyHtml}
-      ${evidenceHtml}
     </div>
   `;
 
