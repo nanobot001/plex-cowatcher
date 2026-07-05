@@ -2176,7 +2176,7 @@ dialog[open] {
 .detail-lazy-play-item {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px;
   align-items: center;
   padding: 8px 12px;
   background: rgba(255,255,255,0.02);
@@ -2186,12 +2186,35 @@ dialog[open] {
 }
 
 @media (min-width: 600px) {
-  .detail-lazy-play-item {
+  .detail-lazy-plays {
     display: grid;
-    grid-template-columns: auto 1fr auto;
-    gap: 12px;
+    grid-template-columns: max-content 1fr max-content;
+    gap: 0;
+    margin-top: 6px;
+  }
+  .detail-lazy-play-item {
+    display: contents;
+  }
+  .detail-lazy-play-item > * {
+    padding: 8px 6px;
+    display: flex;
     align-items: center;
-    text-align: left;
+  }
+  /* Zebra-stripe rows via backgrounds on the first column child */
+  .detail-lazy-play-item:nth-child(even) > * {
+    background: rgba(255,255,255,0.02);
+  }
+  .detail-lazy-play-item:nth-child(odd) > * {
+    background: rgba(255,255,255,0.01);
+  }
+  /* Round corners on first and last cells of each row */
+  .detail-lazy-play-item > *:first-child {
+    padding-left: 12px;
+    border-radius: 6px 0 0 6px;
+  }
+  .detail-lazy-play-item > *:last-child {
+    padding-right: 12px;
+    border-radius: 0 6px 6px 0;
   }
   .detail-lazy-play-item .play-user {
     min-width: 0;
@@ -2199,5 +2222,7 @@ dialog[open] {
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .detail-lazy-play-item .play-date {
+    white-space: nowrap;
+  }
 }
-
