@@ -27,7 +27,7 @@ Corrective sequence:
 4. `block-3-2j-library-category-browser.md`
 5. `block-3-2j-1-cowatch-evidence-semantics.md`
 6. `block-3-2k-rich-media-detail-workspace.md`
-7. `block-3-2l-daily-session-timeline.md`
+7. `completed/block-3-2l-daily-session-timeline.md`
 8. `block-3-2m-people-and-cowatch-intelligence.md`
 9. `block-3-2n-hierarchy-progress-workspace.md`
 10. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
@@ -61,6 +61,7 @@ Do not implement a later corrective block until the previous block's exit gate i
 - `completed/block-3-2d-people-cowatching-workspace.md`
 - `completed/block-3-2e-progress-export-hardening.md`
 - `completed/block-3-2f-premium-dashboard-redesign.md`
+- `completed/block-3-2l-daily-session-timeline.md`
 
 - `completed/block-3-4-hierarchical-audiobook-series-modeling.md`
 - `completed/block-3-5-proactive-audiobook-scanner.md`
