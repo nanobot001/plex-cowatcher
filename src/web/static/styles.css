@@ -1054,7 +1054,7 @@ legend { font-size: 0.9rem; font-weight: 600; color: #06B6D4; padding: 0 12px; }
 
 /* Evidences & Proofs */
 .evidence { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.proof { font-size: 0.7rem; border: 1px solid rgba(255,255,255,0.1); border-radius: 99px; padding: 4px 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+.proof { font-size: 0.7rem; border: 1px solid rgba(255,255,255,0.1); border-radius: 99px; padding: 4px 10px; text-transform: uppercase; letter-spacing: 0.05em; margin-right: 8px; }
 .proof.observed { color: #3B82F6; border-color: rgba(59,130,246,0.3); background: rgba(59,130,246,0.1); }
 .proof.confirmed { color: #8B5CF6; border-color: rgba(139,92,246,0.3); background: rgba(139,92,246,0.1); }
 .proof.synced { color: #10B981; border-color: rgba(16,185,129,0.3); background: rgba(16,185,129,0.1); }
@@ -1078,7 +1078,7 @@ dialog[open] {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    height: 85vh;
+    max-height: 85vh;
     width: 680px;
     max-width: 90vw;
     border: 1px solid rgba(255,255,255,0.08);
