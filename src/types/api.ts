@@ -88,4 +88,9 @@ export interface DashboardTimelineSession {
   endTime: string;
   itemCount: number;
   category?: DashboardCategory;
+  isCompleted?: boolean;
+  isPaused?: boolean;
+  relationship?: string;
+  cowatchEventId?: string | null;
+  item?: DashboardActivityItem;
 }

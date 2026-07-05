@@ -1,5 +1,5 @@
 const layouts = new Set(["overview","timeline","explorer","people","progress"]);
-const state = { layout: "overview", filters: {}, offset: 0, totals: null, users: null, libraries: null, explorer: { section: "", sort: "recent", offset: 0, selected: "" } };
+const state = { layout: "overview", filters: {}, offset: 0, totals: null, users: null, libraries: null, explorer: { section: "", sort: "recent", offset: 0, selected: "" }, timeline: { date: "", offset: 0 } };
 const content = document.querySelector("#dashboard-content");
 const form = document.querySelector("#dashboard-filters");
 const dialog = document.querySelector("#detail-dialog");
@@ -152,6 +152,10 @@ const routeQuery=()=>{
     if(state.explorer.sort!=="recent")p.set("sort",state.explorer.sort);
     if(state.explorer.offset)p.set("offset",String(state.explorer.offset));
   }
+  if(state.layout==="timeline"){
+    if(state.timeline.date)p.set("timelineDate",state.timeline.date);
+    if(state.timeline.offset)p.set("timelineOffset",String(state.timeline.offset));
+  }
   if(state.explorer.selected)p.set("selected",state.explorer.selected);
   return p;
 };
@@ -167,6 +171,8 @@ function restoreLocationState(){
   state.explorer.sort=["recent","title","progress","plays"].includes(params.get("sort"))?params.get("sort"):"recent";
   state.explorer.offset=Math.max(0,Number(params.get("offset"))||0);
   state.explorer.selected=params.get("selected")||"";
+  state.timeline.date=params.get("timelineDate")||"";
+  state.timeline.offset=Math.max(0,Number(params.get("timelineOffset"))||0);
 }
 const toneClass=status=>({failed:"is-danger",error:"is-danger",missing:"is-warning",review:"is-neutral",pending:"is-info",prompted:"is-info"})[status]||"is-neutral";
 const deltaText=value=>value==null?"":`${value>0?"+":value<0?"-":""}${fmtHourValue(Math.abs(value))}`;
@@ -800,60 +806,60 @@ async function renderOverview() {
 }
 
 async function renderTimeline() {
-  const d = await fetchJson("/api/dashboard/timeline?" + query({limit: 50, offset: state.offset}));
-  const sessions = Array.isArray(d.sessions) ? d.sessions : [];
+  const params = {};
+  if (state.timeline.date) params.date = state.timeline.date;
+  params.offset = state.timeline.offset;
+  params.limit = 50;
+
+  const d = await fetchJson("/api/dashboard/timeline?" + query(params));
   
-  if ((d.items || []).length === 0 && sessions.length === 0) {
-    content.innerHTML = empty("timeline activity");
-    return;
+  if (d.selectedDate && state.timeline.date !== d.selectedDate) {
+    state.timeline.date = d.selectedDate;
+    save();
+    const targetHash = "#" + state.layout + "?" + routeQuery();
+    history.replaceState({}, "", targetHash);
   }
-  
-  // Group bounded chart sessions by day.
-  const daysMap = new Map();
-  if (sessions.length > 0) {
-    sessions.forEach(session => {
-      if (!daysMap.has(session.date)) daysMap.set(session.date, []);
-      daysMap.get(session.date).push(session);
-    });
+
+  const formattedDay = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(d.selectedDate + "T12:00:00"));
+
+  const navHtml = `
+    <div class="timeline-nav-header">
+      <div class="timeline-nav-controls">
+        <button class="timeline-nav-btn" id="timeline-prev-day" ${d.prevActiveDate ? "" : "disabled"} data-date="${d.prevActiveDate || ""}">← Previous Day</button>
+        <button class="timeline-nav-btn" id="timeline-today-btn">Today</button>
+      </div>
+      <div>
+        <input type="date" class="timeline-date-picker" id="timeline-picker" value="${d.selectedDate}">
+      </div>
+      <div class="timeline-nav-controls">
+        <button class="timeline-nav-btn" id="timeline-next-day" ${d.nextActiveDate ? "" : "disabled"} data-date="${d.nextActiveDate || ""}">Next Day →</button>
+      </div>
+    </div>
+  `;
+
+  let chartHtml = "";
+  if (!d.sessions || d.sessions.length === 0) {
+    chartHtml = `
+      <div class="day-gantt-card">
+        <div class="day-gantt-header">${esc(formattedDay)}</div>
+        <div class="panel-state empty" style="padding: 40px 0;">No household activity recorded on this day.</div>
+      </div>
+    `;
   } else {
-      (d.items || []).forEach(item => {
-        if (!item.watchedAt) return;
-        const dateStr = item.watchedAt.slice(0, 10);
-        if (!daysMap.has(dateStr)) daysMap.set(dateStr, []);
-        daysMap.get(dateStr).push({
-          id: `${item.userId}-${dateStr}`,
-          userId: item.userId,
-          displayName: item.displayName,
-          date: dateStr,
-          startTime: item.watchedAt,
-          endTime: item.watchedAt,
-          itemCount: 1,
-          category: item.category
-        });
-      });
-  }
-  
-  const sortedDays = [...daysMap.keys()].sort().reverse();
-  
-  const dayGanttsHtml = sortedDays.map(dateStr => {
-    const dayItems = daysMap.get(dateStr);
-    dayItems.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
-    
-    const dayStart = new Date(dateStr + "T00:00:00").getTime();
-    const dayRange = 24 * 60 * 60 * 1000;
-    
-    // Group day items by user
     const userMap = new Map();
-    dayItems.forEach(item => {
-      if (!userMap.has(item.displayName)) userMap.set(item.displayName, []);
-      userMap.get(item.displayName).push(item);
+    d.sessions.forEach(session => {
+      if (!userMap.has(session.displayName)) userMap.set(session.displayName, []);
+      userMap.get(session.displayName).push(session);
     });
-    
-    const lanes = Array.from(userMap.entries()).map(([user, items]) => {
-      const blocks = items.map(item => {
-        const start = new Date(item.startTime).getTime();
-        const end = new Date(item.endTime || item.startTime).getTime();
-        const duration = Math.max(15 * 60 * 1000, end - start || 1800000);
+
+    const dayStart = new Date(d.selectedDate + "T00:00:00").getTime();
+    const dayRange = 24 * 60 * 60 * 1000;
+
+    const lanes = Array.from(userMap.entries()).map(([user, sessions]) => {
+      const blocks = sessions.map(session => {
+        const start = new Date(session.startTime).getTime();
+        const end = new Date(session.endTime || session.startTime).getTime();
+        const duration = Math.max(15 * 60 * 1000, end - start);
         
         let left = ((start - dayStart) / dayRange) * 100;
         let width = (duration / dayRange) * 100;
@@ -861,16 +867,28 @@ async function renderTimeline() {
         if (left < 0) { width += left; left = 0; }
         if (left + width > 100) width = 100 - left;
         
-        const catColor = {"movie":"var(--accent-movie)","tv":"var(--accent-tv)","classic_tv":"var(--accent-classic)","anime":"var(--accent-anime)","audiobook":"var(--accent-audiobook)"}[item.category] || "#95a5a6";
+        const catColor = {"movie":"var(--accent-movie)","tv":"var(--accent-tv)","classic_tv":"var(--accent-classic)","anime":"var(--accent-anime)","audiobook":"var(--accent-audiobook)"}[session.category] || "#95a5a6";
         
-        return `<div class="gantt-block" style="left: ${left}%; width: max(6px, ${width}%); background: ${catColor};" title="${esc(item.displayName)} Â· ${esc(item.itemCount)} items" tabindex="0"></div>`;
+        const classes = ["gantt-block"];
+        if (session.isCompleted) classes.push("completed");
+        if (session.isPaused) classes.push("paused-fragmented");
+        if (session.relationship === "together") classes.push("together");
+        if (session.relationship === "likely_together") classes.push("likely-together");
+        
+        const timeFmt = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' });
+        const timeRange = `${timeFmt.format(new Date(session.startTime))} - ${timeFmt.format(new Date(session.endTime))}`;
+        const statusText = session.isCompleted ? "Completed" : "Incomplete";
+        const relationText = session.relationship === "together" ? "Together" : session.relationship === "likely_together" ? "Likely Together" : "Individual";
+        const tooltip = `${esc(user)} watched ${esc(session.item.displayTitle)} (${esc(session.itemCount)} items)\nTime: ${timeRange} (${statusText}, ${relationText})`;
+        
+        const serializedItem = encodeURIComponent(JSON.stringify(session.item));
+        
+        return `<div class="${classes.join(" ")}" style="left: ${left}%; width: max(6px, ${width}%); background: ${catColor};" title="${tooltip}" tabindex="0" data-item="${serializedItem}"></div>`;
       }).join("");
       return `<div class="gantt-lane"><div class="gantt-user">${esc(user)}</div><div class="gantt-track">${blocks}</div></div>`;
     }).join("");
-    
-    const formattedDay = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(dateStr + "T12:00:00"));
-    
-    return `
+
+    chartHtml = `
       <div class="day-gantt-card">
         <div class="day-gantt-header">${esc(formattedDay)}</div>
         <div class="gantt-grid-header">
@@ -884,18 +902,123 @@ async function renderTimeline() {
         </div>
       </div>
     `;
-  }).join("");
-  
+  }
+
+  let cowatchHtml = "";
+  if (d.coWatchMoments && d.coWatchMoments.length > 0) {
+    const momentsList = d.coWatchMoments.map(moment => {
+      const isConfirmed = moment.participants.some(p => p.evidenceState === "confirmed");
+      const isSource = moment.participants.find(p => p.role === "source");
+      const watchers = moment.participants
+        .filter(p => p.evidenceState === "confirmed" || p.evidenceState === "inferred" || p.role === "source")
+        .map(p => esc(p.displayName))
+        .join(" & ");
+        
+      const badgeClass = isConfirmed ? "together" : "likely-together";
+      const badgeText = isConfirmed ? "Together" : "Likely Together";
+      
+      const provenance = moment.participants
+        .filter(p => p.userId !== isSource?.userId && (p.evidenceState === "confirmed" || p.evidenceState === "inferred"))
+        .map(p => p.reason)
+        .join("; ");
+        
+      const timeFmt = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' });
+      const timeStr = timeFmt.format(new Date(moment.watchedAt));
+      
+      const representativeItem = {
+        ratingKey: moment.ratingKey,
+        category: moment.mediaType,
+        title: moment.title,
+        showTitle: moment.showTitle,
+        seasonNumber: moment.seasonNumber,
+        episodeNumber: moment.episodeNumber
+      };
+      
+      return `
+        <div class="cowatch-moment-row" data-item="${encodeURIComponent(JSON.stringify(representativeItem))}">
+          <div class="cowatch-moment-info">
+            <div class="cowatch-moment-title">${esc(moment.showTitle || moment.title)}</div>
+            <div class="cowatch-moment-meta">${esc(watchers)} &middot; ${esc(timeStr)}</div>
+            <div class="cowatch-moment-meta" style="font-size: 0.75rem; font-style: italic;">${esc(provenance)}</div>
+          </div>
+          <div>
+            <span class="cowatch-moment-badge ${badgeClass}">${badgeText}</span>
+          </div>
+        </div>
+      `;
+    }).join("");
+    
+    cowatchHtml = `
+      <section class="cowatch-moments-panel">
+        <div class="panel-title"><h3>Co-Watching Moments</h3></div>
+        <div class="cowatch-moments-list">${momentsList}</div>
+      </section>
+    `;
+  }
+
+  const feedItems = Array.isArray(d.items) ? d.items : [];
+  const feedHtml = `
+    <div class="recent-list-fallback" style="margin-top: 2rem;">
+      <div class="panel-title mb-2"><h3>Activity Feed</h3></div>
+      ${feedItems.length > 0 ? feedItems.map(activityRow).join("") : empty("activity")}
+    </div>
+    ${pager(d)}
+  `;
+
   content.innerHTML = `
     <section class="day-gantts-section">
-      ${dayGanttsHtml}
-      <div class="recent-list-fallback" style="margin-top: 2rem;">
-        <div class="panel-title mb-2"><h3>Activity Feed</h3></div>
-        ${(d.items || []).slice(0, 15).map(activityRow).join("")}
-      </div>
-      ${pager(d)}
+      ${navHtml}
+      ${chartHtml}
+      ${cowatchHtml}
+      ${feedHtml}
     </section>
   `;
+
+  const prevBtn = content.querySelector("#timeline-prev-day");
+  if (prevBtn) {
+    prevBtn.addEventListener("click", () => {
+      const date = prevBtn.dataset.date;
+      if (date) {
+        state.timeline.date = date;
+        state.timeline.offset = 0;
+        save();
+        render();
+      }
+    });
+  }
+
+  const nextBtn = content.querySelector("#timeline-next-day");
+  if (nextBtn) {
+    nextBtn.addEventListener("click", () => {
+      const date = nextBtn.dataset.date;
+      if (date) {
+        state.timeline.date = date;
+        state.timeline.offset = 0;
+        save();
+        render();
+      }
+    });
+  }
+
+  const todayBtn = content.querySelector("#timeline-today-btn");
+  if (todayBtn) {
+    todayBtn.addEventListener("click", () => {
+      state.timeline.date = "";
+      state.timeline.offset = 0;
+      save();
+      render();
+    });
+  }
+
+  const picker = content.querySelector("#timeline-picker");
+  if (picker) {
+    picker.addEventListener("change", (e) => {
+      state.timeline.date = e.target.value;
+      state.timeline.offset = 0;
+      save();
+      render();
+    });
+  }
 }
 
 async function renderExplorer() {
@@ -1113,7 +1236,11 @@ content.addEventListener("click",async e=>{
   }
   const page=e.target.closest("[data-page]");
   if(page){
-    state.offset=Math.max(0,state.offset+(page.dataset.page==="next"?50:-50));
+    if(state.layout==="timeline"){
+      state.timeline.offset=Math.max(0,state.timeline.offset+(page.dataset.page==="next"?50:-50));
+    } else {
+      state.offset=Math.max(0,state.offset+(page.dataset.page==="next"?50:-50));
+    }
     return render();
   }
   const libraryPage=e.target.closest("[data-library-page]");
