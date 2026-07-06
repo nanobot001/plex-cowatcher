@@ -1,8 +1,9 @@
 import type { Interaction } from "discord.js";
 import type { CowatchService } from "../service/cowatchService.js";
 import { buildResolvedCowatchContent, type PromptResolutionResult } from "./prompts.js";
+import type { CowatchAdjudicationService, CowatchDecision } from "../service/cowatchAdjudicationService.js";
 
-export async function handleCowatchInteraction(interaction: Interaction, service: CowatchService): Promise<boolean> {
+export async function handleCowatchInteraction(interaction: Interaction, service: CowatchService, reviews?: CowatchAdjudicationService): Promise<boolean> {
   if (interaction.isChatInputCommand()) {
     if (interaction.commandName === "help-cowatch") {
       const typical = service.listTypicalCowatchers()
@@ -32,6 +33,25 @@ export async function handleCowatchInteraction(interaction: Interaction, service
 
   if (!interaction.isButton() && !interaction.isStringSelectMenu()) return false;
   const [scope, action, watchEventIdRaw] = interaction.customId.split(":");
+  if (scope === "cowatch-review") {
+    if (!reviews || !interaction.isButton()) {
+      await interaction.reply({ content: "Co-watch review is unavailable.", ephemeral: true });
+      return true;
+    }
+    const reviewPromptId = Number(watchEventIdRaw);
+    if (!Number.isFinite(reviewPromptId) || !["yes", "no", "not_sure"].includes(action)) {
+      await interaction.reply({ content: "This co-watch review prompt is invalid.", ephemeral: true });
+      return true;
+    }
+    const result = await reviews.resolveReviewPrompt(reviewPromptId, action as Exclude<CowatchDecision, "clear">, interaction.id);
+    if (!result.ok) {
+      await interaction.reply({ content: result.message || "Review could not be recorded.", ephemeral: true });
+      return true;
+    }
+    const label = action === "yes" ? "Together" : action === "no" ? "Not together" : "Still likely together";
+    await interaction.update({ content: `Review recorded: ${label}. Plex watched state was not changed.`, components: [] });
+    return true;
+  }
   if (scope !== "cowatch") return false;
   const watchEventId = Number(watchEventIdRaw);
   if (!Number.isFinite(watchEventId)) {

@@ -4,14 +4,17 @@
 
 Current state:
 - Block 3-2l (Daily Session Timeline) is completed, verified, and merged.
+- Blocks 3-2m through 3-2m-3 are implemented and passed their mandatory gates: household profiles, person pairings/operations, browser adjudication, and review-only Discord prompting.
+- Block 3-2m-4 is implemented and verified. Confirmed shared viewing now contributes to People totals as attributed evidence, matching direct playback is deduplicated, and People supports restorable 7/30/90-day, all-time, and custom periods.
 - The dashboard timeline has been refactored from a multi-month Gantt chart to a bounded, single-day workspace with previous/next navigation, date picker, lanes grouped by user, and active-user filters.
 - A co-watching moments section was added below the lanes chart.
 - The chronological Activity Feed has been relocated below the chart with independent pagination.
 - Fixed layout wrapping bug where play lists in detail views truncated multi-person viewer lists.
-- Verification passed: `npm run verify:block` (67/67 unit, 10/10 E2E Playwright tests, tool contracts) plus live dashboard verification.
+- Verification passed: `npm run verify:block` (73/73 service tests, 20/20 E2E Playwright tests, dashboard syntax, and tool contracts) plus `npm run verify:live-dashboard` at 1440px and 390px.
+- Block 3-2m-4 verification passed: `npm run verify:block` (75/75 service tests, 22/22 E2E Playwright tests, dashboard syntax, and tool contracts) plus `npm run verify:live-dashboard` after PM2 restart.
 
 Next step:
-- Implement **Block 3-2m: People and Co-Watch Intelligence** (`docs/blocks/block-3-2m-people-and-cowatch-intelligence.md`).
+- Implement **Block 3-2n: Hierarchy Progress Workspace** (`docs/blocks/block-3-2n-hierarchy-progress-workspace.md`).
 
 ## 2026-07-04
 
@@ -63,7 +66,6 @@ Do-not-forget checks:
 
 ## Next Recommended Step
 
-- Start with **Block 3-2m: People and Co-Watch Intelligence**.
-- Do not start 3-2n until Block 3-2m has passed its exit gate.
+- Start with **Block 3-2n: Hierarchy Progress Workspace**.
 - Implement only one corrective block at a time and do not begin the next block until the current block's exit gate is recorded as passing.
 - Resume Block 3-3 only after Block 3-2o completes the final dashboard release gate.

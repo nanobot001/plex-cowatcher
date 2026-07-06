@@ -34,9 +34,25 @@ try {
       const label = await card.getByTestId("watched-by").getAttribute("aria-label");
       if (!label?.includes(",")) continue;
       await card.click();
-      const people = await page.getByTestId("detail-people").innerText();
       const cleanLabel = label.replace(/^(Watched by|Together|Likely together) /, "");
-      if (cleanLabel !== people) failures.push(`${viewport.width}px detail people differ from card participants`);
+      const detailPeople = page.getByTestId("detail-people");
+      try {
+        await page.waitForFunction(
+          ({ testId, expected }) => document.querySelector(`[data-testid="${testId}"]`)?.textContent?.trim() === expected,
+          { testId: "detail-people", expected: cleanLabel },
+          { timeout: 5_000 }
+        );
+      } catch {}
+      const people = await detailPeople.innerText();
+      if (cleanLabel !== people) {
+        const encodedItem = await card.getAttribute("data-item");
+        let context = "";
+        try {
+          const item = JSON.parse(decodeURIComponent(encodedItem || ""));
+          context = ` for "${item.displayTitle || item.title}" (${item.ratingKey})`;
+        } catch {}
+        failures.push(`${viewport.width}px detail people differ from card participants${context}: expected "${cleanLabel}", received "${people}"`);
+      }
       await page.locator("#detail-dialog").evaluate((dialog) => dialog.close());
       break;
     }

@@ -32,6 +32,75 @@ export function migrateDatabase(db: Db): void {
   migrateAudiobooks(db);
   normalizeAudiobookSeriesTitles(db);
   migrateAudiobookHierarchy(db);
+  migrateCowatchAdjudications(db);
+  migrateCowatchReviewPrompts(db);
+}
+
+function migrateCowatchReviewPrompts(db: Db): void {
+  const applied = db.prepare("SELECT 1 FROM schema_migrations WHERE version = 11").get();
+  if (applied) return;
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS cowatch_review_prompts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        candidate_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'sent', 'resolved', 'failed', 'cancelled')),
+        requested_by TEXT NOT NULL,
+        request_id TEXT NOT NULL UNIQUE,
+        discord_channel_id TEXT,
+        discord_message_id TEXT,
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        resolved_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_cowatch_review_prompts_candidate
+        ON cowatch_review_prompts(candidate_id, id DESC);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_cowatch_review_prompts_open
+        ON cowatch_review_prompts(candidate_id) WHERE status IN ('pending', 'sent');
+    `);
+    db.prepare("INSERT INTO schema_migrations (version, name) VALUES (11, ?)").run("cowatch_review_prompts");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrateCowatchAdjudications(db: Db): void {
+  const applied = db.prepare("SELECT 1 FROM schema_migrations WHERE version = 10").get();
+  if (applied) return;
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS cowatch_adjudications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        candidate_id TEXT NOT NULL,
+        source_user_id INTEGER NOT NULL,
+        target_user_id INTEGER NOT NULL,
+        rating_key TEXT NOT NULL,
+        rule_version TEXT NOT NULL,
+        supporting_observation_ids_json TEXT NOT NULL,
+        decision TEXT NOT NULL CHECK (decision IN ('yes', 'no', 'not_sure', 'clear')),
+        actor_kind TEXT NOT NULL,
+        method TEXT NOT NULL,
+        request_id TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(source_user_id) REFERENCES users(id),
+        FOREIGN KEY(target_user_id) REFERENCES users(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_cowatch_adjudications_candidate
+        ON cowatch_adjudications(candidate_id, id DESC);
+    `);
+    db.prepare("INSERT INTO schema_migrations (version, name) VALUES (10, ?)").run("cowatch_adjudications");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrateDashboardPreferences(db: Db): void {

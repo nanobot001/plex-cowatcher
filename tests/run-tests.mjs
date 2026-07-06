@@ -24,6 +24,8 @@ import { AudiobookBackfillService } from "../dist/service/audiobookBackfillServi
 import { AudiobookScannerService } from "../dist/service/audiobookScannerService.js";
 import { DashboardService, deriveDashboardCategory } from "../dist/service/dashboardService.js";
 import { DashboardPreferenceService } from "../dist/service/dashboardPreferenceService.js";
+import { CowatchAdjudicationService } from "../dist/service/cowatchAdjudicationService.js";
+import { buildCowatchReviewComponents, buildCowatchReviewEmbed } from "../dist/discord/prompts.js";
 
 const tests = [];
 
@@ -1729,6 +1731,310 @@ test("dashboard preference lists expose only visible users and preserve aliases"
   });
 });
 
+test("dashboard people separates household profiles without merging duplicate-looking identities", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const oldIso = new Date(now.getTime() - 45 * 24 * 60 * 60 * 1000).toISOString();
+    const users = db.prepare("SELECT id, plex_username FROM users").all();
+    const byName = Object.fromEntries(users.map((user) => [user.plex_username, user]));
+    db.prepare("UPDATE users SET dashboard_alias='Big T', dashboard_shown=1 WHERE id=?").run(byName.Tony.id);
+    db.prepare("UPDATE users SET dashboard_shown=0 WHERE id=?").run(byName.Viewer.id);
+    db.prepare("UPDATE users SET dashboard_shown=1 WHERE id=?").run(byName.Disabled.id);
+    const duplicate = db.prepare(`INSERT INTO users
+      (plex_username,display_name,dashboard_alias,dashboard_shown,is_source_user,is_typical_cowatcher,enabled,created_at,updated_at)
+      VALUES ('Tony Archive','Tony Archive','Big_T',1,0,0,1,?,?)`).run(nowIso, nowIso);
+    const insert = db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+    insert.run(byName.Tony.id, "people-current", "movie", "Movies", "Current Movie", nowIso, 100, 7200000, 1, nowIso, nowIso);
+    insert.run(byName.Tony.id, "people-old", "movie", "Movies", "Old Movie", oldIso, 100, 7200000, 1, oldIso, oldIso);
+
+    const result = new DashboardService(db).getPeople({});
+    assert.equal(result.window.defaulted, true);
+    assert.deepEqual(result.active.map((person) => person.display_name), ["Big T"]);
+    assert.equal(result.active[0].plays, 1);
+    assert.equal(result.active[0].minutes, 120);
+    assert.equal(result.active[0].completed, 1);
+    assert.equal(result.active[0].heatmap.length, 30);
+    assert.deepEqual(result.active[0].possibleDuplicates, ["Big_T"]);
+    assert.equal(result.secondary.some((person) => person.id === Number(duplicate.lastInsertRowid)), true);
+    assert.equal(result.secondary.some((person) => person.plex_username === "Disabled" && person.status === "disabled"), true);
+    assert.equal(result.people.some((person) => person.plex_username === "Viewer"), false);
+
+    const explicit = new DashboardService(db).getPeople({ dateFrom: oldIso, dateTo: oldIso });
+    assert.equal(explicit.active.find((person) => person.plex_username === "Tony").recent[0].title, "Old Movie");
+  });
+});
+
+test("dashboard people attributes confirmed co-watches without duplicating direct playback", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const users = db.prepare("SELECT id,plex_username FROM users").all();
+    const byName = Object.fromEntries(users.map((user) => [user.plex_username, user]));
+    const watchedAt = "2026-07-01T20:00:00.000Z";
+    const insertObservation = db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+    const sourceObservation = insertObservation.run(byName.Tony.id, "shared-movie", "movie", "Movies", "Shared Movie", watchedAt, 100, 7_200_000, 1, watchedAt, watchedAt);
+    const event = db.prepare(`INSERT INTO watch_events
+      (source_user_id,rating_key,media_type,library_name,title,watched_at,prompt_status,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?)`).run(byName.Tony.id, "shared-movie", "movie", "Movies", "Shared Movie", watchedAt, "resolved", watchedAt, watchedAt);
+    db.prepare(`INSERT INTO cowatch_confirmations
+      (watch_event_id,target_user_id,confirmation_method,status,created_at,updated_at)
+      VALUES (?,?,?,?,?,?)`).run(Number(event.lastInsertRowid), byName.Viewer.id, "test", "confirmed", watchedAt, watchedAt);
+
+    const service = new DashboardService(db);
+    const attributed = service.getPeople({ period: "all" });
+    const viewerAttributed = attributed.people.find((person) => person.plex_username === "Viewer");
+    const tonyAttributed = attributed.people.find((person) => person.plex_username === "Tony");
+    assert.equal(viewerAttributed.plays, 1);
+    assert.equal(viewerAttributed.minutes, 120);
+    assert.equal(viewerAttributed.completed, 1);
+    assert.equal(viewerAttributed.activityBreakdown.observed.plays, 0);
+    assert.equal(viewerAttributed.activityBreakdown.attributedTogether.plays, 1);
+    assert.equal(viewerAttributed.activityBreakdown.confirmedTogetherSessions, 1);
+    assert.equal(viewerAttributed.recent[0].contribution, "attributed_confirmed_together");
+    assert.equal(viewerAttributed.heatmap.find((day) => day.date === "2026-07-01").attributedMinutes, 120);
+    assert.equal(tonyAttributed.activityBreakdown.confirmedTogetherSessions, 1);
+
+    const targetAt = "2026-07-01T20:05:00.000Z";
+    insertObservation.run(byName.Viewer.id, "shared-movie", "movie", "Movies", "Shared Movie", targetAt, 100, 7_200_000, 1, targetAt, targetAt);
+    const deduplicated = service.getPeople({ period: "all" }).people.find((person) => person.plex_username === "Viewer");
+    assert.equal(deduplicated.plays, 1);
+    assert.equal(deduplicated.minutes, 120);
+    assert.equal(deduplicated.activityBreakdown.observed.plays, 1);
+    assert.equal(deduplicated.activityBreakdown.attributedTogether.plays, 0);
+    assert.equal(deduplicated.activityBreakdown.confirmedTogetherSessions, 1);
+    assert.equal(deduplicated.recent[0].contribution, "observed");
+    const filteredOutDirect = service.getPeople({ period: "all", completed: false }).people.find((person) => person.plex_username === "Viewer");
+    assert.equal(filteredOutDirect.plays, 0);
+    assert.equal(filteredOutDirect.activityBreakdown.attributedTogether.plays, 0);
+
+    const unknownAt = "2026-07-02T20:00:00.000Z";
+    insertObservation.run(byName.Tony.id, "unknown-duration", "movie", "Movies", "Unknown Duration", unknownAt, 100, null, 1, unknownAt, unknownAt);
+    const unknownEvent = db.prepare(`INSERT INTO watch_events
+      (source_user_id,rating_key,media_type,library_name,title,watched_at,prompt_status,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?)`).run(byName.Tony.id, "unknown-duration", "movie", "Movies", "Unknown Duration", unknownAt, "resolved", unknownAt, unknownAt);
+    db.prepare(`INSERT INTO cowatch_confirmations
+      (watch_event_id,target_user_id,confirmation_method,status,created_at,updated_at)
+      VALUES (?,?,?,?,?,?)`).run(Number(unknownEvent.lastInsertRowid), byName.Viewer.id, "test", "confirmed", unknownAt, unknownAt);
+    const withUnknown = service.getPeople({ period: "all" }).people.find((person) => person.plex_username === "Viewer");
+    assert.equal(withUnknown.plays, 2);
+    assert.equal(withUnknown.minutes, 120);
+    assert.equal(withUnknown.activityBreakdown.attributedTogether.unknownDuration, 1);
+    assert.equal(Number(sourceObservation.lastInsertRowid) > 0, true);
+  });
+});
+
+test("dashboard people honors positive adjudication, clear, periods, and uncapped all-time totals", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const users = db.prepare("SELECT id,plex_username FROM users").all();
+    const byName = Object.fromEntries(users.map((user) => [user.plex_username, user]));
+    const insertObservation = db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+    const sourceAt = "2026-07-03T20:00:00.000Z";
+    const targetAt = "2026-07-03T20:05:00.000Z";
+    insertObservation.run(byName.Tony.id, "review-shared", "movie", "Movies", "Reviewed Shared", sourceAt, 100, 7_200_000, 1, sourceAt, sourceAt);
+    insertObservation.run(byName.Viewer.id, "review-shared", "movie", "Movies", "Reviewed Shared", targetAt, 100, 7_200_000, 1, targetAt, targetAt);
+    const adjudications = new CowatchAdjudicationService(db);
+    const candidate = adjudications.listCandidates({ dateFrom: "2026-07-03T00:00:00.000Z", dateTo: "2026-07-04T00:00:00.000Z" })[0];
+    assert.ok(candidate);
+    await adjudications.decide({ candidateId: candidate.candidateId, decision: "yes", actorKind: "web", method: "browser", requestId: "people-review-yes", apply: true, confirm: true });
+    const service = new DashboardService(db);
+    let viewer = service.getPeople({ period: "all" }).people.find((person) => person.plex_username === "Viewer");
+    assert.equal(viewer.activityBreakdown.observed.plays, 1);
+    assert.equal(viewer.activityBreakdown.attributedTogether.plays, 0);
+    assert.equal(viewer.activityBreakdown.confirmedTogetherSessions, 1);
+
+    await adjudications.decide({ candidateId: candidate.candidateId, decision: "clear", actorKind: "web", method: "browser", requestId: "people-review-clear", apply: true, confirm: true });
+    viewer = service.getPeople({ period: "all" }).people.find((person) => person.plex_username === "Viewer");
+    assert.equal(viewer.activityBreakdown.confirmedTogetherSessions, 0);
+
+    const bulkInsert = db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+    db.exec("BEGIN");
+    try {
+      for (let index = 0; index < 505; index += 1) {
+        const at = new Date(Date.UTC(2025, 0, 1, 0, 0, index)).toISOString();
+        bulkInsert.run(byName.Tony.id, `archive-${index}`, "movie", "Movies", `Archive ${index}`, at, 100, 60_000, 1, at, at);
+      }
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    const allTimeTony = service.getPeople({ period: "all" }).people.find((person) => person.plex_username === "Tony");
+    assert.equal(allTimeTony.plays, 506);
+    assert.equal(allTimeTony.heatmap.length, 365);
+    assert.equal(service.getPeople({ period: "7d", user: "Tony" }).window.period, "7d");
+    assert.throws(() => service.getPeople({ period: "custom", dateFrom: "2026-07-01" }), /require dateFrom and dateTo/);
+    assert.throws(() => service.getPeople({ period: "custom", dateFrom: "2026-07-05", dateTo: "2026-07-01" }), /dateFrom must be on or before dateTo/);
+  });
+});
+
+test("dashboard cowatch pairings use visible exact-item evidence and measurable overlap", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const users = db.prepare("SELECT id, plex_username FROM users").all();
+    const byName = Object.fromEntries(users.map((user) => [user.plex_username, user]));
+    const now = new Date();
+    const sourceAt = now.toISOString();
+    const targetAt = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
+    const insert = db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+    insert.run(byName.Tony.id, "pairing-movie", "movie", "Movies", "Pairing Movie", sourceAt, 100, 7200000, 1, sourceAt, sourceAt);
+    insert.run(byName.Viewer.id, "pairing-movie", "movie", "Movies", "Pairing Movie", targetAt, 100, 7200000, 1, targetAt, targetAt);
+
+    const result = new DashboardService(db).getCowatchPairings({ dateFrom: new Date(now.getTime() - 60 * 60 * 1000).toISOString() });
+    assert.equal(result.total, 1);
+    assert.deepEqual(result.items[0].people.map((person) => person.displayName), ["Tony", "Viewer"]);
+    assert.equal(result.items[0].sessionCount, 1);
+    assert.equal(result.items[0].provenance.inferred, 1);
+    assert.equal(result.items[0].knownSharedMinutes, 115);
+    assert.equal(result.items[0].unknownDurationSessions, 0);
+    assert.equal(result.items[0].titles[0].ratingKey, "pairing-movie");
+
+    db.prepare("UPDATE users SET dashboard_shown=0 WHERE id=?").run(byName.Viewer.id);
+    assert.equal(new DashboardService(db).getCowatchPairings({ dateFrom: new Date(now.getTime() - 60 * 60 * 1000).toISOString() }).total, 0);
+  });
+});
+
+test("dashboard prompt lifecycle actions are confirmed idempotent and audited", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const watchEventId = insertCompletedWatch(db);
+    const service = cowatchService(db);
+
+    const unconfirmed = service.dismissPrompt(watchEventId, false);
+    assert.equal(unconfirmed.ok, false);
+    assert.equal(unconfirmed.errorCode, "CONFIRMATION_REQUIRED");
+    const dismissed = service.dismissPrompt(watchEventId, true);
+    const dismissedAgain = service.dismissPrompt(watchEventId, true);
+    assert.equal(dismissed.ok, true);
+    assert.equal(dismissed.data.changed, true);
+    assert.equal(dismissedAgain.data.changed, false);
+
+    const reprompted = service.reprompt(watchEventId, true);
+    const repromptedAgain = service.reprompt(watchEventId, true);
+    assert.equal(reprompted.data.changed, true);
+    assert.equal(repromptedAgain.data.changed, false);
+    assert.equal(db.prepare("SELECT prompt_status FROM watch_events WHERE id=?").get(watchEventId).prompt_status, "pending");
+    assert.ok(db.prepare("SELECT id FROM audit_log WHERE action='dashboard_prompt_dismissed' AND status='ok'").get());
+    assert.ok(db.prepare("SELECT id FROM audit_log WHERE action='dashboard_prompt_reprompted' AND status='ok'").get());
+  });
+});
+
+test("cowatch adjudication is append-only reversible idempotent and evidence-scoped", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    migrateDatabase(db);
+    assert.equal(db.prepare("SELECT COUNT(*) count FROM schema_migrations WHERE version=10").get().count, 1);
+    const users = db.prepare("SELECT id, plex_username FROM users").all();
+    const byName = Object.fromEntries(users.map((user) => [user.plex_username, user]));
+    const now = new Date();
+    const sourceAt = now.toISOString();
+    const targetAt = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
+    const insert = db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+    insert.run(byName.Tony.id, "review-movie", "movie", "Movies", "Review Movie", sourceAt, 100, 7200000, 1, sourceAt, sourceAt);
+    insert.run(byName.Viewer.id, "review-movie", "movie", "Movies", "Review Movie", targetAt, 100, 7200000, 1, targetAt, targetAt);
+    const service = new CowatchAdjudicationService(db);
+    const candidate = service.listCandidates({ days: 1 })[0];
+    assert.ok(candidate);
+
+    const preview = await service.decide({ candidateId: candidate.candidateId, decision: "yes", actorKind: "web", method: "browser", requestId: "request-preview-1" });
+    assert.equal(preview.data.dryRun, true);
+    assert.equal(db.prepare("SELECT COUNT(*) count FROM cowatch_adjudications").get().count, 0);
+    const yes = await service.decide({ candidateId: candidate.candidateId, decision: "yes", actorKind: "web", method: "browser", requestId: "request-apply-1", apply: true, confirm: true });
+    const repeated = await service.decide({ candidateId: candidate.candidateId, decision: "yes", actorKind: "web", method: "browser", requestId: "request-apply-1", apply: true, confirm: true });
+    assert.equal(yes.data.changed, true);
+    assert.equal(repeated.data.repeated, true);
+    assert.equal(db.prepare("SELECT COUNT(*) count FROM cowatch_adjudications").get().count, 1);
+
+    await service.decide({ candidateId: candidate.candidateId, decision: "not_sure", actorKind: "web", method: "browser", requestId: "request-apply-2", apply: true, confirm: true });
+    assert.equal(service.listCandidates({ days: 1 })[0].effectiveRelationship, "likely_together");
+    await service.decide({ candidateId: candidate.candidateId, decision: "no", actorKind: "web", method: "browser", requestId: "request-apply-3", apply: true, confirm: true });
+    assert.equal(service.listCandidates({ days: 1 })[0].effectiveRelationship, "suppressed");
+    assert.equal(new DashboardService(db).getCowatchPairings({ dateFrom: new Date(now.getTime() - 60 * 60 * 1000).toISOString() }).total, 0);
+    await service.decide({ candidateId: candidate.candidateId, decision: "clear", actorKind: "web", method: "browser", requestId: "request-apply-4", apply: true, confirm: true });
+    assert.equal(service.listCandidates({ days: 1 })[0].effectiveRelationship, "likely_together");
+    assert.equal(service.listCandidates({ days: 1 })[0].decision, null);
+    assert.equal(db.prepare("SELECT COUNT(*) count FROM cowatch_adjudications").get().count, 4);
+    assert.ok(db.prepare("SELECT id FROM audit_log WHERE action='cowatch_adjudication_decided' AND status='reversed'").get());
+
+    const laterTarget = new Date(now.getTime() + 10 * 60 * 1000).toISOString();
+    insert.run(byName.Viewer.id, "review-movie", "movie", "Movies", "Review Movie", laterTarget, 100, 7200000, 1, laterTarget, laterTarget);
+    const changedCandidate = service.listCandidates({ days: 1 })[0];
+    assert.notEqual(changedCandidate.candidateId, candidate.candidateId);
+  });
+});
+
+test("Discord review prompts are operator-triggered deduped and resolve without Plex sync", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const users = db.prepare("SELECT id, plex_username FROM users").all();
+    const byName = Object.fromEntries(users.map((user) => [user.plex_username, user]));
+    const now = new Date();
+    const sourceAt = now.toISOString();
+    const targetAt = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
+    const insert = db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+    insert.run(byName.Tony.id, "discord-review", "movie", "Movies", "Discord Review", sourceAt, 100, 7200000, 1, sourceAt, sourceAt);
+    insert.run(byName.Viewer.id, "discord-review", "movie", "Movies", "Discord Review", targetAt, 100, 7200000, 1, targetAt, targetAt);
+    let plexWrites = 0;
+    cowatchService(db, { markWatched: async () => { plexWrites += 1; return { ok: true, status: "marked_watched" }; } });
+    const service = new CowatchAdjudicationService(db);
+    const candidate = service.listCandidates({ days: 1 })[0];
+
+    const preview = service.requestDiscordReview({ candidateId: candidate.candidateId, actorKind: "web", requestId: "review-preview-1" });
+    assert.equal(preview.data.dryRun, true);
+    assert.equal(db.prepare("SELECT COUNT(*) count FROM cowatch_review_prompts").get().count, 0);
+    const requested = service.requestDiscordReview({ candidateId: candidate.candidateId, actorKind: "web", requestId: "review-request-1", apply: true, confirm: true });
+    const duplicate = service.requestDiscordReview({ candidateId: candidate.candidateId, actorKind: "web", requestId: "review-request-2", apply: true, confirm: true });
+    assert.equal(requested.data.changed, true);
+    assert.equal(duplicate.data.changed, false);
+    assert.equal(service.listPendingReviewPrompts().length, 1);
+
+    const firstPromptId = requested.data.reviewPromptId;
+    assert.equal(service.recordReviewPromptFailure(firstPromptId, "fixture delivery failure").failed, true);
+    const retried = service.requestDiscordReview({ candidateId: candidate.candidateId, actorKind: "web", requestId: "review-request-3", apply: true, confirm: true });
+    assert.equal(retried.data.changed, true);
+    const secondPromptId = retried.data.reviewPromptId;
+    assert.equal(service.recordReviewPromptSent(secondPromptId, "private-channel", "private-message").sent, true);
+    assert.equal(service.recordReviewPromptSent(secondPromptId, "private-channel", "private-message").sent, false);
+    const resolved = await service.resolveReviewPrompt(secondPromptId, "yes", "interaction-12345678");
+    const late = await service.resolveReviewPrompt(secondPromptId, "no", "interaction-87654321");
+    assert.equal(resolved.data.status, "resolved");
+    assert.equal(late.data.changed, false);
+    assert.equal(service.listCandidates({ days: 1 })[0].decision, "yes");
+    assert.equal(plexWrites, 0);
+    assert.equal(db.prepare("SELECT status FROM cowatch_review_prompts WHERE id=?").get(secondPromptId).status, "resolved");
+    assert.ok(db.prepare("SELECT id FROM audit_log WHERE action='cowatch_review_prompt_resolved'").get());
+
+    await service.decide({ candidateId: candidate.candidateId, decision: "clear", actorKind: "web", method: "browser", requestId: "review-clear-123", apply: true, confirm: true });
+    const hiddenPrompt = service.requestDiscordReview({ candidateId: candidate.candidateId, actorKind: "web", requestId: "review-request-4", apply: true, confirm: true });
+    db.prepare("UPDATE users SET dashboard_shown=0 WHERE id=?").run(byName.Viewer.id);
+    assert.equal(service.listPendingReviewPrompts().length, 0);
+    assert.equal(db.prepare("SELECT status FROM cowatch_review_prompts WHERE id=?").get(hiddenPrompt.data.reviewPromptId).status, "cancelled");
+  });
+});
+
+test("Discord review components use a distinct review-only interaction namespace", () => {
+  const media = { reviewPromptId: 42, sourceName: "Tony", targetName: "Viewer", title: "Review Movie", watchedAt: "2026-07-05T12:00:00.000Z" };
+  const embed = buildCowatchReviewEmbed(media);
+  const components = buildCowatchReviewComponents(media.reviewPromptId).map((row) => row.toJSON());
+  assert.match(embed.footer.text, /will not change Plex watched state/i);
+  assert.deepEqual(components[0].components.map((component) => component.custom_id), ["cowatch-review:yes:42", "cowatch-review:no:42", "cowatch-review:not_sure:42"]);
+});
+
 test("dashboard audiobook titles prefer the book title and artwork routes return images", async () => {
   await withTestDb(async (db) => {
     seedUsers(db);
@@ -2037,7 +2343,7 @@ test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed promp
       (source_user_id,rating_key,media_type,title,watched_at,prompt_status,created_at,updated_at)
       VALUES (?, 'movie-http', 'movie', 'HTTP Movie', ?, 'pending', ?, ?)`).run(user.id,now,now,now);
     const { createApp } = await import("../dist/server/app.js");
-    const app = createApp(db,new MockPlexAdapter(), { skipStartupUserSync: true });
+    const app = createApp(db,new MockPlexAdapter(), { skipStartupUserSync: true, discordReviewAvailable: false });
     // Wait for the async syncConfiguredUsers to complete in routes.ts, then re-seed
     await new Promise(r => setTimeout(r, 100));
     seedUsers(db);
@@ -2075,6 +2381,13 @@ test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed promp
       assert.equal(detail.data.item.title,"HTTP Movie");
       assert.equal(detail.data.repeatCount,0);
       assert.equal(typeof detail.data.timingMs,"number");
+      const people = await (await fetch(base+"/api/dashboard/people?period=7d")).json();
+      assert.equal(people.ok,true);
+      assert.equal(people.data.window.period,"7d");
+      const invalidPeopleResponse = await fetch(base+"/api/dashboard/people?period=custom&dateFrom=2026-07-05&dateTo=2026-07-01");
+      const invalidPeople = await invalidPeopleResponse.json();
+      assert.equal(invalidPeopleResponse.status,400);
+      assert.equal(invalidPeople.errorCode,"VALIDATION_ERROR");
       assert.doesNotMatch(JSON.stringify(overview),/X-Plex-Token|file_path|folder_path_hint/);
       const csvResponse=await fetch(base+"/api/dashboard/export.csv");
       assert.match(csvResponse.headers.get("content-type"),/text\/csv/);
@@ -2084,6 +2397,9 @@ test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed promp
       assert.doesNotMatch(csv,/X-Plex-Token|file_path|folder_path_hint/);
       const denied=await fetch(base+`/api/dashboard/prompts/${event.lastInsertRowid}/dismiss`,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
       assert.equal(denied.status,400);
+      const discordReviewUnavailable=await fetch(base+"/api/dashboard/cowatch-reviews/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/ask-discord",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apply:true,confirm:true,requestId:"disabled-review-1"})});
+      assert.equal(discordReviewUnavailable.status,409);
+      assert.equal((await discordReviewUnavailable.json()).errorCode,"DISCORD_REVIEW_UNAVAILABLE");
       const accepted=await fetch(base+`/api/dashboard/prompts/${event.lastInsertRowid}/dismiss`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirm:true})});
       assert.equal(accepted.status,200);
       assert.equal(db.prepare("SELECT prompt_status FROM watch_events WHERE id=?").get(event.lastInsertRowid).prompt_status,"dismissed");

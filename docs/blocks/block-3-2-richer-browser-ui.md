@@ -60,10 +60,14 @@ Blocks 3-2b through 3-2e extend that usable core with alternate layouts, deeper 
 10. [Block 3-2j: Library Category Browser](block-3-2j-library-category-browser.md)
 11. [Block 3-2j-1: Co-Watch Evidence Semantics](block-3-2j-1-cowatch-evidence-semantics.md)
 12. [Block 3-2k: Rich Media Detail Workspace](block-3-2k-rich-media-detail-workspace.md)
-13. [Block 3-2l: Daily Session Timeline](block-3-2l-daily-session-timeline.md)
-14. [Block 3-2m: People And Co-Watch Intelligence](block-3-2m-people-and-cowatch-intelligence.md)
-15. [Block 3-2n: Hierarchy Progress Workspace](block-3-2n-hierarchy-progress-workspace.md)
-16. [Block 3-2o: Dashboard Accessibility And Regression Gate](block-3-2o-dashboard-accessibility-and-regression-gate.md)
+13. [Block 3-2l: Daily Session Timeline](completed/block-3-2l-daily-session-timeline.md)
+14. [Block 3-2m: Household People Profiles](block-3-2m-people-and-cowatch-intelligence.md)
+15. [Block 3-2m-1: Person Pairings And Operations](block-3-2m-1-person-pairings-and-operations.md)
+16. [Block 3-2m-2: Browser Co-Watch Adjudication](block-3-2m-2-browser-cowatch-adjudication.md)
+17. [Block 3-2m-3: Discord Co-Watch Review](block-3-2m-3-discord-cowatch-review.md)
+18. [Block 3-2m-4: People Co-Watch Attribution And Window Controls](block-3-2m-4-people-cowatch-attribution.md)
+19. [Block 3-2n: Hierarchy Progress Workspace](block-3-2n-hierarchy-progress-workspace.md)
+20. [Block 3-2o: Dashboard Accessibility And Regression Gate](block-3-2o-dashboard-accessibility-and-regression-gate.md)
 
 ## Corrective Sequence Authority
 

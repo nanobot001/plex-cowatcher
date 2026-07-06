@@ -21,6 +21,14 @@ export interface PromptResolutionResult {
   results: Array<{ targetUserId: number; status: string; plexSyncStatus?: string; error?: string }>;
 }
 
+export interface ReviewPromptMedia {
+  reviewPromptId: number;
+  sourceName: string;
+  targetName: string;
+  title: string;
+  watchedAt: string;
+}
+
 export function buildCowatchEmbed(media: PromptMedia): APIEmbed {
   const episode = media.showTitle ? `${media.showTitle} - S${String(media.seasonNumber ?? 0).padStart(2, "0")}E${String(media.episodeNumber ?? 0).padStart(2, "0")} - ${media.title}` : media.title;
   return {
@@ -78,4 +86,22 @@ export function buildResolvedCowatchContent(
   });
 
   return ["Resolved co-watch prompt.", ...lines].join("\n");
+}
+
+export function buildCowatchReviewEmbed(media: ReviewPromptMedia): APIEmbed {
+  return {
+    title: `Did ${media.sourceName} and ${media.targetName} watch together?`,
+    description: media.title,
+    fields: [{ name: "Playback evidence", value: media.watchedAt }],
+    footer: { text: "Review only - this will not change Plex watched state." },
+    color: 0xf59e0b
+  };
+}
+
+export function buildCowatchReviewComponents(reviewPromptId: number) {
+  return [new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`cowatch-review:yes:${reviewPromptId}`).setLabel("Yes").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`cowatch-review:no:${reviewPromptId}`).setLabel("No").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`cowatch-review:not_sure:${reviewPromptId}`).setLabel("Not sure").setStyle(ButtonStyle.Secondary)
+  )];
 }

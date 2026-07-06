@@ -103,6 +103,55 @@ export class CowatchService {
     this.audit.record("create_cowatch_prompt", actor, "error", { watchEventId }, error);
   }
 
+  dismissPrompt(watchEventId: number, confirm: boolean, actor = "web") {
+    try {
+      if (!confirm) throw new AppError("CONFIRMATION_REQUIRED", "Confirmation required", { watchEventId }, false, 400);
+      const event = this.db.prepare("SELECT id, prompt_status FROM watch_events WHERE id = ?").get(watchEventId) as { id: number; prompt_status: string } | undefined;
+      if (!event) throw new AppError("WATCH_EVENT_NOT_FOUND", "Watch event not found", { watchEventId }, false, 404);
+      if (event.prompt_status === "dismissed") {
+        this.audit.record("dashboard_prompt_dismissed", actor, "skipped", { watchEventId, reason: "already_dismissed" });
+        return { ok: true, data: { watchEventId, status: "dismissed", changed: false } };
+      }
+      if (!["pending", "prompted", "failed"].includes(event.prompt_status)) {
+        throw new AppError("PROMPT_NOT_DISMISSIBLE", "Prompt is not eligible for dismissal", { watchEventId, status: event.prompt_status }, false, 409);
+      }
+      const now = nowIso();
+      this.db.prepare("UPDATE watch_events SET prompt_status='dismissed', updated_at=? WHERE id=?").run(now, watchEventId);
+      this.audit.record("dashboard_prompt_dismissed", actor, "ok", { watchEventId, previousStatus: event.prompt_status });
+      return { ok: true, data: { watchEventId, status: "dismissed", changed: true } };
+    } catch (error) {
+      this.audit.record("dashboard_prompt_dismissed", actor, "error", { watchEventId }, error instanceof Error ? error.message : String(error));
+      return errorResult(error);
+    }
+  }
+
+  reprompt(watchEventId: number, confirm: boolean, actor = "web") {
+    try {
+      if (!confirm) throw new AppError("CONFIRMATION_REQUIRED", "Confirmation required", { watchEventId }, false, 400);
+      const event = this.db.prepare("SELECT id, prompt_status, discord_prompt_message_id FROM watch_events WHERE id = ?").get(watchEventId) as
+        | { id: number; prompt_status: string; discord_prompt_message_id: string | null }
+        | undefined;
+      if (!event) throw new AppError("WATCH_EVENT_NOT_FOUND", "Watch event not found", { watchEventId }, false, 404);
+      if (event.prompt_status === "pending" && !event.discord_prompt_message_id) {
+        this.audit.record("dashboard_prompt_reprompted", actor, "skipped", { watchEventId, reason: "already_pending" });
+        return { ok: true, data: { watchEventId, status: "pending", changed: false } };
+      }
+      if (!["prompted", "failed", "dismissed"].includes(event.prompt_status)) {
+        throw new AppError("PROMPT_NOT_REPROMPTABLE", "Prompt is not eligible to be sent again", { watchEventId, status: event.prompt_status }, false, 409);
+      }
+      const now = nowIso();
+      this.db.prepare(`UPDATE watch_events
+        SET prompt_status='pending', discord_prompt_channel_id=NULL, discord_prompt_message_id=NULL,
+          discord_prompt_sent_at=NULL, updated_at=?
+        WHERE id=?`).run(now, watchEventId);
+      this.audit.record("dashboard_prompt_reprompted", actor, "ok", { watchEventId, previousStatus: event.prompt_status });
+      return { ok: true, data: { watchEventId, status: "pending", changed: true } };
+    } catch (error) {
+      this.audit.record("dashboard_prompt_reprompted", actor, "error", { watchEventId }, error instanceof Error ? error.message : String(error));
+      return errorResult(error);
+    }
+  }
+
   async resolvePrompt(input: ResolvePromptInput) {
     try {
       const event = this.db.prepare("SELECT * FROM watch_events WHERE id = ?").get(input.watchEventId) as
