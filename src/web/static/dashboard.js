@@ -1,9 +1,10 @@
 const layouts = new Set(["overview","timeline","explorer","people","progress"]);
-const state = { layout: "overview", filters: {}, offset: 0, totals: null, users: null, libraries: null, explorer: { section: "", sort: "recent", offset: 0, selected: "" }, timeline: { date: "", offset: 0 } };
+const state = { layout: "overview", filters: {}, offset: 0, totals: null, users: null, libraries: null, explorer: { section: "", sort: "recent", offset: 0, selected: "" }, timeline: { date: "", offset: 0 }, people: { period: "30d", dateFrom: "", dateTo: "" } };
 const content = document.querySelector("#dashboard-content");
 const form = document.querySelector("#dashboard-filters");
 const dialog = document.querySelector("#detail-dialog");
 let explorerRenderVersion=0;
+let peopleRenderVersion=0;
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmtDate = value => value ? new Intl.DateTimeFormat(undefined,{dateStyle:"medium",timeStyle:"short"}).format(new Date(value)) : "Unknown time";
 const normalizeDurationSeconds = value => {
@@ -17,10 +18,11 @@ const fmtDuration = value => {
   return minutes > 0 ? fmtHourValue(minutes) : "0m";
 };
 const safePrefs = () => { try { const v=JSON.parse(localStorage.getItem("cowatch.dashboard")||"{}"); return v&&typeof v==="object"?v:{}; } catch { return {}; } };
-const prefs=safePrefs(); state.layout=layouts.has(prefs.layout)?prefs.layout:"overview"; state.filters=prefs.filters&&typeof prefs.filters==="object"?prefs.filters:{};
-const save=()=>{try{localStorage.setItem("cowatch.dashboard",JSON.stringify({layout:state.layout,filters:state.filters}));}catch{}};
+const prefs=safePrefs(); state.layout=layouts.has(prefs.layout)?prefs.layout:"overview"; state.filters=prefs.filters&&typeof prefs.filters==="object"?prefs.filters:{}; state.people=prefs.people&&typeof prefs.people==="object"?{...state.people,...prefs.people}:state.people;
+const save=()=>{try{localStorage.setItem("cowatch.dashboard",JSON.stringify({layout:state.layout,filters:state.filters,people:state.people}));}catch{}};
 const query=(extra={})=>{const p=new URLSearchParams();Object.entries({...state.filters,...extra}).forEach(([k,v])=>{if(v!==""&&v!=null)p.set(k,String(v));});return p;};
-const fetchJson=async url=>{const r=await fetch(url);const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.message||"Panel could not load.");return j.data;};
+const peopleQuery=(extra={})=>{const p=query(extra);p.delete("dateFrom");p.delete("dateTo");p.set("period",state.people.period||"30d");if(state.people.period==="custom"){if(state.people.dateFrom)p.set("dateFrom",state.people.dateFrom);if(state.people.dateTo)p.set("dateTo",state.people.dateTo);}return p;};
+const fetchJson=async url=>{const r=await fetch(url,{cache:"no-store"});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.message||"Panel could not load.");return j.data;};
 const evidence=x=>{const e=x.evidence||{};return '<div class="evidence"><span class="proof observed">Observed</span>'+(e.confirmed?'<span class="proof confirmed">Confirmed</span>':'')+(e.promptStatus?'<span class="proof">Prompt '+esc(e.promptStatus)+'</span>':'')+(e.plexSyncStatus?'<span class="proof synced">Plex '+esc(e.plexSyncStatus)+'</span>':'')+'</div>';};
 const art=x=>'<img class="poster" src="'+esc(x.artworkUrl)+'" alt="'+esc((x.displayTitle||x.title||x.showTitle||"Title")+" "+categoryLabel(x.category)+" artwork")+'" loading="lazy" onerror="this.src=\'/static/icon.svg\';this.classList.add(\'artwork-fallback\')">';
 const mediaTitle=x=>esc(x.displayTitle||x.title||x.showTitle||"");
@@ -147,6 +149,15 @@ const explorerSections=[
 const explorerFilterKeys=["dateFrom","dateTo","user","category","library","completed","search"];
 const routeQuery=()=>{
   const p=query();
+  if(state.layout==="people"){
+    p.delete("dateFrom");
+    p.delete("dateTo");
+    if(state.people.period&&state.people.period!=="30d")p.set("period",state.people.period);
+    if(state.people.period==="custom"){
+      if(state.people.dateFrom)p.set("dateFrom",state.people.dateFrom);
+      if(state.people.dateTo)p.set("dateTo",state.people.dateTo);
+    }
+  }
   if(state.layout==="explorer"){
     if(state.explorer.section)p.set("section",state.explorer.section);
     if(state.explorer.sort!=="recent")p.set("sort",state.explorer.sort);
@@ -165,7 +176,14 @@ function restoreLocationState(){
   if(layouts.has(layoutName))state.layout=layoutName;
   if(!raw.includes("?"))return;
   const params=new URLSearchParams(rawQuery);
-  state.filters=Object.fromEntries(explorerFilterKeys.filter(key=>params.has(key)).map(key=>[key,params.get(key)]));
+  const restoredFilterKeys=state.layout==="people"?explorerFilterKeys.filter(key=>!['dateFrom','dateTo'].includes(key)):explorerFilterKeys;
+  state.filters=Object.fromEntries(restoredFilterKeys.filter(key=>params.has(key)).map(key=>[key,params.get(key)]));
+  if(state.layout==="people"){
+    const period=params.get("period")||"30d";
+    state.people.period=["7d","30d","90d","all","custom"].includes(period)?period:"30d";
+    state.people.dateFrom=params.get("dateFrom")||"";
+    state.people.dateTo=params.get("dateTo")||"";
+  }
   const section=params.get("section")||state.filters.category||"";
   state.explorer.section=explorerSections.some(item=>item.id===section)?section:"";
   state.explorer.sort=["recent","title","progress","plays"].includes(params.get("sort"))?params.get("sort"):"recent";
@@ -182,7 +200,8 @@ const attentionHeading=item=>({
   discord_delivery_failed:"Prompt delivery failed",
   plex_sync_failed:"Watch state sync failed",
   missing_metadata:"Title needs matching metadata",
-  uncertain_classification:"Category needs review"
+  uncertain_classification:"Category needs review",
+  cowatch_review_prompt:"Discord co-watch review"
 })[item?.kind]||"Needs review";
 const attentionDetail=item=>{
   const who = item?.user ? String(item.user) : "Someone";
@@ -515,6 +534,9 @@ function renderDetailContent(d) {
           </div>
         </div>
       `;
+    }
+    if (d.adjudications && d.adjudications.length > 0) {
+      evidenceHtml += `<div class="detail-evidence-section"><h3>Co-watch review history</h3><div class="detail-lazy-plays">${d.adjudications.map(row=>`<div class="detail-lazy-play-item"><span class="proof">${esc(row.decision.replace("_"," "))}</span><strong class="play-user">${esc(row.sourceName)} &amp; ${esc(row.targetName)}</strong><span class="play-date text-muted">${esc(row.method)} &middot; ${fmtDate(row.createdAt)}</span></div>`).join("")}</div></div>`;
     }
   }
 
@@ -1067,41 +1089,96 @@ async function renderExplorer() {
 }
 
 async function renderPeople() {
-  const [people, cowatch] = await Promise.all([
-    fetchJson("/api/dashboard/people?" + query()),
-    fetchJson("/api/dashboard/cowatch-patterns")
+  const renderVersion=++peopleRenderVersion;
+  const periodParams=peopleQuery();
+  const [peopleResult,pairingsResult,reviewsResult,operationsResult]=await Promise.allSettled([
+    fetchJson("/api/dashboard/people?" + periodParams),
+    fetchJson("/api/dashboard/cowatch-pairings?" + periodParams),
+    fetchJson("/api/dashboard/cowatch-reviews?" + peopleQuery({limit:20,offset:0})),
+    fetchJson("/api/dashboard/operations")
   ]);
-  const rows = Array.isArray(people) ? people : people.people || [];
+  if(peopleResult.status==="rejected")throw peopleResult.reason;
+  const data = peopleResult.value;
+  const active = data.active || [];
+  const secondary = data.secondary || [];
+  const personCard = person => {
+    const name=person.display_name||person.plex_username;
+    const statusLabel=person.status==="active"?"Active":person.status==="disabled"?"Disabled":"No activity";
+    const heatmap=(person.heatmap||[]).map(day=>{
+      const level=day.minutes<=0?0:day.minutes<30?1:day.minutes<120?2:3;
+      const together=Number(day.confirmedTogetherSessions||0);
+      const label=`${day.date}: ${fmtHourValue(day.minutes)} total (${fmtHourValue(day.observedMinutes)} observed, ${fmtHourValue(day.attributedMinutes)} attributed) across ${day.plays} play${day.plays===1?"":"s"}; ${together} confirmed Together session${together===1?"":"s"}`;
+      return `<span class="person-heat-cell level-${level}${together?" has-together":""}" title="${esc(label)}" aria-label="${esc(label)}"></span>`;
+    }).join("");
+    const recent=(person.recent||[]).map(item=>`<button class="person-recent-title" data-item="${encodeURIComponent(JSON.stringify(item))}"><span>${mediaTitle(item)}</span><small>${item.contribution==="attributed_confirmed_together"?'<span class="together-label">Together</span> &middot; ':""}${esc(categoryLabel(item.category))} &middot; ${fmtDate(item.watchedAt)}</small></button>`).join("");
+    const warnings=(person.possibleDuplicates||[]).length?`<p class="person-warning"><strong>Possible duplicate</strong><span>Similar to ${esc(person.possibleDuplicates.join(", "))}. Kept separate.</span></p>`:"";
+    const breakdown=person.activityBreakdown||{observed:{plays:person.plays||0,minutes:person.minutes||0,completed:person.completed||0},attributedTogether:{plays:0,minutes:0,completed:0,unknownDuration:0},confirmedTogetherSessions:0};
+    const unknown=breakdown.attributedTogether.unknownDuration?` &middot; ${breakdown.attributedTogether.unknownDuration} unknown duration`:"";
+    const libraryRoute={layout:"explorer",filters:{...state.filters,user:person.plex_username}};
+    const timelineRoute={layout:"timeline",filters:{...state.filters,user:person.plex_username}};
+    return `<article class="person-card" data-testid="person-card" data-person-status="${esc(person.status)}">
+      <header class="person-card-header"><div class="avatar" aria-hidden="true">${esc(name.slice(0,1))}</div><div><h4>${esc(name)}</h4><span class="person-status status-${esc(person.status)}">${esc(statusLabel)}</span></div></header>
+      ${warnings}
+      <div class="person-stats"><span><strong>${esc(fmtHourValue(person.minutes))}</strong> total watched</span><span><strong>${esc(person.completed)}</strong> completed</span><span><strong>${esc(person.activeDays)}</strong> active days</span></div>
+      <div class="person-breakdown" data-testid="person-breakdown"><span><strong>${esc(fmtHourValue(breakdown.observed.minutes))}</strong> directly observed</span><span><strong>${esc(fmtHourValue(breakdown.attributedTogether.minutes))}</strong> added from Together${unknown}</span><span><strong>${esc(breakdown.confirmedTogetherSessions)}</strong> confirmed shared session${breakdown.confirmedTogetherSessions===1?"":"s"}</span></div>
+      <div class="person-mix" aria-label="Category mix">${(person.mix||[]).length?person.mix.map(m=>`<span class="proof">${esc(m.label)} ${esc(m.count)}</span>`).join(""):'<span class="text-muted">No category activity</span>'}</div>
+      <div class="person-heatmap" role="group" aria-label="Activity by day">${heatmap}</div>
+      <div class="person-recent"><h5>Recent titles</h5>${recent||'<p class="text-muted">No activity in this window.</p>'}</div>
+      <div class="person-actions"><button class="text-button" data-route="${encodeRoute(libraryRoute)}">Open Library</button><button class="text-button" data-route="${encodeRoute(timelineRoute)}">Open Timeline</button></div>
+      <details class="person-account"><summary>Technical account</summary><dl><dt>Plex account</dt><dd>${esc(person.technicalAccount?.plexUsername||person.plex_username)}</dd></dl></details>
+    </article>`;
+  };
 
-  const patternsHtml = cowatch.length > 0 
-    ? cowatch.map(p => `
-      <div class="pattern-card">
-        <div class="pattern-header">
-          <strong>${p.cats.join(' + ').toUpperCase()}</strong>
-          <span class="badge badge-success">${p.percent}%</span>
-        </div>
-        <p>${p.durationHours} hours co-watched</p>
-      </div>
-    `).join('')
-    : '<p class="text-muted">No co-watching patterns detected.</p>';
+  const pairingHtml=pairingsResult.status==="rejected"
+    ? `<div class="panel-state error"><h3>Pairings could not load</h3><p>${esc(pairingsResult.reason.message)}</p><button class="btn" data-retry>Try again</button></div>`
+    : pairingsResult.value.items.length
+      ? pairingsResult.value.items.map(pair=>{
+          const names=pair.people.map(person=>person.displayName).join(" & ");
+          const time=pair.knownSharedMinutes>0?fmtHourValue(pair.knownSharedMinutes):"Time unknown";
+          const unknown=pair.unknownDurationSessions?`<span>${pair.unknownDurationSessions} session${pair.unknownDurationSessions===1?"":"s"} without measurable overlap</span>`:"";
+          const titles=pair.titles.map(title=>`<button class="pair-title" data-route="${encodeRoute({layout:"timeline",filters:{...state.filters,ratingKey:title.ratingKey}})}">${esc(title.title)}</button>`).join("");
+          return `<article class="pairing-card" data-testid="pairing-card"><header><div><h4>${esc(names)}</h4><span>${pair.sessionCount} shared session${pair.sessionCount===1?"":"s"}</span></div><strong>${esc(time)}</strong></header><div class="pairing-provenance"><span class="proof confirmed">Together ${pair.provenance.confirmed}</span>${pair.provenance.adjudicated?`<span class="proof confirmed">Reviewed together ${pair.provenance.adjudicated}</span>`:""}<span class="proof">Likely together ${pair.provenance.inferred}</span>${unknown}</div><div class="pairing-titles">${titles}</div></article>`;
+        }).join("")
+      : empty("person pairings");
+  const reviewsHtml=reviewsResult.status==="rejected"
+    ? `<div class="panel-state error"><h3>Review queue could not load</h3><p>${esc(reviewsResult.reason.message)}</p><button class="btn" data-retry>Try again</button></div>`
+    : reviewsResult.value.items.length
+      ? reviewsResult.value.items.map(candidate=>{
+          const names=`${candidate.source.displayName} & ${candidate.target.displayName}`;
+          const stateLabel=candidate.effectiveRelationship==="together"?"Together":candidate.effectiveRelationship==="suppressed"?"Not together":"Likely together";
+          const promptOpen=["pending","sent"].includes(candidate.discordPromptStatus);
+          const discordControl=reviewsResult.value.discordAvailable
+            ? promptOpen?`<span class="review-prompt-state">Discord: ${esc(candidate.discordPromptStatus)}</span>`:`<button class="text-button" data-review-discord>Ask in Discord</button>`
+            : '<span class="review-prompt-state">Discord review unavailable</span>';
+          return `<article class="review-card" data-testid="review-card" data-candidate-id="${esc(candidate.candidateId)}"><div><span class="proof">${esc(stateLabel)}</span><h4>${esc(candidate.showTitle||candidate.title)}</h4><p>${esc(names)} &middot; ${fmtDate(candidate.watchedAt)}</p></div><div class="review-actions" aria-label="Review ${esc(candidate.showTitle||candidate.title)}"><button data-review-decision="yes">Yes</button><button data-review-decision="no">No</button><button data-review-decision="not_sure">Not sure</button>${candidate.decision?'<button class="text-button" data-review-decision="clear">Clear decision</button>':""}${discordControl}</div></article>`;
+        }).join("")
+      : empty("likely-together reviews");
+  const operationsHtml=operationsResult.status==="rejected"
+    ? `<div class="panel-state error"><h3>Operations could not load</h3><p>${esc(operationsResult.reason.message)}</p><button class="btn" data-retry>Try again</button></div>`
+    : operationsResult.value.items.length
+      ? operationsResult.value.items.map(item=>`<article class="operation-row" data-testid="operation-row"><div><strong>${esc(attentionHeading(item))}</strong><p>${esc(item.detail)}</p><small>${esc(attentionStatusLabel(item))}${item.watchedAt?` &middot; ${fmtDate(item.watchedAt)}`:""}</small></div><div class="operation-actions">${item.route?`<button class="text-button" data-route="${encodeRoute(item.route)}">Open context</button>`:""}${item.watchEventId&&item.kind==="unresolved_prompt"?`<button class="text-button" data-action="dismiss" data-id="${esc(item.watchEventId)}">Dismiss</button>`:""}${item.watchEventId&&["unresolved_prompt","discord_delivery_failed"].includes(item.kind)?`<button class="text-button" data-action="reprompt" data-id="${esc(item.watchEventId)}">Send again</button>`:""}</div></article>`).join("")
+      : empty("open operations");
 
-  content.innerHTML = `
-    <section class="dashboard-grid">
-      <div class="dashboard-panel panel-wide">
-        <div class="panel-title"><h3>Household Members</h3></div>
-        <div class="people-grid">
-          ${rows.map(p=>'<article class="person-card"><div class="avatar">'+esc((p.display_name||p.plex_username).slice(0,1))+'</div><h4>'+esc(p.display_name||p.plex_username)+'</h4><p>'+p.plays+' plays &middot; '+p.minutes+' min</p><div>'+p.mix.map(m=>'<span class="proof">'+esc(m.category)+' '+m.count+'</span>').join("")+'</div>'+(p.recent.length?'<button class="text-button" data-person="'+esc(p.plex_username)+'">View activity</button>':'<p class="text-muted">No activity in this window.</p>')+'</article>').join("")}
-        </div>
-      </div>
-      <aside>
-        <div class="dashboard-panel">
-          <h3>Co-Watch Patterns</h3>
-          <p class="text-muted mb-2">Most frequent categories watched together</p>
-          ${patternsHtml}
-        </div>
-      </aside>
+  const periodOptions=[['7d','7 days'],['30d','30 days'],['90d','90 days'],['all','All time'],['custom','Custom']];
+  const periodControls=`<div class="people-period" data-testid="people-period-controls" aria-label="People reporting period"><div class="people-period-presets">${periodOptions.map(([value,label])=>`<button type="button" data-people-period="${value}" aria-pressed="${state.people.period===value}">${label}</button>`).join("")}</div>${state.people.period==="custom"?`<div class="people-custom-dates"><label>From<input type="date" data-people-date-from value="${esc(state.people.dateFrom)}"></label><label>To<input type="date" data-people-date-to value="${esc(state.people.dateTo)}"></label><button type="button" class="btn" data-people-custom-apply>Apply dates</button><span class="people-date-error" role="alert"></span></div>`:""}</div>`;
+  const heatmapRange=data.window?.heatmapTruncated?`Daily heatmap shows ${esc(data.window.heatmapStart)} to ${esc(data.window.heatmapEnd)}; totals cover the full period.`:`Daily heatmap covers ${esc(data.window?.heatmapStart||"")} to ${esc(data.window?.heatmapEnd||"")}.`;
+
+  if(renderVersion!==peopleRenderVersion)return;
+  content.innerHTML = `<div class="people-workspace">
+    <section class="dashboard-panel">
+      <div class="panel-title"><div><h3>Household Members</h3><span>${esc(data.window?.label||"")} &middot; ${active.length} active</span></div></div>
+      ${periodControls}
+      <div class="person-heat-legend" data-testid="people-heatmap-legend"><span><i class="level-0"></i>No activity</span><span><i class="level-1"></i>Under 30m</span><span><i class="level-2"></i>30m-2h</span><span><i class="level-3"></i>2h+</span><span><i class="together-marker"></i>Together</span><small>${heatmapRange}</small></div>
+      <div class="people-grid" data-testid="active-people">${active.length?active.map(personCard).join(""):empty("active household members")}</div>
     </section>
-  `;
+    <details class="dashboard-panel people-secondary" data-testid="secondary-people">
+      <summary><span>Other included identities</span><small>${secondary.length} disabled or without activity</small></summary>
+      <div class="people-grid">${secondary.length?secondary.map(personCard).join(""):empty("other included identities")}</div>
+    </details>
+    <section class="dashboard-panel" data-testid="pairings-panel"><div class="panel-title"><div><h3>Who watches together</h3><span>Exact-item evidence only</span></div></div><div class="pairings-list">${pairingHtml}</div></section>
+    <section class="dashboard-panel" data-testid="reviews-panel"><div class="panel-title"><div><h3>Review likely co-watches</h3><span>${reviewsResult.status==="fulfilled"?`${reviewsResult.value.total} exact-item candidate${reviewsResult.value.total===1?"":"s"}`:"Needs retry"}</span></div></div><div class="reviews-list">${reviewsHtml}</div></section>
+    <section class="dashboard-panel" data-testid="operations-panel"><div class="panel-title"><div><h3>Operations</h3><span>Current unresolved prompts and sync issues</span></div></div><div class="operations-list">${operationsHtml}</div></section>
+  </div>`;
 }
 
 async function renderProgress() {
@@ -1172,7 +1249,7 @@ async function render(){
     overview: ["Overview", "Everything everyone is enjoying."],
     timeline: ["Timeline", "Gantt chart of household watch sessions."],
     explorer: ["Library", "Categorized media catalog and watch history."],
-    people: ["People & Co-Watching", "Household members and co-watching patterns."],
+    people: ["People", "Included household members and their recent activity."],
     progress: ["Progress", "Series completion rates and playback evidence."]
   };
   const info = titles[state.layout] || ["Dashboard", ""];
@@ -1221,6 +1298,29 @@ form.addEventListener("reset",()=>setTimeout(()=>{
 },0));
 
 content.addEventListener("click",async e=>{
+  const periodButton=e.target.closest("[data-people-period]");
+  if(periodButton){
+    const period=periodButton.dataset.peoplePeriod;
+    state.people.period=period;
+    if(period==="custom"&&(!state.people.dateFrom||!state.people.dateTo)){
+      const end=new Date();
+      const start=new Date(end.getTime()-29*24*60*60*1000);
+      state.people.dateFrom=start.toISOString().slice(0,10);
+      state.people.dateTo=end.toISOString().slice(0,10);
+    }
+    save();
+    return render();
+  }
+  const customApply=e.target.closest("[data-people-custom-apply]");
+  if(customApply){
+    const from=content.querySelector("[data-people-date-from]")?.value||"";
+    const to=content.querySelector("[data-people-date-to]")?.value||"";
+    const error=content.querySelector(".people-date-error");
+    if(!from||!to||from>to){if(error)error.textContent="Choose a From date on or before the To date.";return;}
+    state.people={period:"custom",dateFrom:from,dateTo:to};
+    save();
+    return render();
+  }
   const libraryItem=e.target.closest("[data-library-item]");
   if(libraryItem){
     const item=JSON.parse(decodeURIComponent(libraryItem.dataset.libraryItem));
@@ -1275,6 +1375,38 @@ content.addEventListener("click",async e=>{
     state.layout="timeline";
     save();
     return render();
+  }
+  const reviewDecision=e.target.closest("[data-review-decision]");
+  if(reviewDecision){
+    const card=reviewDecision.closest("[data-candidate-id]");
+    const decision=reviewDecision.dataset.reviewDecision;
+    if(!card||!confirm(`Apply ${decision.replace("_"," ")} to this co-watch review?`))return;
+    const requestId=globalThis.crypto?.randomUUID?.()||`web-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const response=await fetch(`/api/dashboard/cowatch-reviews/${card.dataset.candidateId}/decision`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({decision,apply:true,confirm:true,requestId})});
+    const result=await response.json();
+    if(!response.ok||!result.ok)alert(result.message||"Review action failed");
+    return render();
+  }
+  const reviewDiscord=e.target.closest("[data-review-discord]");
+  if(reviewDiscord){
+    const card=reviewDiscord.closest("[data-candidate-id]");
+    if(!card||!confirm("Send this co-watch review to Discord?"))return;
+    const pendingState=Object.assign(document.createElement("span"),{className:"review-prompt-state",textContent:"Discord: queuing"});
+    reviewDiscord.replaceWith(pendingState);
+    const requestId=globalThis.crypto?.randomUUID?.()||`web-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const response=await fetch(`/api/dashboard/cowatch-reviews/${card.dataset.candidateId}/ask-discord`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apply:true,confirm:true,requestId})});
+    const result=await response.json();
+    if(!response.ok||!result.ok){alert(result.message||"Discord review could not be queued");await render();return;}
+    pendingState.textContent=`Discord: ${result.data?.status||"pending"}`;
+    const operationsList=content.querySelector(".operations-list");
+    if(operationsList){
+      const row=document.createElement("article");
+      row.className="operation-row";
+      row.dataset.testid="operation-row";
+      row.innerHTML=`<div><strong>Discord co-watch review</strong><p>Review queued for Discord delivery.</p><small>${esc(result.data?.status||"pending")}</small></div>`;
+      operationsList.prepend(row);
+    }
+    return;
   }
   const tab = e.target.closest(".explorer-tab");
   if(tab) {

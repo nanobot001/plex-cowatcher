@@ -5,6 +5,7 @@ import { createTautulliAdapter } from "../adapters/tautulliAdapter.js";
 import { openMigratedDatabase } from "../db/database.js";
 import { DiscordBot } from "../discord/bot.js";
 import { CowatchService } from "../service/cowatchService.js";
+import { CowatchAdjudicationService } from "../service/cowatchAdjudicationService.js";
 import { SyncService } from "../service/syncService.js";
 import { appConfig } from "../utils/config.js";
 import { log } from "../utils/logger.js";
@@ -23,6 +24,10 @@ export function createApp(
   app.locals.db = db;
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
+  app.use("/api/dashboard", (_req, res, next) => {
+    res.setHeader("Cache-Control", "no-store");
+    next();
+  });
   app.use("/static", express.static(path.resolve("src/web/static")));
   registerWebRoutes(app);
   app.use(buildRouter(db, plex, options));
@@ -52,7 +57,7 @@ async function startDiscordRuntime(db: ReturnType<typeof openMigratedDatabase>):
 
   const sync = new SyncService(createPlexAdapter());
   const cowatch = new CowatchService(db, sync);
-  const bot = new DiscordBot(cowatch);
+  const bot = new DiscordBot(cowatch, new CowatchAdjudicationService(db));
 
   try {
     await bot.start();

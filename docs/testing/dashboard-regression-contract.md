@@ -17,6 +17,15 @@ Protect durable dashboard behavior across numbered blocks without freezing visua
 - Explicit confirmed participants can appear without duplicate playback observations.
 - Canonical Library aggregation includes visible participants across title children while hidden users never appear or contribute.
 - Aliases sort deterministically and active person filters narrow the participant set.
+- Settings visibility is the household-dashboard membership boundary: hidden identities never appear in People groups, filters, links, or dashboard aggregates.
+- People keeps active identities separate from collapsed disabled/no-activity identities, and possible-duplicate warnings never merge their evidence.
+- Person pairings use exact-item confirmed/inferred evidence, exclude hidden identities before aggregation, and keep measured overlap separate from unknown duration.
+- People profiles, pairings, and operations fail independently so one panel error cannot blank the workspace.
+- People totals deduplicate direct playback against confirmed attributed participation, expose observed/attributed provenance, and align profile, pairing, and review periods without mutating stored evidence.
+- People period presets/custom dates survive URL reload, all-time totals are not summary-sample capped, and a bounded heatmap discloses its displayed range.
+- People heatmap intensity represents duration while a separate accessible Together marker represents confirmed shared evidence; meaning never depends on color alone.
+- Browser adjudication is pair-scoped, reversible, idempotent by request ID, and keeps Yes/No/Not sure/Clear consistent between the review queue, pairings, and detail provenance.
+- Ask in Discord is operator-triggered, permits one open prompt per candidate, remains separate from normal Plex-sync prompts, and exposes pending/failure state without private Discord identifiers.
 - Multi-person badges remain readable without child overlap or element overflow.
 - Library selection survives reload, Back, and Forward navigation.
 - Desktop and 390px layouts do not create page-level horizontal overflow or page errors in covered journeys.

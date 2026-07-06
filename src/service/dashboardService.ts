@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Db } from "../db/database.js";
 import type { DashboardActivityItem, DashboardCategory, DashboardTimelineSession } from "../types/api.js";
 import { CowatchingIntelligenceService } from "./cowatchingIntelligenceService.js";
+import { CowatchAdjudicationService } from "./cowatchAdjudicationService.js";
 
 const HOUSEHOLD_CATEGORIES = ["movie", "tv", "classic_tv", "anime", "audiobook"] as const;
 const SUMMARY_SAMPLE_LIMIT = 500;
@@ -12,11 +13,15 @@ const OVERVIEW_CONTINUE_LIMIT = 3;
 const OVERVIEW_COMPLETED_LIMIT = 4;
 const OVERVIEW_ACTIVITY_LIMIT = 4;
 const OVERVIEW_ATTENTION_LIMIT = 4;
+const PEOPLE_DEFAULT_WINDOW_DAYS = 30;
+const PEOPLE_MAX_HEATMAP_DAYS = 365;
+const PEOPLE_PERIODS = ["7d", "30d", "90d", "all", "custom"] as const;
 
 const filterSchema = z.object({
   date: z.string().optional(),
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
+  period: z.enum(PEOPLE_PERIODS).optional(),
   user: z.string().optional(),
   ratingKey: z.string().max(200).optional(),
   grandparentRatingKey: z.string().max(200).optional(),
@@ -41,6 +46,23 @@ const timelineFilterSchema = filterSchema.extend({
 });
 
 type DashboardDerivedCategory = DashboardCategory | "other";
+type PeoplePeriod = typeof PEOPLE_PERIODS[number];
+type PeopleContribution = DashboardActivityItem & {
+  contribution: "observed" | "attributed_confirmed_together";
+  confirmedTogether: boolean;
+};
+
+type PeopleWindow = {
+  period: PeoplePeriod;
+  dateFrom: string;
+  dateTo: string;
+  start: string;
+  end: string;
+  heatmapStart: string;
+  heatmapEnd: string;
+  heatmapTruncated: boolean;
+  defaulted: boolean;
+};
 
 function nowMs(): number {
   return Date.now();
@@ -187,6 +209,27 @@ function buildWindowLabel(start: string | null, end: string | null): string {
   return `${start} to ${end}`;
 }
 
+function categoryLabelFor(category: string): string {
+  return category === "movie"
+    ? "Movies"
+    : category === "tv"
+      ? "TV"
+      : category === "classic_tv"
+        ? "Classic TV"
+        : category === "anime"
+          ? "Anime"
+          : category === "audiobook"
+            ? "Audiobooks"
+            : category;
+}
+
+function normalizePersonIdentity(value?: string | null): string {
+  return (value ?? "")
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/[\s._-]+/g, "");
+}
+
 export function deriveDashboardCategory(mediaType: string, libraryName?: string): { category: DashboardDerivedCategory; label: string; derived: boolean } {
   const library = (libraryName ?? "").toLowerCase();
   const type = mediaType.toLowerCase();
@@ -206,9 +249,11 @@ export function deriveDashboardCategory(mediaType: string, libraryName?: string)
 
 export class DashboardService {
   private readonly cowatchingService: CowatchingIntelligenceService;
+  private readonly adjudicationService: CowatchAdjudicationService;
 
   constructor(private readonly db: Db) {
     this.cowatchingService = new CowatchingIntelligenceService(db);
+    this.adjudicationService = new CowatchAdjudicationService(db);
   }
 
   getActivity(input: unknown): { items: DashboardActivityItem[]; total: number; limit: number; offset: number } {
@@ -332,7 +377,6 @@ export class DashboardService {
         ORDER BY COALESCE(NULLIF(dashboard_alias, ''), plex_username), id
       `).all() as any[];
 
-      const visibleUserIds = new Set(users.map((user) => Number(user.id)));
       const categoryStats = new Map<string, { category: string; plays: number; duration: number; completed: number }>();
       const topTitlesMap = new Map<string, any>();
       const heatmaps = new Map<number, number[]>();
@@ -469,7 +513,7 @@ export class DashboardService {
         .sort((a, b) => b.watchedAt.localeCompare(a.watchedAt))
         .slice(0, OVERVIEW_COMPLETED_LIMIT);
 
-      const needsAttention = this.getNeedsAttention(visibleUserIds).slice(0, OVERVIEW_ATTENTION_LIMIT);
+      const needsAttention = this.getNeedsAttention().slice(0, OVERVIEW_ATTENTION_LIMIT);
       const comparableWindowLabel = buildWindowLabel(currentWindow.start, currentWindow.end);
       return {
         activity: baseActivity,
@@ -533,7 +577,7 @@ export class DashboardService {
     return currentMinutes - previousMinutes;
   }
 
-  private getNeedsAttention(visibleUserIds: Set<number>) {
+  private getNeedsAttention() {
     const items: Array<Record<string, unknown>> = [];
 
     const unresolvedPrompts = this.db.prepare(`
@@ -557,6 +601,7 @@ export class DashboardService {
     for (const row of unresolvedPrompts) {
       items.push({
         kind: "unresolved_prompt",
+        watchEventId: Number(row.id),
         title: row.show_title || row.title,
         detail: `${row.display_name} still needs a co-watch prompt resolution`,
         status: row.prompt_status,
@@ -597,6 +642,7 @@ export class DashboardService {
       if (!event) continue;
       items.push({
         kind: "discord_delivery_failed",
+        watchEventId,
         title: event.show_title || event.title,
         detail: `${event.display_name} had a Discord delivery failure`,
         status: "failed",
@@ -769,11 +815,14 @@ export class DashboardService {
 
   getPeople(input: unknown) {
     const timed = withTiming(() => {
-      const all = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0 }).items;
+      const filters = parseFilters(input);
+      const window = this.resolvePeopleWindow(filters);
+      const { contributions, sharedSessionsByUserDay } = this.getPeopleContributions(filters, window);
       const users = this.db.prepare(`
         SELECT
           id,
           plex_username,
+          dashboard_alias,
           COALESCE(NULLIF(dashboard_alias, ''), plex_username) AS display_name,
           COALESCE(dashboard_shown, enabled) AS shown,
           enabled,
@@ -782,9 +831,301 @@ export class DashboardService {
         WHERE COALESCE(dashboard_shown, enabled) = 1
         ORDER BY COALESCE(NULLIF(dashboard_alias, ''), plex_username), id
       `).all() as any[];
-      return users.map((user) => { const items = all.filter((item) => item.userId === user.id); return { ...user, plays: items.length, minutes: minutesFromSeconds(items.reduce((minutes, item) => minutes + normalizeDurationSeconds(item.duration), 0)), recent: items.slice(0, 5), mix: Object.entries(items.reduce<Record<string, number>>((accumulator, item) => { accumulator[item.category] = (accumulator[item.category] ?? 0) + 1; return accumulator; }, {})).map(([category, count]) => ({ category, count })) }; });
+      const identityOwners = new Map<string, Set<number>>();
+      for (const user of users) {
+        for (const value of [user.plex_username, user.dashboard_alias]) {
+          const key = normalizePersonIdentity(value);
+          if (!key) continue;
+          const owners = identityOwners.get(key) ?? new Set<number>();
+          owners.add(Number(user.id));
+          identityOwners.set(key, owners);
+        }
+      }
+
+      const people = users.map((user) => {
+        const items = contributions
+          .filter((item) => item.userId === user.id)
+          .sort((a, b) => b.watchedAt.localeCompare(a.watchedAt) || b.id - a.id);
+        const observedItems = items.filter((item) => item.contribution === "observed");
+        const attributedItems = items.filter((item) => item.contribution === "attributed_confirmed_together");
+        const minutes = minutesFromSeconds(items.reduce((total, item) => total + normalizeDurationSeconds(item.duration), 0));
+        const completed = items.filter((item) => item.completed).length;
+        const duplicateIds = new Set<number>();
+        for (const value of [user.plex_username, user.dashboard_alias]) {
+          const owners = identityOwners.get(normalizePersonIdentity(value));
+          for (const owner of owners ?? []) if (owner !== Number(user.id)) duplicateIds.add(owner);
+        }
+        const possibleDuplicates = users
+          .filter((candidate) => duplicateIds.has(Number(candidate.id)))
+          .map((candidate) => resolveDashboardAlias(candidate.dashboard_alias, candidate.plex_username));
+        const activityByDay = new Map<string, { plays: number; minutes: number; observedMinutes: number; attributedMinutes: number }>();
+        for (const item of items) {
+          const day = isoDay(item.watchedAt);
+          const entry = activityByDay.get(day) ?? { plays: 0, minutes: 0, observedMinutes: 0, attributedMinutes: 0 };
+          const itemMinutes = minutesFromDuration(item.duration);
+          entry.plays += 1;
+          entry.minutes += itemMinutes;
+          if (item.contribution === "observed") entry.observedMinutes += itemMinutes;
+          else entry.attributedMinutes += itemMinutes;
+          activityByDay.set(day, entry);
+        }
+        const heatmap = [];
+        const userSharedDays = sharedSessionsByUserDay.get(Number(user.id)) ?? new Map<string, Set<string>>();
+        for (let day = window.heatmapStart; day <= window.heatmapEnd && heatmap.length < PEOPLE_MAX_HEATMAP_DAYS; day = addDays(day, 1)) {
+          const activity = activityByDay.get(day) ?? { plays: 0, minutes: 0, observedMinutes: 0, attributedMinutes: 0 };
+          heatmap.push({ date: day, ...activity, confirmedTogetherSessions: userSharedDays.get(day)?.size ?? 0 });
+        }
+        const mix = Object.entries(items.reduce<Record<string, number>>((accumulator, item) => {
+          accumulator[item.category] = (accumulator[item.category] ?? 0) + 1;
+          return accumulator;
+        }, {})).map(([category, count]) => ({ category, label: categoryLabelFor(category), count }));
+        const status = Number(user.enabled) !== 1 ? "disabled" : items.length ? "active" : "no_activity";
+        return {
+          ...user,
+          status,
+          plays: items.length,
+          minutes,
+          completed,
+          inProgress: items.length - completed,
+          completionRate: items.length ? Math.round((completed / items.length) * 100) : null,
+          activeDays: activityByDay.size,
+          recent: items.slice(0, 5),
+          activityBreakdown: {
+            observed: {
+              plays: observedItems.length,
+              minutes: minutesFromSeconds(observedItems.reduce((total, item) => total + normalizeDurationSeconds(item.duration), 0)),
+              completed: observedItems.filter((item) => item.completed).length
+            },
+            attributedTogether: {
+              plays: attributedItems.length,
+              minutes: minutesFromSeconds(attributedItems.reduce((total, item) => total + normalizeDurationSeconds(item.duration), 0)),
+              completed: attributedItems.filter((item) => item.completed).length,
+              unknownDuration: attributedItems.filter((item) => normalizeDurationSeconds(item.duration) === 0).length
+            },
+            confirmedTogetherSessions: [...userSharedDays.values()].reduce((total, sessions) => total + sessions.size, 0)
+          },
+          mix,
+          heatmap,
+          possibleDuplicates,
+          technicalAccount: { plexUsername: user.plex_username }
+        };
+      });
+      const active = people.filter((person) => person.status === "active");
+      const secondary = people.filter((person) => person.status !== "active");
+      return {
+        people,
+        active,
+        secondary,
+        window: {
+          start: window.start,
+          end: window.end,
+          label: window.period === "all" ? `All time · ${buildWindowLabel(window.start, window.end)}` : buildWindowLabel(window.start, window.end),
+          period: window.period,
+          heatmapStart: window.heatmapStart,
+          heatmapEnd: window.heatmapEnd,
+          heatmapTruncated: window.heatmapTruncated,
+          defaulted: window.defaulted
+        }
+      };
     });
-    return { people: timed.value, timingMs: timed.timingMs };
+    return { ...timed.value, timingMs: timed.timingMs };
+  }
+
+  private resolvePeopleWindow(filters: ReturnType<typeof parseFilters>): PeopleWindow {
+    const explicitPeriod = filters.period;
+    if (explicitPeriod && explicitPeriod !== "custom" && (filters.dateFrom || filters.dateTo)) {
+      throw new Error("Validation Error: dateFrom/dateTo may only be combined with period=custom");
+    }
+    if (explicitPeriod === "custom" && (!filters.dateFrom || !filters.dateTo)) {
+      throw new Error("Validation Error: custom People periods require dateFrom and dateTo");
+    }
+
+    const period: PeoplePeriod = explicitPeriod ?? (filters.dateFrom || filters.dateTo ? "custom" : "30d");
+    const today = new Date();
+    today.setUTCHours(23, 59, 59, 999);
+    let end = period === "custom" && filters.dateTo ? this.parsePeopleBoundary(filters.dateTo, true) : today;
+    let start: Date;
+
+    if (period === "all") {
+      const earliest = this.db.prepare(`SELECT MIN(po.watched_at) AS watched_at
+        FROM playback_observations po JOIN users u ON u.id=po.user_id
+        WHERE COALESCE(u.dashboard_shown,u.enabled)=1`).get() as { watched_at?: string | null };
+      start = earliest.watched_at ? this.parsePeopleBoundary(earliest.watched_at, false) : new Date(end);
+    } else if (period === "custom") {
+      start = filters.dateFrom ? this.parsePeopleBoundary(filters.dateFrom, false) : new Date(0);
+      if (!filters.dateFrom) {
+        const earliest = this.db.prepare(`SELECT MIN(po.watched_at) AS watched_at FROM playback_observations po
+          JOIN users u ON u.id=po.user_id WHERE COALESCE(u.dashboard_shown,u.enabled)=1`).get() as { watched_at?: string | null };
+        start = earliest.watched_at ? this.parsePeopleBoundary(earliest.watched_at, false) : new Date(end);
+      }
+      if (!filters.dateTo) end = today;
+    } else {
+      const days = Number(period.slice(0, -1));
+      start = new Date(end.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
+      start.setUTCHours(0, 0, 0, 0);
+    }
+
+    if (start.getTime() > end.getTime()) throw new Error("Validation Error: dateFrom must be on or before dateTo");
+    const startDay = start.toISOString().slice(0, 10);
+    const endDay = end.toISOString().slice(0, 10);
+    const latestHeatmapStart = addDays(endDay, -(PEOPLE_MAX_HEATMAP_DAYS - 1));
+    const heatmapStart = startDay < latestHeatmapStart ? latestHeatmapStart : startDay;
+    return {
+      period,
+      dateFrom: start.toISOString(),
+      dateTo: end.toISOString(),
+      start: startDay,
+      end: endDay,
+      heatmapStart,
+      heatmapEnd: endDay,
+      heatmapTruncated: heatmapStart !== startDay,
+      defaulted: !explicitPeriod && !filters.dateFrom && !filters.dateTo
+    };
+  }
+
+  private parsePeopleBoundary(value: string, endOfDay: boolean): Date {
+    const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+    const date = new Date(dateOnly ? `${value}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}Z` : value);
+    if (!Number.isFinite(date.getTime())) throw new Error(`Validation Error: invalid ${endOfDay ? "dateTo" : "dateFrom"}`);
+    return date;
+  }
+
+  private getPeopleContributions(filters: ReturnType<typeof parseFilters>, window: PeopleWindow): {
+    contributions: PeopleContribution[];
+    sharedSessionsByUserDay: Map<number, Map<string, Set<string>>>;
+  } {
+    const categorySql = `CASE WHEN lower(po.media_type)='audiobook' OR lower(coalesce(NULLIF(po.library_name, ''), cat.library_title, groupcat.library_title, '')) LIKE '%audiobook%' THEN 'audiobook' WHEN lower(coalesce(NULLIF(po.library_name, ''), cat.library_title, groupcat.library_title, '')) LIKE '%anime%' THEN 'anime' WHEN lower(coalesce(NULLIF(po.library_name, ''), cat.library_title, groupcat.library_title, '')) LIKE '%classic%' THEN 'classic_tv' WHEN lower(po.media_type)='movie' AND (coalesce(NULLIF(po.library_name, ''), cat.library_title, groupcat.library_title) IS NULL OR lower(coalesce(NULLIF(po.library_name, ''), cat.library_title, groupcat.library_title))='movies') THEN 'movie' WHEN lower(po.media_type) IN ('episode', 'show', 'season') AND (coalesce(NULLIF(po.library_name, ''), cat.library_title, groupcat.library_title) IS NULL OR lower(coalesce(NULLIF(po.library_name, ''), cat.library_title, groupcat.library_title)) IN ('tv shows','etv','jdrama')) THEN 'tv' ELSE 'other' END`;
+    let where = ` WHERE COALESCE(u.dashboard_shown,u.enabled)=1 AND po.watched_at>=? AND po.watched_at<=? AND ${categorySql}!='other'`;
+    const args: any[] = [window.dateFrom, window.dateTo];
+
+    const directRows = this.db.prepare(`SELECT po.*,u.plex_username,u.dashboard_alias,
+      cat.library_title AS catalog_library_title,groupcat.library_title AS group_catalog_library_title,
+      cat.audiobook_id AS audiobook_id,ab.title AS audiobook_title
+      FROM playback_observations po JOIN users u ON u.id=po.user_id
+      LEFT JOIN content_catalog cat ON cat.rating_key=po.rating_key
+      LEFT JOIN content_catalog groupcat ON groupcat.rating_key=po.grandparent_rating_key
+      LEFT JOIN audiobook_books ab ON ab.id=cat.audiobook_id
+      ${where} ORDER BY po.watched_at DESC,po.id DESC`).all(...args) as any[];
+    const allDirect: PeopleContribution[] = directRows.map((row) => ({
+      ...this.mapActivity(row),
+      contribution: "observed" as const,
+      confirmedTogether: false
+    }));
+    const contributions: PeopleContribution[] = allDirect.filter((item) => this.peopleItemMatchesFilters(item, filters));
+    const includedDirectIds = new Set(contributions.map((item) => item.id));
+    const directById = new Map(allDirect.map((item) => [item.id, item]));
+    const directByUserRating = new Map<string, PeopleContribution[]>();
+    for (const item of allDirect) {
+      const key = `${item.userId}:${item.ratingKey}`;
+      const values = directByUserRating.get(key) ?? [];
+      values.push(item);
+      directByUserRating.set(key, values);
+    }
+
+    const sharedSessionsByUserDay = new Map<number, Map<string, Set<string>>>();
+    const recordShared = (userId: number, watchedAt: string, sessionKey: string) => {
+      const days = sharedSessionsByUserDay.get(userId) ?? new Map<string, Set<string>>();
+      const day = isoDay(watchedAt);
+      const sessions = days.get(day) ?? new Set<string>();
+      sessions.add(sessionKey);
+      days.set(day, sessions);
+      sharedSessionsByUserDay.set(userId, days);
+    };
+    const markDirect = (item: PeopleContribution | undefined, watchedAt: string, sessionKey: string) => {
+      if (!item) return false;
+      item.confirmedTogether = true;
+      if (includedDirectIds.has(item.id)) recordShared(item.userId, watchedAt, sessionKey);
+      return true;
+    };
+
+    const confirmationRows = this.db.prepare(`SELECT we.id AS event_id,we.source_user_id,we.watched_at AS event_watched_at,
+      cc.target_user_id,target.plex_username AS target_username,target.dashboard_alias AS target_alias,
+      po.*,source.plex_username,source.dashboard_alias,
+      cat.library_title AS catalog_library_title,groupcat.library_title AS group_catalog_library_title,
+      cat.audiobook_id AS audiobook_id,ab.title AS audiobook_title
+      FROM cowatch_confirmations cc
+      JOIN watch_events we ON we.id=cc.watch_event_id
+      JOIN users source ON source.id=we.source_user_id
+      JOIN users target ON target.id=cc.target_user_id
+      JOIN playback_observations po ON po.id=(SELECT po2.id FROM playback_observations po2
+        WHERE po2.user_id=we.source_user_id AND po2.rating_key=we.rating_key
+          AND po2.watched_at>=strftime('%Y-%m-%dT%H:%M:%fZ',we.watched_at,'-600 seconds')
+          AND po2.watched_at<=strftime('%Y-%m-%dT%H:%M:%fZ',we.watched_at,'+600 seconds')
+        ORDER BY po2.watched_at DESC,po2.id DESC LIMIT 1)
+      LEFT JOIN content_catalog cat ON cat.rating_key=po.rating_key
+      LEFT JOIN content_catalog groupcat ON groupcat.rating_key=po.grandparent_rating_key
+      LEFT JOIN audiobook_books ab ON ab.id=cat.audiobook_id
+      WHERE cc.status='confirmed'
+        AND COALESCE(source.dashboard_shown,source.enabled)=1
+        AND COALESCE(target.dashboard_shown,target.enabled)=1
+        AND po.watched_at>=? AND po.watched_at<=?`).all(window.dateFrom, window.dateTo) as any[];
+
+    for (const row of confirmationRows) {
+      const source = this.mapActivity(row);
+      if (!source || !this.peopleItemMatchesFilters(source, filters, true)) continue;
+      const pair = [Number(row.source_user_id), Number(row.target_user_id)].sort((a, b) => a - b).join(":");
+      const sessionKey = `${pair}:${source.ratingKey}:${source.id}`;
+      markDirect(directById.get(source.id), source.watchedAt, sessionKey);
+      const targetDirect = (directByUserRating.get(`${row.target_user_id}:${source.ratingKey}`) ?? [])
+        .filter((item) => Math.abs(new Date(item.watchedAt).getTime() - new Date(source.watchedAt).getTime()) <= 2 * 60 * 60 * 1000)
+        .sort((a, b) => Math.abs(new Date(a.watchedAt).getTime() - new Date(source.watchedAt).getTime()) - Math.abs(new Date(b.watchedAt).getTime() - new Date(source.watchedAt).getTime()))[0];
+      if (markDirect(targetDirect, source.watchedAt, sessionKey)) continue;
+      const attributed: PeopleContribution = {
+        ...source,
+        userId: Number(row.target_user_id),
+        username: row.target_username,
+        displayName: resolveDashboardAlias(row.target_alias, row.target_username),
+        displayNames: [source.displayName, resolveDashboardAlias(row.target_alias, row.target_username)].sort((a, b) => a.localeCompare(b)),
+        confirmedUserIds: [Number(row.target_user_id)],
+        contribution: "attributed_confirmed_together",
+        confirmedTogether: true,
+        evidence: {
+          observed: false,
+          confirmed: true,
+          relationship: "together",
+          reason: "Attributed from confirmed co-watch evidence",
+          watchedAtProvenance: "confirmed_source",
+          percentCompleteProvenance: "confirmed_source"
+        }
+      };
+      if (this.peopleItemMatchesFilters(attributed, filters)) {
+        contributions.push(attributed);
+        recordShared(attributed.userId, attributed.watchedAt, sessionKey);
+      }
+    }
+
+    const latestYes = this.db.prepare(`SELECT ca.* FROM cowatch_adjudications ca
+      JOIN users source ON source.id=ca.source_user_id JOIN users target ON target.id=ca.target_user_id
+      WHERE ca.id=(SELECT MAX(latest.id) FROM cowatch_adjudications latest WHERE latest.candidate_id=ca.candidate_id)
+        AND ca.decision='yes' AND COALESCE(source.dashboard_shown,source.enabled)=1
+        AND COALESCE(target.dashboard_shown,target.enabled)=1`).all() as any[];
+    for (const row of latestYes) {
+      let observationIds: number[] = [];
+      try { observationIds = JSON.parse(row.supporting_observation_ids_json); } catch {}
+      const sourceItem = observationIds.map((id) => directById.get(Number(id))).find((item) => item?.userId === Number(row.source_user_id));
+      const targetItem = observationIds.map((id) => directById.get(Number(id))).find((item) => item?.userId === Number(row.target_user_id));
+      const watchedAt = sourceItem?.watchedAt ?? targetItem?.watchedAt;
+      const sourceObservationId = sourceItem?.id ?? observationIds[0];
+      if (!watchedAt || !sourceObservationId) continue;
+      const pair = [Number(row.source_user_id), Number(row.target_user_id)].sort((a, b) => a - b).join(":");
+      const sessionKey = `${pair}:${row.rating_key}:${sourceObservationId}`;
+      markDirect(sourceItem, watchedAt, sessionKey);
+      markDirect(targetItem, watchedAt, sessionKey);
+    }
+
+    return { contributions, sharedSessionsByUserDay };
+  }
+
+  private peopleItemMatchesFilters(item: DashboardActivityItem, filters: ReturnType<typeof parseFilters>, ignoreUser = false): boolean {
+    if (!ignoreUser && filters.user && item.username !== filters.user) return false;
+    if (filters.category && item.category !== filters.category) return false;
+    if (filters.library && item.libraryName !== filters.library) return false;
+    if (filters.completed !== undefined && item.completed !== filters.completed) return false;
+    if (filters.search) {
+      const search = filters.search.toLocaleLowerCase();
+      if (!item.title.toLocaleLowerCase().includes(search) && !(item.showTitle ?? "").toLocaleLowerCase().includes(search)) return false;
+    }
+    return true;
   }
 
   getTimeline(input: unknown) {
@@ -1016,6 +1357,147 @@ export class DashboardService {
     }
     const total = [...pairs.values()].reduce((sum, p) => sum + p.duration, 0);
     return [...pairs.values()].map(p => ({ ...p, durationHours: hoursFromSeconds(p.duration), percent: total > 0 ? Math.round((p.duration / total) * 100) : 0 })).sort((a,b) => b.durationHours - a.durationHours).slice(0, 4);
+  }
+
+  getCowatchPairings(input: unknown) {
+    const timed = withTiming(() => {
+      const filters = parseFilters(input);
+      const window = this.resolvePeopleWindow(filters);
+      const intelligenceParams = {
+        dateFrom: window.dateFrom,
+        dateTo: window.dateTo
+      };
+      const events = this.cowatchingService.getCowatchingEvents(intelligenceParams);
+      const reviewCandidates = this.adjudicationService.listCandidates(intelligenceParams);
+      const reviewByEventPair = new Map(reviewCandidates.map((candidate) => [
+        `${candidate.ratingKey}:${candidate.watchedAt}:${candidate.source.userId}:${candidate.target.userId}`,
+        candidate
+      ]));
+      const visibleUsers = this.db.prepare(`
+        SELECT id, plex_username, COALESCE(NULLIF(dashboard_alias, ''), plex_username) AS display_name
+        FROM users
+        WHERE COALESCE(dashboard_shown, enabled) = 1
+      `).all() as Array<{ id: number; plex_username: string; display_name: string }>;
+      const visibleById = new Map(visibleUsers.map((user) => [Number(user.id), user]));
+      const pairings = new Map<string, any>();
+
+      for (const event of events) {
+        const category = deriveDashboardCategory(event.mediaType).category;
+        if (!isHouseholdCategory(category) || (filters.category && filters.category !== category)) continue;
+        const source = event.participants.find((participant) => participant.role === "source");
+        if (!source || !visibleById.has(source.userId)) continue;
+        for (const participant of event.participants) {
+          if (participant.userId === source.userId || !["confirmed", "inferred"].includes(participant.evidenceState)) continue;
+          if (!visibleById.has(participant.userId)) continue;
+          const people = [visibleById.get(source.userId)!, visibleById.get(participant.userId)!]
+            .sort((a, b) => a.id - b.id);
+          if (filters.user && !people.some((person) => person.plex_username === filters.user)) continue;
+          const key = people.map((person) => person.id).join(":");
+          const pairing = pairings.get(key) ?? {
+            id: `pair-${key}`,
+            people: people.map((person) => ({ id: person.id, username: person.plex_username, displayName: person.display_name })),
+            sessionCount: 0,
+            knownSharedMinutes: 0,
+            unknownDurationSessions: 0,
+            provenance: { confirmed: 0, inferred: 0, adjudicated: 0 },
+            titles: new Map<string, any>(),
+            latestWatchedAt: event.watchedAt
+          };
+          const review = participant.evidenceState === "inferred"
+            ? reviewByEventPair.get(`${event.ratingKey}:${event.watchedAt}:${source.userId}:${participant.userId}`)
+            : undefined;
+          if (review?.effectiveRelationship === "suppressed") continue;
+          pairing.sessionCount += 1;
+          if (participant.evidenceState === "confirmed") pairing.provenance.confirmed += 1;
+          else if (review?.effectiveRelationship === "together") pairing.provenance.adjudicated += 1;
+          else if (participant.evidenceState === "inferred") pairing.provenance.inferred += 1;
+          const overlapMinutes = Number(participant.timingRelationship?.overlapMinutes ?? 0);
+          if (overlapMinutes > 0) pairing.knownSharedMinutes += overlapMinutes;
+          else pairing.unknownDurationSessions += 1;
+          if (event.watchedAt > pairing.latestWatchedAt) pairing.latestWatchedAt = event.watchedAt;
+          const title = event.showTitle || event.title;
+          const titleEntry = pairing.titles.get(event.ratingKey) ?? {
+            ratingKey: event.ratingKey,
+            title,
+            category,
+            sessions: 0,
+            latestWatchedAt: event.watchedAt
+          };
+          titleEntry.sessions += 1;
+          if (event.watchedAt > titleEntry.latestWatchedAt) titleEntry.latestWatchedAt = event.watchedAt;
+          pairing.titles.set(event.ratingKey, titleEntry);
+          pairings.set(key, pairing);
+        }
+      }
+
+      const items = [...pairings.values()].map((pairing) => ({
+        ...pairing,
+        knownSharedMinutes: Math.round(pairing.knownSharedMinutes),
+        titles: [...pairing.titles.values()].sort((a, b) => b.latestWatchedAt.localeCompare(a.latestWatchedAt)).slice(0, 5)
+      })).sort((a, b) => b.sessionCount - a.sessionCount || b.latestWatchedAt.localeCompare(a.latestWatchedAt));
+      return { items, total: items.length, windowDays: window.period.endsWith("d") ? Number(window.period.slice(0, -1)) : null, window: { start: window.start, end: window.end, period: window.period } };
+    });
+    return { ...timed.value, timingMs: timed.timingMs };
+  }
+
+  getOperations() {
+    const timed = withTiming(() => {
+      const items = this.getNeedsAttention();
+      const candidates = this.adjudicationService.listCandidates({ days: 3650 });
+      const candidateById = new Map(candidates.map((candidate) => [candidate.candidateId, candidate]));
+      const visibleIds = new Set((this.db.prepare(`SELECT id FROM users WHERE COALESCE(dashboard_shown,enabled)=1`).all() as Array<{ id: number }>).map((row) => Number(row.id)));
+      const prompts = this.db.prepare(`SELECT id,candidate_id,status,error,created_at,updated_at FROM cowatch_review_prompts
+        WHERE status IN ('pending','sent','failed') ORDER BY updated_at DESC LIMIT 10`).all() as any[];
+      for (const prompt of prompts) {
+        const candidate = candidateById.get(prompt.candidate_id);
+        if (!candidate || !visibleIds.has(candidate.source.userId) || !visibleIds.has(candidate.target.userId)) continue;
+        items.push({
+          kind: "cowatch_review_prompt",
+          reviewPromptId: Number(prompt.id),
+          title: candidate.showTitle || candidate.title,
+          detail: `${candidate.source.displayName} and ${candidate.target.displayName}: Discord review is ${prompt.status}`,
+          status: prompt.status,
+          watchedAt: prompt.updated_at,
+          ratingKey: candidate.ratingKey,
+          route: { layout: "people", filters: {} }
+        });
+      }
+      return items.sort((a, b) => String(b.watchedAt ?? "").localeCompare(String(a.watchedAt ?? ""))).slice(0, 20);
+    });
+    return { items: timed.value, total: timed.value.length, timingMs: timed.timingMs };
+  }
+
+  getCowatchReviews(input: unknown) {
+    const timed = withTiming(() => {
+      const filters = parseFilters(input);
+      const window = this.resolvePeopleWindow(filters);
+      const limit = Math.min(50, Math.max(1, Number((input as any)?.limit ?? 20)));
+      const offset = Math.max(0, Number((input as any)?.offset ?? 0));
+      const candidates = this.adjudicationService.listCandidates({
+        dateFrom: window.dateFrom,
+        dateTo: window.dateTo
+      });
+      const visibleUsers = this.db.prepare(`SELECT id,plex_username,COALESCE(NULLIF(dashboard_alias,''),plex_username) display_name
+        FROM users WHERE COALESCE(dashboard_shown,enabled)=1`).all() as Array<{ id: number; plex_username: string; display_name: string }>;
+      const visibleById = new Map(visibleUsers.map((user) => [Number(user.id), user]));
+      const promptStatuses = this.adjudicationService.getPromptStatuses(candidates.map((candidate) => candidate.candidateId));
+      const items = candidates.filter((candidate) => {
+        const source = visibleById.get(candidate.source.userId);
+        const target = visibleById.get(candidate.target.userId);
+        if (!source || !target) return false;
+        if (filters.user && source.plex_username !== filters.user && target.plex_username !== filters.user) return false;
+        const category = deriveDashboardCategory(candidate.mediaType).category;
+        return isHouseholdCategory(category) && (!filters.category || filters.category === category);
+      }).map((candidate) => ({
+        ...candidate,
+        source: { ...candidate.source, displayName: visibleById.get(candidate.source.userId)!.display_name },
+        target: { ...candidate.target, displayName: visibleById.get(candidate.target.userId)!.display_name },
+        category: deriveDashboardCategory(candidate.mediaType).category,
+        discordPromptStatus: promptStatuses.get(candidate.candidateId) ?? null
+      })).sort((a, b) => b.watchedAt.localeCompare(a.watchedAt));
+      return { items: items.slice(offset, offset + limit), total: items.length, limit, offset, window: { start: window.start, end: window.end, period: window.period } };
+    });
+    return { ...timed.value, timingMs: timed.timingMs };
   }
 
   getProgress(input: unknown) {
@@ -1337,6 +1819,21 @@ export class DashboardService {
         };
       }
 
+      const detailRatingKeys = [...new Set([ratingKey, ...plays.map((play) => play.ratingKey)])];
+      const placeholders = detailRatingKeys.map(() => "?").join(",");
+      const adjudications = detailRatingKeys.length ? this.db.prepare(`
+        SELECT ca.id,ca.candidate_id candidateId,ca.rating_key ratingKey,ca.decision,ca.method,ca.created_at createdAt,
+          COALESCE(NULLIF(source.dashboard_alias,''),source.plex_username) sourceName,
+          COALESCE(NULLIF(target.dashboard_alias,''),target.plex_username) targetName
+        FROM cowatch_adjudications ca
+        JOIN users source ON source.id=ca.source_user_id
+        JOIN users target ON target.id=ca.target_user_id
+        WHERE ca.rating_key IN (${placeholders})
+          AND COALESCE(source.dashboard_shown,source.enabled)=1
+          AND COALESCE(target.dashboard_shown,target.enabled)=1
+        ORDER BY ca.id DESC LIMIT 50
+      `).all(...detailRatingKeys) : [];
+
       return {
         item: first,
         plays,
@@ -1344,7 +1841,8 @@ export class DashboardService {
         repeatCount: Math.max(0, plays.length - 1),
         catalog,
         audiobook,
-        hierarchy
+        hierarchy,
+        adjudications
       };
     });
     return timed.value ? { ...timed.value, timingMs: timed.timingMs } : null;

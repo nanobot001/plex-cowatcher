@@ -67,10 +67,15 @@ Error shape:
 
 Block 3-2 adds localhost browser endpoints that reuse the shared state and service layer:
 
-- GET /api/dashboard/overview, /activity, /timeline, /media, /continue-consuming, /people, /progress, /cowatching, /prompts, and /detail/:ratingKey are public_read within the localhost boundary.
+- GET /api/dashboard/overview, /activity, /timeline, /media, /continue-consuming, /people, /cowatch-pairings, /cowatch-reviews, /operations, /progress, /cowatching, /prompts, and /detail/:ratingKey are public_read within the localhost boundary.
 - GET /api/artwork/:ratingKey is a token-safe Plex image proxy. It never returns an authenticated upstream URL and falls back to the local icon.
 - GET /api/dashboard/export.csv is a transient public_read stream. It does not retain files and excludes credentials, private paths, Discord IDs, and adapter metadata.
-- POST /api/dashboard/prompts/:id/dismiss and /reprompt are write_action routes. They require an explicit confirm=true body, validate lifecycle eligibility, are safe to retry, and record audit events.
+- POST /api/dashboard/prompts/:id/dismiss and /reprompt are write_action routes. They require an explicit confirm=true body, validate lifecycle eligibility, are safe to retry, and record applied or skipped audit events.
+- Dashboard pairings include only visible exact-item confirmed/inferred relationships. Measured overlap and unknown-duration sessions remain separate; synchronized Plex state alone is not relationship evidence.
+- Dashboard People, pairings, and review reads share a validated period contract. People attribution is a read-only projection over direct observations, confirmations, and current positive adjudications; it never persists synthetic playback or invokes an adapter.
+- Dashboard operations is a bounded privacy-safe projection of unresolved prompts, Discord delivery failures, and Plex sync failures. It does not return raw adapter payloads or Discord identifiers.
+- POST /api/dashboard/cowatch-reviews/:candidateId/decision is a `write_action`. It is dry-run by default; apply requires explicit confirmation and a stable request ID. Decisions are append-only overlays and never rewrite playback observations.
+- POST /api/dashboard/cowatch-reviews/:candidateId/ask-discord is a `write_action`. It is disabled when Discord review is unavailable, dry-run by default, explicitly operator-triggered, deduplicated per open candidate, and never invokes Plex synchronization.
 - Dashboard overview, media, people, progress, timeline, and detail responses include bounded timing metadata for local performance assertions. Timeline responses also separate paginated activity rows from chart sessions.
 - Dashboard media and continue-consuming responses expose bounded deterministic pagination over canonical consumed-title groups; the legacy continue-watching route remains an array for existing Overview consumers.
 

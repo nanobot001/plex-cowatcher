@@ -3,12 +3,13 @@ import { appConfig } from "../utils/config.js";
 import { log } from "../utils/logger.js";
 import type { CowatchService } from "../service/cowatchService.js";
 import { handleCowatchInteraction } from "./interactions.js";
-import { buildCowatchComponents, buildCowatchEmbed, type PromptMedia } from "./prompts.js";
+import { buildCowatchComponents, buildCowatchEmbed, buildCowatchReviewComponents, buildCowatchReviewEmbed, type PromptMedia, type ReviewPromptMedia } from "./prompts.js";
+import type { CowatchAdjudicationService } from "../service/cowatchAdjudicationService.js";
 
 export class DiscordBot {
   private client?: Client;
 
-  constructor(private readonly cowatchService: CowatchService) {}
+  constructor(private readonly cowatchService: CowatchService, private readonly reviewService?: CowatchAdjudicationService) {}
 
   async start(): Promise<void> {
     if (!appConfig.DISCORD_ENABLED) {
@@ -18,7 +19,7 @@ export class DiscordBot {
 
     this.client = new Client({ intents: [GatewayIntentBits.Guilds] });
     this.client.on("interactionCreate", (interaction) => {
-      void handleCowatchInteraction(interaction, this.cowatchService);
+      void handleCowatchInteraction(interaction, this.cowatchService, this.reviewService);
     });
     await this.client.login(appConfig.DISCORD_BOT_TOKEN);
     await this.waitUntilReady();
@@ -62,6 +63,19 @@ export class DiscordBot {
       }
     }
 
+    if (this.reviewService) {
+      for (const candidate of this.reviewService.listPendingReviewPrompts(limit)) {
+        try {
+          const message = await this.sendReviewPrompt(candidate);
+          const result = this.reviewService.recordReviewPromptSent(candidate.reviewPromptId, message.channel.id, message.id);
+          if (result.sent) sent += 1;
+        } catch (error) {
+          failed += 1;
+          this.reviewService.recordReviewPromptFailure(candidate.reviewPromptId, error instanceof Error ? error.message : String(error));
+        }
+      }
+    }
+
     return { sent, failed };
   }
 
@@ -79,6 +93,13 @@ export class DiscordBot {
       embeds: [buildCowatchEmbed(media)],
       components: buildCowatchComponents(media.watchEventId, typicalUsers, appConfig.APP_BASE_URL)
     });
+  }
+
+  private async sendReviewPrompt(media: ReviewPromptMedia) {
+    if (!this.client) throw new Error("Discord client is not started");
+    const channel = await this.client.channels.fetch(appConfig.DISCORD_CHANNEL_ID);
+    if (!(channel instanceof TextChannel)) throw new Error("Configured Discord channel is not a text channel");
+    return channel.send({ embeds: [buildCowatchReviewEmbed(media)], components: buildCowatchReviewComponents(media.reviewPromptId) });
   }
 
   private async waitUntilReady(): Promise<void> {

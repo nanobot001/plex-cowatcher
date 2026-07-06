@@ -26,6 +26,26 @@ Audit records are stored in `audit_log` and should preserve:
 - Discord resolution writes
 - Plex sync result writes
 - audiobook backfill start/completion writes
+- dashboard prompt dismiss/re-prompt lifecycle writes
+
+### `dashboard_prompt_dismissed`
+
+Records applied, skipped, or failed operator dismissal without exposing Discord delivery identifiers.
+
+### `dashboard_prompt_reprompted`
+
+Records applied, skipped, or failed operator re-prompt eligibility transitions. An applied event returns the watch event to a clean pending state for the existing sender loop.
+
+### `cowatch_adjudication_decided`
+
+Records applied, reversed, skipped, or failed pair-level review decisions. Metadata contains only the opaque candidate ID, prior/current decision, and method; playback observations and private actor identifiers are not copied into the event.
+
+### Discord review prompt events
+
+- `cowatch_review_prompt_requested` records operator request, duplicate-open skip, or failure.
+- `cowatch_review_prompt_delivery` records send success, retry skip, or delivery failure without channel/message identifiers in audit metadata.
+- `cowatch_review_prompt_resolved` records the review prompt ID, opaque candidate ID, and decision.
+- `cowatch_review_prompt_cancelled` records browser-first resolution, hidden participants, or other candidate ineligibility.
 
 ## Project-Specific Events
 

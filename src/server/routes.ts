@@ -14,11 +14,13 @@ import { SessionService } from "../service/sessionService.js";
 import { CowatchingIntelligenceService } from "../service/cowatchingIntelligenceService.js";
 import { DashboardService } from "../service/dashboardService.js";
 import { DashboardPreferenceService } from "../service/dashboardPreferenceService.js";
+import { CowatchAdjudicationService, type CowatchDecision } from "../service/cowatchAdjudicationService.js";
 import { appConfig } from "../utils/config.js";
 import { parseDays } from "../utils/time.js";
 
 export type RouterOptions = {
   skipStartupUserSync?: boolean;
+  discordReviewAvailable?: boolean;
 };
 
 export function buildRouter(
@@ -40,7 +42,16 @@ export function buildRouter(
   const cowatchingIntelligenceService = new CowatchingIntelligenceService(db);
   const dashboardPreferences = new DashboardPreferenceService(db);
   const dashboardService = new DashboardService(db);
+  const cowatchAdjudications = new CowatchAdjudicationService(db);
+  const handleDashboardReadError = (error: unknown, res: express.Response, next: express.NextFunction) => {
+    if (error instanceof Error && error.message.startsWith("Validation Error:")) {
+      res.status(400).json({ ok: false, errorCode: "VALIDATION_ERROR", message: error.message });
+      return;
+    }
+    next(error);
+  };
   const artworkUrlCache = new Map<string, string>();
+  const discordReviewAvailable = options.discordReviewAvailable ?? appConfig.DISCORD_ENABLED;
 
   if (!options.skipStartupUserSync) {
     users.syncConfiguredUsers();
@@ -146,7 +157,7 @@ export function buildRouter(
   });
   router.get("/api/dashboard/people", (req, res, next) => {
     try { res.json({ ok: true, data: dashboardService.getPeople(req.query) }); }
-    catch (e) { next(e); }
+    catch (e) { handleDashboardReadError(e, res, next); }
   });
   router.get("/api/dashboard/progress", (req, res, next) => {
     try { res.json({ ok: true, data: dashboardService.getProgress(req.query) }); }
@@ -163,6 +174,51 @@ export function buildRouter(
   router.get("/api/dashboard/cowatch-patterns", (req, res, next) => {
     try { res.json({ ok: true, data: dashboardService.getCowatchPatterns() }); }
     catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/cowatch-pairings", (req, res, next) => {
+    try { res.json({ ok: true, data: dashboardService.getCowatchPairings(req.query) }); }
+    catch (e) { handleDashboardReadError(e, res, next); }
+  });
+  router.get("/api/dashboard/operations", (_req, res, next) => {
+    try { res.json({ ok: true, data: dashboardService.getOperations() }); }
+    catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/cowatch-reviews", (req, res, next) => {
+    try { res.json({ ok: true, data: { ...dashboardService.getCowatchReviews(req.query), discordAvailable: discordReviewAvailable } }); }
+    catch (e) { handleDashboardReadError(e, res, next); }
+  });
+  router.post("/api/dashboard/cowatch-reviews/:candidateId/ask-discord", express.json(), (req, res, next) => {
+    try {
+      if (!discordReviewAvailable) return res.status(409).json({ ok: false, errorCode: "DISCORD_REVIEW_UNAVAILABLE", message: "Discord review is not configured" });
+      const result = cowatchAdjudications.requestDiscordReview({
+        candidateId: req.params.candidateId,
+        actorKind: "web",
+        requestId: String(req.body.requestId ?? ""),
+        apply: req.body.apply === true,
+        confirm: req.body.confirm === true
+      });
+      const status = result.ok ? 200 : result.errorCode === "COWATCH_CANDIDATE_NOT_FOUND" ? 404 : result.errorCode === "COWATCH_CANDIDATE_HIDDEN" ? 409 : 400;
+      res.status(status).json(result);
+    } catch (e) { next(e); }
+  });
+  router.post("/api/dashboard/cowatch-reviews/:candidateId/decision", express.json(), async (req, res, next) => {
+    try {
+      const decision = req.body.decision as CowatchDecision;
+      if (!["yes", "no", "not_sure", "clear"].includes(decision)) {
+        return res.status(400).json({ ok: false, errorCode: "DECISION_INVALID", message: "Decision must be yes, no, not_sure, or clear" });
+      }
+      const result = await cowatchAdjudications.decide({
+        candidateId: req.params.candidateId,
+        decision,
+        actorKind: "web",
+        method: "browser",
+        requestId: String(req.body.requestId ?? ""),
+        apply: req.body.apply === true,
+        confirm: req.body.confirm === true
+      });
+      const status = result.ok ? 200 : result.errorCode === "COWATCH_CANDIDATE_NOT_FOUND" ? 404 : 400;
+      res.status(status).json(result);
+    } catch (e) { next(e); }
   });
   router.get("/api/dashboard/detail/:ratingKey", (req, res, next) => {
     try { res.json({ ok: true, data: dashboardService.getDetail(req.params.ratingKey) }); }
@@ -184,12 +240,11 @@ export function buildRouter(
       const id = Number(req.params.id);
       const action = req.params.action;
       if (action === "dismiss") {
-        if (!req.body.confirm) return res.status(400).json({ ok: false, message: "Confirmation required" });
-        db.prepare("UPDATE watch_events SET prompt_status='dismissed' WHERE id=?").run(id);
-        audit.record("dashboard_prompt_dismissed", "web", "ok", { watchEventId: id });
-        res.json({ ok: true });
+        const result = cowatch.dismissPrompt(id, req.body.confirm === true, "web");
+        res.status(result.ok ? 200 : result.errorCode === "WATCH_EVENT_NOT_FOUND" ? 404 : result.errorCode === "PROMPT_NOT_DISMISSIBLE" ? 409 : 400).json(result);
       } else if (action === "reprompt") {
-        res.json(await cowatch.createPrompt(id, "web"));
+        const result = cowatch.reprompt(id, req.body.confirm === true, "web");
+        res.status(result.ok ? 200 : result.errorCode === "WATCH_EVENT_NOT_FOUND" ? 404 : result.errorCode === "PROMPT_NOT_REPROMPTABLE" ? 409 : 400).json(result);
       } else {
         res.status(400).json({ ok: false, message: "Invalid action" });
       }

@@ -46,6 +46,7 @@ http://localhost:8787/copy
 - The `/` dashboard now opens with an overview surface that emphasizes recent playback, household summary cards, and operational status.
 - Filter controls are ordered by category, user, then search so browsing starts with media type first.
 - Recent playback cards compactly show shared watches when multiple people are involved, while keeping single-user cards simple.
+- The People view now separates observed playback from confirmed co-watch attribution, supports 7/30/90-day, all-time, and custom ranges, and shows an accessible heatmap legend for shared counts.
 
 ### History Copy UI Features
 - **Interactive Preview Grid**: Lists all history items for the copy job, including status (eligible, already watched, already copied, restricted, or no matching media).

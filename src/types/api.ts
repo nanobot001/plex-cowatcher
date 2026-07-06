@@ -57,6 +57,74 @@ export interface DashboardUserSetting {
   shown: boolean;
 }
 
+export type DashboardPersonStatus = "active" | "disabled" | "no_activity";
+
+export interface DashboardPersonSummary {
+  id: number;
+  plex_username: string;
+  display_name: string;
+  status: DashboardPersonStatus;
+  enabled: number;
+  is_source_user: number;
+  plays: number;
+  minutes: number;
+  completed: number;
+  inProgress: number;
+  completionRate: number | null;
+  activeDays: number;
+  recent: DashboardActivityItem[];
+  mix: Array<{ category: DashboardCategory; label: string; count: number }>;
+  heatmap: Array<{ date: string; plays: number; minutes: number }>;
+  possibleDuplicates: string[];
+  technicalAccount: { plexUsername: string };
+}
+
+export interface DashboardPeopleResponse {
+  people: DashboardPersonSummary[];
+  active: DashboardPersonSummary[];
+  secondary: DashboardPersonSummary[];
+  window: { start: string; end: string; label: string; defaulted: boolean };
+  timingMs: number;
+}
+
+export interface DashboardCowatchPairing {
+  id: string;
+  people: Array<{ id: number; username: string; displayName: string }>;
+  sessionCount: number;
+  knownSharedMinutes: number;
+  unknownDurationSessions: number;
+  provenance: { confirmed: number; inferred: number; adjudicated: number };
+  titles: Array<{ ratingKey: string; title: string; category: DashboardCategory; sessions: number; latestWatchedAt: string }>;
+  latestWatchedAt: string;
+}
+
+export interface DashboardCowatchReviewCandidate {
+  candidateId: string;
+  ratingKey: string;
+  title: string;
+  showTitle: string | null;
+  category: DashboardCategory;
+  watchedAt: string;
+  source: { userId: number; displayName: string };
+  target: { userId: number; displayName: string };
+  decision: "yes" | "no" | "not_sure" | "clear" | null;
+  effectiveRelationship: "together" | "likely_together" | "suppressed";
+  latestAdjudicationId: number | null;
+  discordPromptStatus: "pending" | "sent" | "resolved" | "failed" | "cancelled" | null;
+}
+
+export interface DashboardOperationItem {
+  kind: "unresolved_prompt" | "discord_delivery_failed" | "plex_sync_failed" | "missing_metadata" | "uncertain_classification" | "cowatch_review_prompt";
+  watchEventId?: number;
+  title: string;
+  detail: string;
+  status: string;
+  watchedAt?: string;
+  ratingKey?: string;
+  user?: string | null;
+  route?: { layout: DashboardLayout; filters: Record<string, unknown> };
+}
+
 export interface DashboardActivityItem {
   id: number; userId: number; username: string; displayName: string; ratingKey: string;
   title: string; showTitle?: string; mediaType: string; category: DashboardCategory;

@@ -6,7 +6,7 @@ Blocks are numbered, bounded AI-buildable tickets for code, logic, docs, folder 
 
 The project is currently in the Phase 3 refinement set. A live Playwright review found that the completed 3-2f redesign did not meet its intended usability, bounded-rendering, or responsive outcome. The immediate next selected block is:
 
-- `block-3-2j-1-cowatch-evidence-semantics.md`
+- `block-3-2n-hierarchy-progress-workspace.md`
 
 Phase 3 builds on the completed playback-intelligence foundation with domain-specific refinement, richer operator ergonomics, and reporting.
 Blocks 3-2a through 3-2e form one sequential dashboard implementation path:
@@ -29,10 +29,16 @@ Corrective sequence:
 6. `block-3-2k-rich-media-detail-workspace.md`
 7. `completed/block-3-2l-daily-session-timeline.md`
 8. `block-3-2m-people-and-cowatch-intelligence.md`
-9. `block-3-2n-hierarchy-progress-workspace.md`
-10. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
+9. `block-3-2m-1-person-pairings-and-operations.md`
+10. `block-3-2m-2-browser-cowatch-adjudication.md`
+11. `block-3-2m-3-discord-cowatch-review.md`
+12. `block-3-2m-4-people-cowatch-attribution.md`
+13. `block-3-2n-hierarchy-progress-workspace.md`
+14. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
 
 Do not implement a later corrective block until the previous block's exit gate is recorded as passing. A later block must not conceal, waive, or silently absorb a failed earlier acceptance criterion.
+
+The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, and deduplicated confirmed co-watch attribution. Block 3-2n is the next corrective block.
 
 ## Umbrella Specifications
 

@@ -20,6 +20,8 @@ for (const user of [
   ["tony-plex", "Tony", "Tony", null, 1, 1, 0, 1],
   ["justin-plex", "Justin", "Justin", null, 1, 0, 1, 1],
   ["alex-plex", "Alex", "Alex", "Ace", 1, 0, 1, 1],
+  ["legacy-plex", "Legacy", "Legacy", null, 1, 0, 0, 0],
+  ["tony-archive-plex", "Tony Archive", "Tony Archive", "Tony", 1, 0, 0, 1],
   ["hidden-plex", "Hidden", "Hidden Viewer", "Secret", 0, 0, 1, 1]
 ]) {
   const result = insertUser.run(...user, isoMinutesAgo(240), isoMinutesAgo(240));
@@ -41,6 +43,10 @@ addEpisode({ user: "Hidden", ratingKey: "episode-regression-3", title: "Hidden E
 
 const movieWatchedAt = isoMinutesAgo(150);
 insertObservation.run(userIds.Tony, "movie-regression", null, null, "movie", "Movies", "Fixture Movie", null, null, null, movieWatchedAt, "fixture", 100, "fixture", 7_200_000, 1, movieWatchedAt, movieWatchedAt);
+const reviewSourceAt = isoMinutesAgo(210);
+const reviewTargetAt = isoMinutesAgo(205);
+insertObservation.run(userIds.Tony, "review-movie", null, null, "movie", "Movies", "Review Movie", null, null, null, reviewSourceAt, "fixture", 100, "fixture", 7_200_000, 1, reviewSourceAt, reviewSourceAt);
+insertObservation.run(userIds.Alex, "review-movie", null, null, "movie", "Movies", "Review Movie", null, null, null, reviewTargetAt, "fixture", 100, "fixture", 7_200_000, 1, reviewTargetAt, reviewTargetAt);
 
 db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,leaf_count,source_provenance,refreshed_at)
@@ -48,6 +54,9 @@ db.prepare(`INSERT INTO content_catalog
 db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,source_provenance,refreshed_at)
   VALUES ('movie-regression','movie','Fixture Movie',7200000,'1','Movies','[]','fixture',?)`).run(isoMinutesAgo(5));
+db.prepare(`INSERT INTO content_catalog
+  (rating_key,media_type,title,duration,library_id,library_title,genres_json,source_provenance,refreshed_at)
+  VALUES ('review-movie','movie','Review Movie',7200000,'1','Movies','[]','fixture',?)`).run(isoMinutesAgo(5));
 
 const event = db.prepare(`INSERT INTO watch_events
   (source_user_id,rating_key,grandparent_rating_key,parent_rating_key,media_type,library_name,title,show_title,season_number,episode_number,watched_at,prompt_status,created_at,updated_at)
@@ -58,7 +67,13 @@ db.prepare(`INSERT INTO cowatch_confirmations
   (watch_event_id,target_user_id,confirmation_method,status,plex_sync_status,created_at,updated_at)
   VALUES (?,?,?,?,?,?,?)`).run(Number(event.lastInsertRowid), userIds.Justin, "fixture", "confirmed", "marked_watched", confirmedWatchedAt, confirmedWatchedAt);
 
-const app = createApp(db, new MockPlexAdapter(), { skipStartupUserSync: true });
+db.prepare(`INSERT INTO watch_events
+  (source_user_id,rating_key,media_type,library_name,title,watched_at,prompt_status,created_at,updated_at)
+  VALUES (?,?,?,?,?,?,?,?,?)`).run(
+  userIds.Tony, "movie-regression", "movie", "Movies", "Fixture Movie", movieWatchedAt, "pending", movieWatchedAt, movieWatchedAt
+);
+
+const app = createApp(db, new MockPlexAdapter(), { skipStartupUserSync: true, discordReviewAvailable: true });
 const server = app.listen(port, "127.0.0.1");
 export const ready = new Promise((resolve, reject) => {
   server.once("listening", resolve);

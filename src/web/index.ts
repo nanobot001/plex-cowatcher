@@ -52,7 +52,7 @@ export function registerWebRoutes(router: Router): void {
           <div id="detail-content"></div>
         </dialog>
       </div>
-      <script src="/static/dashboard.js"></script>
+      <script src="/static/dashboard.js?v=3-2m-3"></script>
     `));
   });
 
@@ -598,8 +598,8 @@ export function registerWebRoutes(router: Router): void {
       </section>
 
       <section class="band">
-        <h2>Dashboard Users</h2>
-        <p class="text-muted" style="margin-bottom: 1rem;">Manage dashboard-only aliases and visibility without changing synced Plex identity.</p>
+        <h2>Household Dashboard Members</h2>
+        <p class="text-muted" style="margin-bottom: 1rem;">Choose which Plex identities belong in household dashboard intelligence. Excluding an identity hides it from dashboard people, filters, and totals without disabling ingestion or deleting history.</p>
         <form id="users-form" class="job-form">
           <div class="items-table-container">
             <table class="preview-table">
@@ -607,7 +607,7 @@ export function registerWebRoutes(router: Router): void {
                 <tr>
                   <th>Username</th>
                   <th>Alias</th>
-                  <th>Show on Dashboard?</th>
+                  <th>Include in household dashboard?</th>
                 </tr>
               </thead>
               <tbody id="settings-users-body">
