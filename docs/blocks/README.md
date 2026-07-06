@@ -33,12 +33,13 @@ Corrective sequence:
 10. `block-3-2m-2-browser-cowatch-adjudication.md`
 11. `block-3-2m-3-discord-cowatch-review.md`
 12. `block-3-2m-4-people-cowatch-attribution.md`
-13. `block-3-2n-hierarchy-progress-workspace.md`
-14. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
+13. `block-3-2m-5-people-ordering-and-heatmap-interaction.md`
+14. `block-3-2n-hierarchy-progress-workspace.md`
+15. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
 
 Do not implement a later corrective block until the previous block's exit gate is recorded as passing. A later block must not conceal, waive, or silently absorb a failed earlier acceptance criterion.
 
-The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, and deduplicated confirmed co-watch attribution. Block 3-2n is the next corrective block.
+The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n is the next corrective block.
 
 ## Umbrella Specifications
 

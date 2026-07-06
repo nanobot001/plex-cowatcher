@@ -1,10 +1,12 @@
 const layouts = new Set(["overview","timeline","explorer","people","progress"]);
-const state = { layout: "overview", filters: {}, offset: 0, totals: null, users: null, libraries: null, explorer: { section: "", sort: "recent", offset: 0, selected: "" }, timeline: { date: "", offset: 0 }, people: { period: "30d", dateFrom: "", dateTo: "" } };
+const state = { layout: "overview", filters: {}, offset: 0, totals: null, users: null, libraries: null, explorer: { section: "", sort: "recent", offset: 0, selected: "" }, timeline: { date: "", offset: 0 }, people: { period: "30d", dateFrom: "", dateTo: "", orderMode: "default", activeOrder: [], secondaryOrder: [] } };
 const content = document.querySelector("#dashboard-content");
 const form = document.querySelector("#dashboard-filters");
 const dialog = document.querySelector("#detail-dialog");
 let explorerRenderVersion=0;
 let peopleRenderVersion=0;
+const peopleDragState = { pointerId: null, personId: "", group: "", sourceCard: null, placeholder: null, targetCard: null, placeBefore: true, startX: 0, startY: 0, lastX: 0, lastY: 0, dragging: false, ignoreClickUntil: 0 };
+const peopleHeatmapState = { activeByPerson: new Map(), hoveredCell: null, popover: null, announcer: null, pendingAnnouncement: "" };
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmtDate = value => value ? new Intl.DateTimeFormat(undefined,{dateStyle:"medium",timeStyle:"short"}).format(new Date(value)) : "Unknown time";
 const normalizeDurationSeconds = value => {
@@ -170,6 +172,129 @@ const routeQuery=()=>{
   if(state.explorer.selected)p.set("selected",state.explorer.selected);
   return p;
 };
+const personOrderKey = group => group === "secondary" ? "secondaryOrder" : "activeOrder";
+const personOrderLabel = group => group === "secondary" ? "Other" : "Active";
+const personId = person => String(person?.id ?? "");
+function reconcilePeopleOrder(savedOrder, people) {
+  const visible = Array.isArray(people) ? people : [];
+  const ids = new Set(visible.map(personId));
+  const orderedIds = [];
+  for (const rawId of Array.isArray(savedOrder) ? savedOrder : []) {
+    const id = String(rawId);
+    if (ids.has(id) && !orderedIds.includes(id)) orderedIds.push(id);
+  }
+  for (const person of visible) {
+    const id = personId(person);
+    if (id && !orderedIds.includes(id)) orderedIds.push(id);
+  }
+  return orderedIds;
+}
+function sortPeopleGroup(people, group) {
+  const key = personOrderKey(group);
+  const byId = new Map((Array.isArray(people) ? people : []).map(person => [personId(person), person]));
+  return reconcilePeopleOrder(state.people[key], people).map(id => byId.get(id)).filter(Boolean);
+}
+function resetPeopleOrder() {
+  state.people = {
+    ...state.people,
+    orderMode: "default",
+    activeOrder: [],
+    secondaryOrder: []
+  };
+  save();
+  announcePeopleOrder("People card positions reset to the server order.");
+}
+function announcePeopleOrder(message) {
+  const announcer = peopleHeatmapState.announcer || document.querySelector("[data-testid='people-order-live']");
+  if (!announcer) return;
+  peopleHeatmapState.pendingAnnouncement = message;
+  announcer.textContent = "";
+  requestAnimationFrame(() => {
+    if (peopleHeatmapState.pendingAnnouncement) {
+      announcer.textContent = peopleHeatmapState.pendingAnnouncement;
+    }
+  });
+}
+function getPeopleHeatmapPopover() {
+  if (peopleHeatmapState.popover && document.contains(peopleHeatmapState.popover)) return peopleHeatmapState.popover;
+  peopleHeatmapState.popover = document.querySelector("[data-testid='people-heatmap-popover']");
+  return peopleHeatmapState.popover;
+}
+function clampPopoverPosition(rect, popover) {
+  const viewportWidth = document.documentElement.clientWidth;
+  const viewportHeight = document.documentElement.clientHeight;
+  const margin = 12;
+  const width = popover.offsetWidth || 280;
+  const height = popover.offsetHeight || 180;
+  const preferredLeft = rect.right + 12;
+  const fallbackLeft = rect.left - width - 12;
+  const left = Math.max(margin, Math.min(viewportWidth - width - margin, preferredLeft + width <= viewportWidth - margin ? preferredLeft : fallbackLeft));
+  const belowTop = rect.bottom + 12;
+  const aboveTop = rect.top - height - 12;
+  const top = Math.max(margin, Math.min(viewportHeight - height - margin, belowTop + height <= viewportHeight - margin ? belowTop : aboveTop));
+  return { left: Math.max(margin, left), top: Math.max(margin, top) };
+}
+function getHeatmapCellData(cell) {
+  if (!cell) return null;
+  return {
+    personId: cell.dataset.personId || "",
+    personName: cell.dataset.personName || "",
+    date: cell.dataset.heatmapDate || "",
+    minutes: Number(cell.dataset.minutes || 0),
+    observedMinutes: Number(cell.dataset.observedMinutes || 0),
+    attributedMinutes: Number(cell.dataset.attributedMinutes || 0),
+    plays: Number(cell.dataset.plays || 0),
+    confirmedTogetherSessions: Number(cell.dataset.confirmedTogetherSessions || 0),
+    route: cell.dataset.route ? JSON.parse(decodeURIComponent(cell.dataset.route)) : null
+  };
+}
+function formatHeatmapPopover(data) {
+  const together = data.confirmedTogetherSessions || 0;
+  return `<div class="people-heatmap-popover-header"><strong>${esc(data.personName)}</strong><span>${esc(data.date)}</span></div>
+    <dl>
+      <div><dt>Total</dt><dd>${esc(fmtHourValue(data.minutes))}</dd></div>
+      <div><dt>Observed</dt><dd>${esc(fmtHourValue(data.observedMinutes))}</dd></div>
+      <div><dt>Together</dt><dd>${esc(fmtHourValue(data.attributedMinutes))}</dd></div>
+      <div><dt>Plays</dt><dd>${esc(data.plays)}</dd></div>
+      <div><dt>Confirmed sessions</dt><dd>${esc(together)}</dd></div>
+    </dl>
+    ${data.route ? `<button type="button" class="text-button" data-route="${esc(encodeRoute(data.route))}">Open day in Timeline</button>` : ""}`;
+}
+function showHeatmapPopover(cell) {
+  const popover = getPeopleHeatmapPopover();
+  if (!popover) return;
+  const data = getHeatmapCellData(cell);
+  if (!data) return;
+  popover.hidden = false;
+  popover.style.visibility = "hidden";
+  popover.innerHTML = formatHeatmapPopover(data);
+  const rect = cell.getBoundingClientRect();
+  const position = clampPopoverPosition(rect, popover);
+  popover.style.left = `${position.left}px`;
+  popover.style.top = `${position.top}px`;
+  popover.style.visibility = "visible";
+  popover.dataset.visible = "true";
+  peopleHeatmapState.hoveredCell = cell;
+  const container = cell.closest("[data-person-heatmap]");
+  if (container) {
+    const cells = [...container.querySelectorAll("[data-heatmap-cell]")];
+    const index = cells.indexOf(cell);
+    if (index >= 0) syncHeatmapActiveIndex(container, index);
+  }
+  const announcer = peopleHeatmapState.announcer || document.querySelector("[data-testid='people-order-live']");
+  if (announcer) {
+    announcer.textContent = `${data.personName}, ${data.date}: ${fmtHourValue(data.minutes)} total, ${fmtHourValue(data.observedMinutes)} observed, ${fmtHourValue(data.attributedMinutes)} Together, ${data.plays} plays, ${data.confirmedTogetherSessions} confirmed Together session${data.confirmedTogetherSessions === 1 ? "" : "s"}.`;
+  }
+}
+function hideHeatmapPopover() {
+  const popover = getPeopleHeatmapPopover();
+  if (!popover) return;
+  popover.hidden = true;
+  popover.dataset.visible = "false";
+  popover.style.visibility = "";
+  popover.innerHTML = "";
+  peopleHeatmapState.hoveredCell = null;
+}
 function restoreLocationState(){
   const raw=location.hash.slice(1);
   const [layoutName,rawQuery=""]=raw.split("?");
@@ -252,6 +377,9 @@ function applyRoute(route){
   state.explorer.section=state.layout==="explorer"?(state.filters.category||""):"";
   state.explorer.offset=0;
   state.explorer.selected="";
+  if(Object.prototype.hasOwnProperty.call(route, "timelineDate")) {
+    state.timeline.date = route.timelineDate || "";
+  }
   syncFormToState();
   save();
   loadGlobals();
@@ -1101,14 +1229,32 @@ async function renderPeople() {
   const data = peopleResult.value;
   const active = data.active || [];
   const secondary = data.secondary || [];
-  const personCard = person => {
+  const activePeople = state.people.orderMode === "custom" ? sortPeopleGroup(active, "active") : active;
+  const secondaryPeople = state.people.orderMode === "custom" ? sortPeopleGroup(secondary, "secondary") : secondary;
+  peopleHeatmapState.activeVisible = activePeople;
+  peopleHeatmapState.secondaryVisible = secondaryPeople;
+  const orderModeLabel = state.people.orderMode === "custom" ? "Custom order is saved locally for Active and Other groups." : "Default order shows the server-provided group order.";
+  const orderControls = `<div class="people-ordering" data-testid="people-order-controls">
+    <div class="people-order-actions" role="group" aria-label="People card ordering">
+      <button type="button" data-people-order-mode="default" aria-pressed="${state.people.orderMode !== "custom"}">Default</button>
+      <button type="button" data-people-order-mode="custom" aria-pressed="${state.people.orderMode === "custom"}">Custom</button>
+      <button type="button" class="text-button" data-people-order-reset>Reset positions</button>
+    </div>
+    <p class="people-order-copy">${esc(orderModeLabel)}</p>
+    <span class="sr-only" data-testid="people-order-live" aria-live="polite"></span>
+  </div>`;
+  const personCard = (person, group) => {
     const name=person.display_name||person.plex_username;
     const statusLabel=person.status==="active"?"Active":person.status==="disabled"?"Disabled":"No activity";
-    const heatmap=(person.heatmap||[]).map(day=>{
+    const heatmapDays = person.heatmap||[];
+    const activeIndex = Math.min(Number(peopleHeatmapState.activeByPerson.get(person.id) ?? 0), Math.max(0, heatmapDays.length - 1));
+    peopleHeatmapState.activeByPerson.set(person.id, activeIndex);
+    const heatmap=(heatmapDays).map((day,index)=>{
       const level=day.minutes<=0?0:day.minutes<30?1:day.minutes<120?2:3;
       const together=Number(day.confirmedTogetherSessions||0);
       const label=`${day.date}: ${fmtHourValue(day.minutes)} total (${fmtHourValue(day.observedMinutes)} observed, ${fmtHourValue(day.attributedMinutes)} attributed) across ${day.plays} play${day.plays===1?"":"s"}; ${together} confirmed Together session${together===1?"":"s"}`;
-      return `<span class="person-heat-cell level-${level}${together?" has-together":""}" title="${esc(label)}" aria-label="${esc(label)}"></span>`;
+      const route=encodeRoute({layout:"timeline",filters:{...state.filters,user:person.plex_username},timelineDate:day.date});
+      return `<span id="heatmap-${esc(person.id)}-${index}" class="person-heat-cell level-${level}${together?" has-together":""}${index===activeIndex?" is-active":""}" role="gridcell" aria-label="${esc(label)}" data-heatmap-cell data-person-id="${esc(person.id)}" data-person-name="${esc(name)}" data-heatmap-date="${esc(day.date)}" data-minutes="${esc(day.minutes)}" data-observed-minutes="${esc(day.observedMinutes)}" data-attributed-minutes="${esc(day.attributedMinutes)}" data-plays="${esc(day.plays)}" data-confirmed-together-sessions="${esc(together)}" data-route="${esc(route)}"></span>`;
     }).join("");
     const recent=(person.recent||[]).map(item=>`<button class="person-recent-title" data-item="${encodeURIComponent(JSON.stringify(item))}"><span>${mediaTitle(item)}</span><small>${item.contribution==="attributed_confirmed_together"?'<span class="together-label">Together</span> &middot; ':""}${esc(categoryLabel(item.category))} &middot; ${fmtDate(item.watchedAt)}</small></button>`).join("");
     const warnings=(person.possibleDuplicates||[]).length?`<p class="person-warning"><strong>Possible duplicate</strong><span>Similar to ${esc(person.possibleDuplicates.join(", "))}. Kept separate.</span></p>`:"";
@@ -1116,13 +1262,20 @@ async function renderPeople() {
     const unknown=breakdown.attributedTogether.unknownDuration?` &middot; ${breakdown.attributedTogether.unknownDuration} unknown duration`:"";
     const libraryRoute={layout:"explorer",filters:{...state.filters,user:person.plex_username}};
     const timelineRoute={layout:"timeline",filters:{...state.filters,user:person.plex_username}};
-    return `<article class="person-card" data-testid="person-card" data-person-status="${esc(person.status)}">
-      <header class="person-card-header"><div class="avatar" aria-hidden="true">${esc(name.slice(0,1))}</div><div><h4>${esc(name)}</h4><span class="person-status status-${esc(person.status)}">${esc(statusLabel)}</span></div></header>
+    const orderControlsHtml = state.people.orderMode === "custom"
+      ? `<div class="person-order-controls" aria-label="Order ${esc(name)}">
+          <button type="button" class="person-order-handle" data-person-drag-handle data-person-id="${esc(person.id)}" data-person-group="${esc(group)}" aria-label="Drag to reorder ${esc(name)}">⋮⋮</button>
+          <button type="button" class="text-button" data-person-move="earlier" data-person-id="${esc(person.id)}" data-person-group="${esc(group)}">Move earlier</button>
+          <button type="button" class="text-button" data-person-move="later" data-person-id="${esc(person.id)}" data-person-group="${esc(group)}">Move later</button>
+        </div>`
+      : "";
+    return `<article class="person-card" data-testid="person-card" data-person-card data-person-id="${esc(person.id)}" data-person-group="${esc(group)}" data-person-status="${esc(person.status)}">
+      <header class="person-card-header"><div class="avatar" aria-hidden="true">${esc(name.slice(0,1))}</div><div><h4>${esc(name)}</h4><span class="person-status status-${esc(person.status)}">${esc(statusLabel)}</span></div>${orderControlsHtml}</header>
       ${warnings}
       <div class="person-stats"><span><strong>${esc(fmtHourValue(person.minutes))}</strong> total watched</span><span><strong>${esc(person.completed)}</strong> completed</span><span><strong>${esc(person.activeDays)}</strong> active days</span></div>
       <div class="person-breakdown" data-testid="person-breakdown"><span><strong>${esc(fmtHourValue(breakdown.observed.minutes))}</strong> directly observed</span><span><strong>${esc(fmtHourValue(breakdown.attributedTogether.minutes))}</strong> added from Together${unknown}</span><span><strong>${esc(breakdown.confirmedTogetherSessions)}</strong> confirmed shared session${breakdown.confirmedTogetherSessions===1?"":"s"}</span></div>
       <div class="person-mix" aria-label="Category mix">${(person.mix||[]).length?person.mix.map(m=>`<span class="proof">${esc(m.label)} ${esc(m.count)}</span>`).join(""):'<span class="text-muted">No category activity</span>'}</div>
-      <div class="person-heatmap" role="group" aria-label="Activity by day">${heatmap}</div>
+      <div class="person-heatmap" role="grid" tabindex="0" aria-label="Activity by day for ${esc(name)}" aria-activedescendant="heatmap-${esc(person.id)}-${activeIndex}" data-person-heatmap data-person-id="${esc(person.id)}" data-active-index="${activeIndex}">${heatmap}</div>
       <div class="person-recent"><h5>Recent titles</h5>${recent||'<p class="text-muted">No activity in this window.</p>'}</div>
       <div class="person-actions"><button class="text-button" data-route="${encodeRoute(libraryRoute)}">Open Library</button><button class="text-button" data-route="${encodeRoute(timelineRoute)}">Open Timeline</button></div>
       <details class="person-account"><summary>Technical account</summary><dl><dt>Plex account</dt><dd>${esc(person.technicalAccount?.plexUsername||person.plex_username)}</dd></dl></details>
@@ -1161,6 +1314,7 @@ async function renderPeople() {
 
   const periodOptions=[['7d','7 days'],['30d','30 days'],['90d','90 days'],['all','All time'],['custom','Custom']];
   const periodControls=`<div class="people-period" data-testid="people-period-controls" aria-label="People reporting period"><div class="people-period-presets">${periodOptions.map(([value,label])=>`<button type="button" data-people-period="${value}" aria-pressed="${state.people.period===value}">${label}</button>`).join("")}</div>${state.people.period==="custom"?`<div class="people-custom-dates"><label>From<input type="date" data-people-date-from value="${esc(state.people.dateFrom)}"></label><label>To<input type="date" data-people-date-to value="${esc(state.people.dateTo)}"></label><button type="button" class="btn" data-people-custom-apply>Apply dates</button><span class="people-date-error" role="alert"></span></div>`:""}</div>`;
+  const orderControlsHtml = `${orderControls}`;
   const heatmapRange=data.window?.heatmapTruncated?`Daily heatmap shows ${esc(data.window.heatmapStart)} to ${esc(data.window.heatmapEnd)}; totals cover the full period.`:`Daily heatmap covers ${esc(data.window?.heatmapStart||"")} to ${esc(data.window?.heatmapEnd||"")}.`;
 
   if(renderVersion!==peopleRenderVersion)return;
@@ -1168,17 +1322,25 @@ async function renderPeople() {
     <section class="dashboard-panel">
       <div class="panel-title"><div><h3>Household Members</h3><span>${esc(data.window?.label||"")} &middot; ${active.length} active</span></div></div>
       ${periodControls}
+      ${orderControlsHtml}
       <div class="person-heat-legend" data-testid="people-heatmap-legend"><span><i class="level-0"></i>No activity</span><span><i class="level-1"></i>Under 30m</span><span><i class="level-2"></i>30m-2h</span><span><i class="level-3"></i>2h+</span><span><i class="together-marker"></i>Together</span><small>${heatmapRange}</small></div>
-      <div class="people-grid" data-testid="active-people">${active.length?active.map(personCard).join(""):empty("active household members")}</div>
+      <div class="people-grid" data-testid="active-people" data-people-group="active">${activePeople.length?activePeople.map(person=>personCard(person,"active")).join(""):empty("active household members")}</div>
     </section>
     <details class="dashboard-panel people-secondary" data-testid="secondary-people">
       <summary><span>Other included identities</span><small>${secondary.length} disabled or without activity</small></summary>
-      <div class="people-grid">${secondary.length?secondary.map(personCard).join(""):empty("other included identities")}</div>
+      <div class="people-grid" data-people-group="secondary">${secondaryPeople.length?secondaryPeople.map(person=>personCard(person,"secondary")).join(""):empty("other included identities")}</div>
     </details>
     <section class="dashboard-panel" data-testid="pairings-panel"><div class="panel-title"><div><h3>Who watches together</h3><span>Exact-item evidence only</span></div></div><div class="pairings-list">${pairingHtml}</div></section>
     <section class="dashboard-panel" data-testid="reviews-panel"><div class="panel-title"><div><h3>Review likely co-watches</h3><span>${reviewsResult.status==="fulfilled"?`${reviewsResult.value.total} exact-item candidate${reviewsResult.value.total===1?"":"s"}`:"Needs retry"}</span></div></div><div class="reviews-list">${reviewsHtml}</div></section>
     <section class="dashboard-panel" data-testid="operations-panel"><div class="panel-title"><div><h3>Operations</h3><span>Current unresolved prompts and sync issues</span></div></div><div class="operations-list">${operationsHtml}</div></section>
+    <div class="people-heatmap-popover" data-testid="people-heatmap-popover" hidden></div>
   </div>`;
+  peopleHeatmapState.popover = content.querySelector("[data-testid='people-heatmap-popover']");
+  peopleHeatmapState.announcer = content.querySelector("[data-testid='people-order-live']");
+  if (peopleHeatmapState.pendingAnnouncement && peopleHeatmapState.announcer) {
+    peopleHeatmapState.announcer.textContent = peopleHeatmapState.pendingAnnouncement;
+    peopleHeatmapState.pendingAnnouncement = "";
+  }
 }
 
 async function renderProgress() {
@@ -1227,6 +1389,173 @@ async function renderProgress() {
       </aside>
     </section>
   `;
+}
+
+function reorderPeopleRelativeToTarget(group, visiblePeople, draggedIdValue, targetIdValue, placeBefore) {
+  const draggedId = String(draggedIdValue);
+  const targetId = String(targetIdValue);
+  const ids = visiblePeople.map(personId).filter(id => id !== draggedId);
+  const targetIndex = ids.indexOf(targetId);
+  if (targetIndex < 0) return ids;
+  const insertAt = placeBefore ? targetIndex : targetIndex + 1;
+  ids.splice(Math.max(0, Math.min(ids.length, insertAt)), 0, draggedId);
+  state.people = {
+    ...state.people,
+    orderMode: "custom",
+    [personOrderKey(group)]: ids
+  };
+  save();
+  return ids;
+}
+
+function movePeopleCard(group, visiblePeople, draggedIdValue, delta) {
+  const draggedId = String(draggedIdValue);
+  const ids = visiblePeople.map(personId);
+  const fromIndex = ids.indexOf(draggedId);
+  if (fromIndex < 0) return ids;
+  const toIndex = Math.max(0, Math.min(ids.length - 1, fromIndex + delta));
+  if (fromIndex === toIndex) return ids;
+  const [entry] = ids.splice(fromIndex, 1);
+  ids.splice(toIndex, 0, entry);
+  state.people = {
+    ...state.people,
+    orderMode: "custom",
+    [personOrderKey(group)]: ids
+  };
+  save();
+  const person = visiblePeople[fromIndex];
+  if (person) announcePeopleOrder(`${person.display_name || person.plex_username} moved to position ${toIndex + 1} of ${ids.length} in ${personOrderLabel(group)}.`);
+  return ids;
+}
+
+function finishPeopleDrag() {
+  if (peopleDragState.sourceCard) peopleDragState.sourceCard.classList.remove("is-dragging");
+  if (peopleDragState.placeholder && peopleDragState.placeholder.parentNode) peopleDragState.placeholder.parentNode.removeChild(peopleDragState.placeholder);
+  peopleDragState.pointerId = null;
+  peopleDragState.personId = "";
+  peopleDragState.group = "";
+  peopleDragState.sourceCard = null;
+  peopleDragState.placeholder = null;
+  peopleDragState.targetCard = null;
+  peopleDragState.placeBefore = true;
+  peopleDragState.startX = 0;
+  peopleDragState.startY = 0;
+  peopleDragState.lastX = 0;
+  peopleDragState.lastY = 0;
+  peopleDragState.dragging = false;
+  peopleDragState.ignoreClickUntil = Date.now() + 120;
+}
+
+function beginPeopleDrag(handle, event) {
+  if (state.people.orderMode !== "custom") return;
+  const card = handle.closest("[data-person-card]");
+  const group = card?.dataset.personGroup;
+  const personIdValue = card?.dataset.personId;
+  if (!card || !group || !personIdValue) return;
+  peopleDragState.pointerId = event.pointerId ?? "mouse";
+  peopleDragState.personId = String(personIdValue);
+  peopleDragState.group = group;
+  peopleDragState.sourceCard = card;
+  peopleDragState.startX = event.clientX;
+  peopleDragState.startY = event.clientY;
+  peopleDragState.lastX = event.clientX;
+  peopleDragState.lastY = event.clientY;
+  peopleDragState.dragging = false;
+  peopleDragState.placeBefore = true;
+}
+
+function updatePeopleDrag(event) {
+  if (peopleDragState.pointerId == null) return;
+  const eventPointerId = event.pointerId ?? peopleDragState.pointerId;
+  if (eventPointerId !== peopleDragState.pointerId) return;
+  const sourceCard = peopleDragState.sourceCard;
+  if (!sourceCard) return;
+  const moved = Math.abs(event.clientX - peopleDragState.startX) + Math.abs(event.clientY - peopleDragState.startY);
+  if (!peopleDragState.dragging && moved > 10) {
+    peopleDragState.dragging = true;
+    sourceCard.classList.add("is-dragging");
+    peopleDragState.placeholder = document.createElement("div");
+    peopleDragState.placeholder.className = "person-card person-card-placeholder";
+    peopleDragState.placeholder.setAttribute("aria-hidden", "true");
+  }
+  if (!peopleDragState.dragging) return;
+  peopleDragState.lastX = event.clientX;
+  peopleDragState.lastY = event.clientY;
+  const targetCard = findPersonCardAtPoint(peopleDragState.group, event.clientX, event.clientY, peopleDragState.personId);
+  if (!targetCard || targetCard === sourceCard || targetCard.dataset.personGroup !== peopleDragState.group) return;
+  const rect = targetCard.getBoundingClientRect();
+  const sourceRect = sourceCard.getBoundingClientRect();
+  const cardsShareRow = Math.abs((sourceRect.top + sourceRect.height / 2) - (rect.top + rect.height / 2)) < Math.min(sourceRect.height, rect.height) / 2;
+  const placeBefore = cardsShareRow
+    ? event.clientX <= rect.left + rect.width / 2
+    : event.clientY <= rect.top + rect.height / 2;
+  const parent = targetCard.parentElement;
+  if (!parent || !peopleDragState.placeholder) return;
+  if (peopleDragState.placeholder.parentElement === parent) {
+    parent.removeChild(peopleDragState.placeholder);
+  }
+  parent.insertBefore(peopleDragState.placeholder, placeBefore ? targetCard : targetCard.nextSibling);
+  peopleDragState.targetCard = targetCard;
+  peopleDragState.placeBefore = placeBefore;
+}
+
+function commitPeopleDrag() {
+  if (!peopleDragState.dragging || !peopleDragState.sourceCard || !peopleDragState.group) {
+    finishPeopleDrag();
+    return false;
+  }
+  const sourceId = peopleDragState.personId;
+  const targetCard = peopleDragState.targetCard || findPersonCardAtPoint(peopleDragState.group, peopleDragState.lastX, peopleDragState.lastY, sourceId);
+  const groupPeople = peopleDragState.group === "secondary" ? (peopleHeatmapState.secondaryVisible || []) : (peopleHeatmapState.activeVisible || []);
+  if (targetCard && targetCard.dataset.personId && targetCard.dataset.personId !== sourceId) {
+    const ids = reorderPeopleRelativeToTarget(peopleDragState.group, groupPeople, sourceId, targetCard.dataset.personId, peopleDragState.placeBefore);
+    const person = groupPeople.find(item => personId(item) === sourceId);
+    if (person) {
+      announcePeopleOrder(`${person.display_name || person.plex_username} moved to position ${ids.indexOf(sourceId) + 1} of ${ids.length} in ${personOrderLabel(peopleDragState.group)}.`);
+    }
+    finishPeopleDrag();
+    return true;
+  }
+  finishPeopleDrag();
+  return false;
+}
+
+function syncHeatmapActiveIndex(container, index) {
+  const cells = [...container.querySelectorAll("[data-heatmap-cell]")];
+  if (!cells.length) return null;
+  const bounded = Math.max(0, Math.min(cells.length - 1, index));
+  container.dataset.activeIndex = String(bounded);
+  cells.forEach((cell, cellIndex) => cell.classList.toggle("is-active", cellIndex === bounded));
+  const activeCell = cells[bounded];
+  if (activeCell) {
+    container.setAttribute("aria-activedescendant", activeCell.id);
+    peopleHeatmapState.activeByPerson.set(container.dataset.personId || "", bounded);
+  }
+  return activeCell || null;
+}
+
+function resolveHeatmapCellFromTarget(target) {
+  return target?.closest("[data-heatmap-cell]") || null;
+}
+
+function findPersonCardAtPoint(group, x, y, excludeId = "") {
+  const cards = [...content.querySelectorAll(`[data-person-card][data-person-group="${group}"]`)].filter(card => card.dataset.personId !== excludeId);
+  let bestCard = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const card of cards) {
+    const rect = card.getBoundingClientRect();
+    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+      return card;
+    }
+    const dx = rect.left + rect.width / 2 - x;
+    const dy = rect.top + rect.height / 2 - y;
+    const distance = Math.hypot(dx, dy);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestCard = card;
+    }
+  }
+  return bestCard;
 }
 
 // ----------------------------------------------------
@@ -1298,6 +1627,11 @@ form.addEventListener("reset",()=>setTimeout(()=>{
 },0));
 
 content.addEventListener("click",async e=>{
+  if (Date.now() < peopleDragState.ignoreClickUntil) {
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
   const periodButton=e.target.closest("[data-people-period]");
   if(periodButton){
     const period=periodButton.dataset.peoplePeriod;
@@ -1311,13 +1645,41 @@ content.addEventListener("click",async e=>{
     save();
     return render();
   }
+  const peopleOrderMode = e.target.closest("[data-people-order-mode]");
+  if (peopleOrderMode) {
+    const mode = peopleOrderMode.dataset.peopleOrderMode;
+    if (mode === "custom" || mode === "default") {
+      state.people = {
+        ...state.people,
+        orderMode: mode,
+        activeOrder: mode === "custom" ? (state.people.activeOrder || []) : state.people.activeOrder,
+        secondaryOrder: mode === "custom" ? (state.people.secondaryOrder || []) : state.people.secondaryOrder
+      };
+      save();
+      return render();
+    }
+  }
+  if (e.target.closest("[data-people-order-reset]")) {
+    resetPeopleOrder();
+    return render();
+  }
+  const moveButton = e.target.closest("[data-person-move]");
+  if (moveButton) {
+    const card = moveButton.closest("[data-person-card]");
+    if (!card) return;
+    const group = card.dataset.personGroup || "active";
+    const groupPeople = (group === "secondary" ? (peopleHeatmapState.secondaryVisible || []) : (peopleHeatmapState.activeVisible || [])).slice();
+    if (!groupPeople.find(person => personId(person) === String(moveButton.dataset.personId || ""))) return;
+    movePeopleCard(group, groupPeople, moveButton.dataset.personId || "", moveButton.dataset.personMove === "earlier" ? -1 : 1);
+    return render();
+  }
   const customApply=e.target.closest("[data-people-custom-apply]");
   if(customApply){
     const from=content.querySelector("[data-people-date-from]")?.value||"";
     const to=content.querySelector("[data-people-date-to]")?.value||"";
     const error=content.querySelector(".people-date-error");
     if(!from||!to||from>to){if(error)error.textContent="Choose a From date on or before the To date.";return;}
-    state.people={period:"custom",dateFrom:from,dateTo:to};
+    state.people={...state.people,period:"custom",dateFrom:from,dateTo:to};
     save();
     return render();
   }
@@ -1332,6 +1694,11 @@ content.addEventListener("click",async e=>{
   const routeButton=e.target.closest("[data-route]");
   if(routeButton){
     applyRoute(JSON.parse(decodeURIComponent(routeButton.dataset.route)));
+    return;
+  }
+  const heatmapCell = e.target.closest("[data-heatmap-cell]");
+  if (heatmapCell) {
+    showHeatmapPopover(heatmapCell, e);
     return;
   }
   const page=e.target.closest("[data-page]");
@@ -1428,6 +1795,46 @@ content.addEventListener("click",async e=>{
   if(e.target.closest("[data-retry]"))render();
 });
 
+content.addEventListener("pointerdown", e => {
+  const handle = e.target.closest("[data-person-drag-handle]");
+  if (handle) {
+    if (state.people.orderMode !== "custom") return;
+    beginPeopleDrag(handle, e);
+    e.preventDefault();
+    try { handle.setPointerCapture(e.pointerId); } catch {}
+    return;
+  }
+  const heatmapCell = resolveHeatmapCellFromTarget(e.target);
+  if (heatmapCell) {
+    showHeatmapPopover(heatmapCell, e);
+  }
+});
+
+content.addEventListener("pointermove", e => {
+  const heatmapCell = resolveHeatmapCellFromTarget(e.target);
+  if (heatmapCell) {
+    showHeatmapPopover(heatmapCell, e);
+  }
+});
+
+document.addEventListener("pointermove", e => {
+  updatePeopleDrag(e);
+});
+
+document.addEventListener("pointerup", e => {
+  if (peopleDragState.pointerId !== null && (e.pointerId == null || e.pointerId === peopleDragState.pointerId)) {
+    if (commitPeopleDrag()) {
+      render();
+    }
+  }
+});
+
+document.addEventListener("pointercancel", e => {
+  if (peopleDragState.pointerId !== null && (e.pointerId == null || e.pointerId === peopleDragState.pointerId)) {
+    finishPeopleDrag();
+  }
+});
+
 content.addEventListener("keydown",e=>{
   if((e.key==="Enter"||e.key===" ")&&e.target.matches("[data-library-item]")){
     e.preventDefault();
@@ -1439,6 +1846,44 @@ content.addEventListener("keydown",e=>{
   if((e.key==="Enter"||e.key===" ")&&e.target.matches("[data-item]")){
     e.preventDefault();
     openDetail(JSON.parse(decodeURIComponent(e.target.dataset.item)));
+    return;
+  }
+  const heatmapContainer = e.target.closest("[data-person-heatmap]");
+  if (heatmapContainer) {
+    const cells = [...heatmapContainer.querySelectorAll("[data-heatmap-cell]")];
+    if (!cells.length) return;
+    const activeIndex = Number(heatmapContainer.dataset.activeIndex || 0);
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+      e.preventDefault();
+      const next = Math.min(cells.length - 1, activeIndex + 1);
+      syncHeatmapActiveIndex(heatmapContainer, next);
+      showHeatmapPopover(cells[next], e);
+      return;
+    }
+    if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const next = Math.max(0, activeIndex - 1);
+      syncHeatmapActiveIndex(heatmapContainer, next);
+      showHeatmapPopover(cells[next], e);
+      return;
+    }
+    if (e.key === "Home") {
+      e.preventDefault();
+      syncHeatmapActiveIndex(heatmapContainer, 0);
+      showHeatmapPopover(cells[0], e);
+      return;
+    }
+    if (e.key === "End") {
+      e.preventDefault();
+      const last = cells.length - 1;
+      syncHeatmapActiveIndex(heatmapContainer, last);
+      showHeatmapPopover(cells[last], e);
+      return;
+    }
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      showHeatmapPopover(cells[activeIndex], e);
+    }
   }
 });
 
@@ -1448,6 +1893,35 @@ content.addEventListener("change",e=>{
     state.explorer.offset=0;
     state.explorer.selected="";
     render();
+  }
+});
+
+content.addEventListener("focusin", e => {
+  const heatmapContainer = e.target.closest("[data-person-heatmap]");
+  if (!heatmapContainer) return;
+  const cells = [...heatmapContainer.querySelectorAll("[data-heatmap-cell]")];
+  if (!cells.length) return;
+  const activeIndex = Number(heatmapContainer.dataset.activeIndex || 0);
+  syncHeatmapActiveIndex(heatmapContainer, activeIndex);
+  showHeatmapPopover(cells[activeIndex], e);
+});
+
+content.addEventListener("focusout", e => {
+  if (e.target.closest("[data-person-heatmap]")) {
+    if (e.relatedTarget?.closest?.("[data-testid='people-heatmap-popover']")) return;
+    setTimeout(() => {
+      const activeElement = document.activeElement;
+      const focusRemainsInHeatmapUi = activeElement?.closest?.("[data-person-heatmap], [data-testid='people-heatmap-popover']");
+      if (!content.contains(activeElement) || !focusRemainsInHeatmapUi) {
+        hideHeatmapPopover();
+      }
+    }, 0);
+  }
+});
+
+content.addEventListener("mouseleave", e => {
+  if (e.target === content || e.target.closest(".person-heatmap")) {
+    hideHeatmapPopover();
   }
 });
 

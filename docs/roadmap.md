@@ -148,8 +148,9 @@ The corrective sequence is mandatory and ordered:
 10. **3-2m-2 - Browser Co-Watch Adjudication:** Add bounded, reversible, audited Yes/No/Not sure decisions over exact-item pair inference.
 11. **3-2m-3 - Discord Co-Watch Review:** Add an operator-triggered review-only Discord path that cannot invoke Plex sync or notification loops.
 12. **3-2m-4 - People Co-Watch Attribution And Window Controls:** Count confirmed shared viewing in participant profiles with explicit provenance, deduplication, and selectable People periods.
-13. **3-2n - Hierarchy Progress Workspace:** Provide lazy, bounded progress for episodic media, audiobooks, and movies.
-14. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
+13. **3-2m-5 - People Ordering And Heatmap Interaction:** Add browser-local People card ordering, accessible daily evidence popovers, Timeline drill-through, and a clearer Together marker.
+14. **3-2n - Hierarchy Progress Workspace:** Provide lazy, bounded progress for episodic media, audiobooks, and movies.
+15. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
 
 Each block, including every 3-2m sub-block, must pass its own exit gate before the next begins. Block 3-3 is paused until 3-2o completes.
 
