@@ -10,7 +10,7 @@ Provide fast, honest progress exploration for episodic media and audiobooks whil
 
 ## Dependencies And Entry Gate
 
-- Blocks 3-2g through 3-2m complete.
+- Blocks 3-2g through 3-2m-5 complete, including the People ordering and heatmap interaction exit gate.
 - Reuse the hierarchy and lazy-loading contracts from 3-2k rather than creating a second hierarchy model.
 
 ## Scope

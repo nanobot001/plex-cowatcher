@@ -74,7 +74,7 @@ export interface DashboardPersonSummary {
   activeDays: number;
   recent: DashboardActivityItem[];
   mix: Array<{ category: DashboardCategory; label: string; count: number }>;
-  heatmap: Array<{ date: string; plays: number; minutes: number }>;
+  heatmap: Array<{ date: string; plays: number; minutes: number; observedMinutes: number; attributedMinutes: number; confirmedTogetherSessions: number }>;
   possibleDuplicates: string[];
   technicalAccount: { plexUsername: string };
 }

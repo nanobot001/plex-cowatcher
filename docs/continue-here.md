@@ -12,6 +12,7 @@ Current state:
 - Fixed layout wrapping bug where play lists in detail views truncated multi-person viewer lists.
 - Verification passed: `npm run verify:block` (73/73 service tests, 20/20 E2E Playwright tests, dashboard syntax, and tool contracts) plus `npm run verify:live-dashboard` at 1440px and 390px.
 - Block 3-2m-4 verification passed: `npm run verify:block` (75/75 service tests, 22/22 E2E Playwright tests, dashboard syntax, and tool contracts) plus `npm run verify:live-dashboard` after PM2 restart.
+- Block 3-2m-5 verification passed: `npm run verify:block` (75/75 service tests, 24/24 E2E Playwright tests, dashboard syntax, and tool contracts).
 
 Next step:
 - Implement **Block 3-2n: Hierarchy Progress Workspace** (`docs/blocks/block-3-2n-hierarchy-progress-workspace.md`).

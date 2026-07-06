@@ -58,8 +58,10 @@ This document freezes the dashboard read-model vocabulary and the current first-
 - Custom contract: `period=custom` requires valid `dateFrom` and `dateTo` with the start on or before the end
 - Aggregation: inclusive totals are complete for the effective period and are not capped by the summary sample limit; all-time/custom daily heatmaps are bounded to the latest 365 days and disclose their displayed bounds
 - Ordering: active users first within the active group and disabled/no-activity users in a secondary group; each group is sorted by presentation name
+- Presentation: browser-local People card ordering is split into separate Active and Other buckets, defaults to the server-provided order, preserves saved custom positions across reloads, and resets back to the server order without changing the API payload; ordering uses compact icon affordances and a pointer-anchored ghost preview while mounted cards mutate locally without a People refetch
 - Attribution: successful confirmations and current positive adjudications mark confirmed shared sessions; absent participant playback may contribute source duration/completion as explicitly attributed evidence, while matching direct playback always takes precedence
 - Response shape: backward-compatible inclusive person totals plus active/secondary groups, observed/attributed breakdowns, confirmed shared-session and unknown-duration counts, contribution-labeled recent items, per-day observed/attributed minutes, effective/heatmap windows, advisory duplicate warnings, and timing metadata
+- Heatmap presentation: each daily cell can expose observed minutes, attributed Together minutes, play count, confirmed Together sessions, and a drill-through route that restores the selected day in Timeline
 
 ### `GET /api/dashboard/cowatch-pairings`
 - Consumer: People relationship panel

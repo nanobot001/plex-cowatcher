@@ -66,8 +66,9 @@ Blocks 3-2b through 3-2e extend that usable core with alternate layouts, deeper 
 16. [Block 3-2m-2: Browser Co-Watch Adjudication](block-3-2m-2-browser-cowatch-adjudication.md)
 17. [Block 3-2m-3: Discord Co-Watch Review](block-3-2m-3-discord-cowatch-review.md)
 18. [Block 3-2m-4: People Co-Watch Attribution And Window Controls](block-3-2m-4-people-cowatch-attribution.md)
-19. [Block 3-2n: Hierarchy Progress Workspace](block-3-2n-hierarchy-progress-workspace.md)
-20. [Block 3-2o: Dashboard Accessibility And Regression Gate](block-3-2o-dashboard-accessibility-and-regression-gate.md)
+19. [Block 3-2m-5: People Ordering And Heatmap Interaction](block-3-2m-5-people-ordering-and-heatmap-interaction.md)
+20. [Block 3-2n: Hierarchy Progress Workspace](block-3-2n-hierarchy-progress-workspace.md)
+21. [Block 3-2o: Dashboard Accessibility And Regression Gate](block-3-2o-dashboard-accessibility-and-regression-gate.md)
 
 ## Corrective Sequence Authority
 

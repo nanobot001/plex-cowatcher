@@ -225,6 +225,104 @@ test("people attributes confirmed viewing and restores period and heatmap semant
   await expectNoVisualOverflow(page);
 });
 
+test("people card ordering persists locally and heatmaps drill through with roving focus", async ({ page }) => {
+  const pageErrors = [];
+  let peopleReadCount = 0;
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/dashboard/people") peopleReadCount += 1;
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "People" }).click();
+
+  const orderControls = page.getByTestId("people-order-controls");
+  await expect(orderControls.getByRole("button", { name: "Default" })).toHaveAttribute("aria-pressed", "true");
+
+  const activePeople = page.getByTestId("active-people");
+  const activeCards = activePeople.getByTestId("person-card");
+  await expect(activeCards.first()).toBeVisible();
+  const initialNames = await activeCards.locator("h4").allTextContents();
+  expect(initialNames.length).toBeGreaterThan(1);
+  const readsBeforeOrdering = peopleReadCount;
+  await orderControls.getByRole("button", { name: "Custom" }).click();
+  await expect.poll(() => peopleReadCount).toBe(readsBeforeOrdering);
+  await expect(activeCards.first().locator("[data-person-order-controls]")).not.toContainText("Move earlier");
+
+  const secondaryPeople = page.getByTestId("secondary-people");
+  await secondaryPeople.locator(":scope > summary").click();
+  const secondaryNames = await secondaryPeople.getByTestId("person-card").locator("h4").allTextContents();
+
+  const firstCard = activeCards.nth(0);
+  const secondCard = activeCards.nth(1);
+  const dragHandle = secondCard.locator("[data-person-drag-handle]");
+  await dragHandle.scrollIntoViewIfNeeded();
+  const handleBox = await dragHandle.boundingBox();
+  const sourceBox = await secondCard.boundingBox();
+  const targetBox = await firstCard.boundingBox();
+  if (!handleBox || !targetBox || !sourceBox) throw new Error("Missing drag geometry for People cards.");
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handleBox.x + handleBox.width / 2 + 24, handleBox.y + handleBox.height / 2 + 20, { steps: 4 });
+  const dragGhost = page.getByTestId("people-drag-ghost");
+  await expect(dragGhost).toBeVisible();
+  const ghostBox = await dragGhost.boundingBox();
+  if (!ghostBox) throw new Error("Missing drag ghost geometry for People cards.");
+  expect(ghostBox.x).toBeGreaterThanOrEqual(sourceBox.x - 24);
+  expect(ghostBox.y).toBeGreaterThanOrEqual(sourceBox.y - 24);
+  expect(ghostBox.x).toBeLessThan(sourceBox.x + 160);
+  expect(ghostBox.y).toBeLessThan(sourceBox.y + 160);
+  await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, { steps: 8 });
+  await page.mouse.up();
+
+  await expect(activeCards.locator("h4").first()).toHaveText(initialNames[1]);
+  await expect(page.getByTestId("people-order-live")).toContainText("moved to position");
+  await expect.poll(() => peopleReadCount).toBe(readsBeforeOrdering);
+  const afterSecondaryNames = await secondaryPeople.getByTestId("person-card").locator("h4").allTextContents();
+  expect(afterSecondaryNames).toEqual(secondaryNames);
+
+  await page.reload();
+  await page.getByRole("button", { name: "People" }).click();
+  await expect(page.getByTestId("active-people").getByTestId("person-card").locator("h4").first()).toHaveText(initialNames[1]);
+
+  const reloadedControls = page.getByTestId("people-order-controls");
+  await reloadedControls.getByRole("button", { name: "Default" }).click();
+  await expect(page.getByTestId("active-people").getByTestId("person-card").locator("h4").first()).toHaveText(initialNames[0]);
+  await reloadedControls.getByRole("button", { name: "Custom" }).click();
+  await expect(page.getByTestId("active-people").getByTestId("person-card").locator("h4").first()).toHaveText(initialNames[1]);
+
+  await page.getByTestId("people-period-controls").getByRole("button", { name: "7 days" }).click();
+  await expect(page.getByTestId("active-people").getByTestId("person-card").locator("h4").first()).toHaveText(initialNames[1]);
+
+  await reloadedControls.getByRole("button", { name: "Reset positions" }).click();
+  await expect(page.getByTestId("active-people").getByTestId("person-card").locator("h4").first()).toHaveText(initialNames[0]);
+
+  await reloadedControls.getByRole("button", { name: "Custom" }).click();
+  const keyboardMove = page.getByTestId("active-people").getByTestId("person-card").nth(1).getByRole("button", { name: "Move earlier" });
+  await keyboardMove.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("active-people").getByTestId("person-card").locator("h4").first()).toHaveText(initialNames[1]);
+  await expect(page.getByTestId("people-order-live")).toContainText("moved to position 1");
+  await page.getByTestId("people-order-controls").getByRole("button", { name: "Reset positions" }).click();
+
+  const heatmap = page.getByTestId("active-people").getByTestId("person-card").filter({ hasText: initialNames[0] }).locator("[data-person-heatmap]");
+  await expect(heatmap).toHaveAttribute("tabindex", "0");
+  await expect(heatmap.locator("[data-heatmap-cell][tabindex='0']")).toHaveCount(0);
+  await heatmap.focus();
+
+  const popover = page.getByTestId("people-heatmap-popover");
+  await expect(popover).toBeVisible();
+  await expect(popover).toContainText("Open day in Timeline");
+  await page.keyboard.press("ArrowRight");
+  await expect(popover).toBeVisible();
+  await popover.getByRole("button", { name: "Open day in Timeline" }).click();
+  await expect.poll(() => page.url()).toContain("#timeline?");
+  await expect.poll(() => page.url()).toContain("timelineDate=");
+  await expect.poll(() => page.url()).toContain("user=");
+  await expectNoVisualOverflow(page);
+  expect(pageErrors).toEqual([]);
+});
+
 test("people remains usable at 320px without horizontal overflow", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 720 });
   await page.goto("/");

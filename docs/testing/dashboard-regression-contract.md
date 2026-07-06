@@ -23,7 +23,11 @@ Protect durable dashboard behavior across numbered blocks without freezing visua
 - People profiles, pairings, and operations fail independently so one panel error cannot blank the workspace.
 - People totals deduplicate direct playback against confirmed attributed participation, expose observed/attributed provenance, and align profile, pairing, and review periods without mutating stored evidence.
 - People period presets/custom dates survive URL reload, all-time totals are not summary-sample capped, and a bounded heatmap discloses its displayed range.
+- People card ordering is browser-local presentation state, keeps Active and Other order buckets separate, survives reload when custom, and resets cleanly back to the server order without corrupting hidden or regrouped identities.
+- People ordering interactions reorder the mounted cards locally; mode switches, reset, pointer drops, and keyboard moves must not refetch People data or replace the workspace with a loading state.
+- The dragged People preview must stay anchored near the grabbed card while the source card remains mounted locally; it must not snap to a viewport corner or trigger a full-page refresh while ordering.
 - People heatmap intensity represents duration while a separate accessible Together marker represents confirmed shared evidence; meaning never depends on color alone.
+- Each People heatmap behaves like a single composite widget with roving focus, one tab stop, a shared popover, and an explicit drill-through action that preserves the selected person and day.
 - Browser adjudication is pair-scoped, reversible, idempotent by request ID, and keeps Yes/No/Not sure/Clear consistent between the review queue, pairings, and detail provenance.
 - Ask in Discord is operator-triggered, permits one open prompt per candidate, remains separate from normal Plex-sync prompts, and exposes pending/failure state without private Discord identifiers.
 - Multi-person badges remain readable without child overlap or element overflow.
