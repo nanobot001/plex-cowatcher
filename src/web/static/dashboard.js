@@ -5,8 +5,8 @@ const form = document.querySelector("#dashboard-filters");
 const dialog = document.querySelector("#detail-dialog");
 let explorerRenderVersion=0;
 let peopleRenderVersion=0;
-const peopleDragState = { pointerId: null, personId: "", group: "", sourceCard: null, placeholder: null, targetCard: null, placeBefore: true, startX: 0, startY: 0, lastX: 0, lastY: 0, dragging: false, ignoreClickUntil: 0 };
-const peopleHeatmapState = { activeByPerson: new Map(), hoveredCell: null, popover: null, announcer: null, pendingAnnouncement: "" };
+const peopleDragState = { pointerId: null, personId: "", group: "", sourceCard: null, dragGhost: null, placeholder: null, targetCard: null, placeBefore: true, startX: 0, startY: 0, lastX: 0, lastY: 0, offsetX: 0, offsetY: 0, dragging: false, ignoreClickUntil: 0 };
+const peopleHeatmapState = { activeByPerson: new Map(), activeDefault: [], secondaryDefault: [], activeVisible: [], secondaryVisible: [], hoveredCell: null, popover: null, announcer: null, pendingAnnouncement: "" };
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmtDate = value => value ? new Intl.DateTimeFormat(undefined,{dateStyle:"medium",timeStyle:"short"}).format(new Date(value)) : "Unknown time";
 const normalizeDurationSeconds = value => {
@@ -194,6 +194,49 @@ function sortPeopleGroup(people, group) {
   const byId = new Map((Array.isArray(people) ? people : []).map(person => [personId(person), person]));
   return reconcilePeopleOrder(state.people[key], people).map(id => byId.get(id)).filter(Boolean);
 }
+function peopleGroupDefaults(group) {
+  return group === "secondary" ? peopleHeatmapState.secondaryDefault : peopleHeatmapState.activeDefault;
+}
+function setPeopleVisibleGroup(group, people) {
+  if (group === "secondary") peopleHeatmapState.secondaryVisible = people;
+  else peopleHeatmapState.activeVisible = people;
+}
+function clearPeopleDragGhost() {
+  if (peopleDragState.dragGhost?.parentNode) {
+    peopleDragState.dragGhost.parentNode.removeChild(peopleDragState.dragGhost);
+  }
+  peopleDragState.dragGhost = null;
+}
+function restorePeopleDragSource() {
+  if (peopleDragState.sourceCard) {
+    peopleDragState.sourceCard.style.removeProperty("display");
+  }
+}
+function reorderPeopleGrid(group, people) {
+  const grid = content.querySelector(`[data-people-group="${group}"]`);
+  if (!grid) return;
+  const cards = new Map([...grid.querySelectorAll(":scope > [data-person-card]")].map(card => [card.dataset.personId, card]));
+  for (const person of people) {
+    const card = cards.get(personId(person));
+    if (card) grid.appendChild(card);
+  }
+  setPeopleVisibleGroup(group, people);
+}
+function applyPeopleOrderPresentation() {
+  const custom = state.people.orderMode === "custom";
+  const activePeople = custom ? sortPeopleGroup(peopleHeatmapState.activeDefault, "active") : [...peopleHeatmapState.activeDefault];
+  const secondaryPeople = custom ? sortPeopleGroup(peopleHeatmapState.secondaryDefault, "secondary") : [...peopleHeatmapState.secondaryDefault];
+  reorderPeopleGrid("active", activePeople);
+  reorderPeopleGrid("secondary", secondaryPeople);
+  content.querySelectorAll("[data-person-order-controls]").forEach(controls => { controls.hidden = !custom; });
+  content.querySelectorAll("[data-people-order-mode]").forEach(button => {
+    button.setAttribute("aria-pressed", String(button.dataset.peopleOrderMode === state.people.orderMode));
+  });
+  const ordering = content.querySelector("[data-testid='people-order-controls']");
+  if (ordering) ordering.classList.toggle("is-custom", custom);
+  const copy = content.querySelector("[data-people-order-copy]");
+  if (copy) copy.textContent = custom ? "Drag cards into place. Arrow controls are available for keyboard ordering." : "Using the default household order.";
+}
 function resetPeopleOrder() {
   state.people = {
     ...state.people,
@@ -202,6 +245,7 @@ function resetPeopleOrder() {
     secondaryOrder: []
   };
   save();
+  applyPeopleOrderPresentation();
   announcePeopleOrder("People card positions reset to the server order.");
 }
 function announcePeopleOrder(message) {
@@ -1229,18 +1273,24 @@ async function renderPeople() {
   const data = peopleResult.value;
   const active = data.active || [];
   const secondary = data.secondary || [];
+  peopleHeatmapState.activeDefault = active;
+  peopleHeatmapState.secondaryDefault = secondary;
   const activePeople = state.people.orderMode === "custom" ? sortPeopleGroup(active, "active") : active;
   const secondaryPeople = state.people.orderMode === "custom" ? sortPeopleGroup(secondary, "secondary") : secondary;
   peopleHeatmapState.activeVisible = activePeople;
   peopleHeatmapState.secondaryVisible = secondaryPeople;
-  const orderModeLabel = state.people.orderMode === "custom" ? "Custom order is saved locally for Active and Other groups." : "Default order shows the server-provided group order.";
-  const orderControls = `<div class="people-ordering" data-testid="people-order-controls">
-    <div class="people-order-actions" role="group" aria-label="People card ordering">
-      <button type="button" data-people-order-mode="default" aria-pressed="${state.people.orderMode !== "custom"}">Default</button>
-      <button type="button" data-people-order-mode="custom" aria-pressed="${state.people.orderMode === "custom"}">Custom</button>
-      <button type="button" class="text-button" data-people-order-reset>Reset positions</button>
+  const orderModeLabel = state.people.orderMode === "custom" ? "Drag cards into place. Arrow controls are available for keyboard ordering." : "Using the default household order.";
+  const orderControls = `<div class="people-ordering${state.people.orderMode === "custom" ? " is-custom" : ""}" data-testid="people-order-controls">
+    <div class="people-order-actions">
+      <div class="people-order-mode" role="group" aria-label="People card ordering">
+        <button type="button" data-people-order-mode="default" aria-pressed="${state.people.orderMode !== "custom"}">Default</button>
+        <button type="button" data-people-order-mode="custom" aria-pressed="${state.people.orderMode === "custom"}">Custom</button>
+      </div>
+      <button type="button" class="people-order-reset" data-people-order-reset aria-label="Reset positions" title="Clear saved card positions">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4v6h6M5.5 15a7 7 0 1 0 1.7-7.2L4 10"/></svg><span>Reset</span>
+      </button>
     </div>
-    <p class="people-order-copy">${esc(orderModeLabel)}</p>
+    <p class="people-order-copy" data-people-order-copy>${esc(orderModeLabel)}</p>
     <span class="sr-only" data-testid="people-order-live" aria-live="polite"></span>
   </div>`;
   const personCard = (person, group) => {
@@ -1262,13 +1312,19 @@ async function renderPeople() {
     const unknown=breakdown.attributedTogether.unknownDuration?` &middot; ${breakdown.attributedTogether.unknownDuration} unknown duration`:"";
     const libraryRoute={layout:"explorer",filters:{...state.filters,user:person.plex_username}};
     const timelineRoute={layout:"timeline",filters:{...state.filters,user:person.plex_username}};
-    const orderControlsHtml = state.people.orderMode === "custom"
-      ? `<div class="person-order-controls" aria-label="Order ${esc(name)}">
-          <button type="button" class="person-order-handle" data-person-drag-handle data-person-id="${esc(person.id)}" data-person-group="${esc(group)}" aria-label="Drag to reorder ${esc(name)}">⋮⋮</button>
-          <button type="button" class="text-button" data-person-move="earlier" data-person-id="${esc(person.id)}" data-person-group="${esc(group)}">Move earlier</button>
-          <button type="button" class="text-button" data-person-move="later" data-person-id="${esc(person.id)}" data-person-group="${esc(group)}">Move later</button>
-        </div>`
-      : "";
+    const orderControlsHtml = `<div class="person-order-controls" data-person-order-controls aria-label="Order ${esc(name)}"${state.people.orderMode === "custom" ? "" : " hidden"}>
+        <button type="button" class="person-order-handle" data-person-drag-handle data-person-id="${esc(person.id)}" data-person-group="${esc(group)}" aria-label="Drag to reorder ${esc(name)}" title="Drag ${esc(name)}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="7" r="1.5"/><circle cx="16" cy="7" r="1.5"/><circle cx="8" cy="12" r="1.5"/><circle cx="16" cy="12" r="1.5"/><circle cx="8" cy="17" r="1.5"/><circle cx="16" cy="17" r="1.5"/></svg>
+        </button>
+        <div class="person-order-stepper">
+          <button type="button" data-person-move="earlier" data-person-id="${esc(person.id)}" data-person-group="${esc(group)}" aria-label="Move earlier" title="Move ${esc(name)} earlier">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 14 5-5 5 5"/></svg>
+          </button>
+          <button type="button" data-person-move="later" data-person-id="${esc(person.id)}" data-person-group="${esc(group)}" aria-label="Move later" title="Move ${esc(name)} later">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+          </button>
+        </div>
+      </div>`;
     return `<article class="person-card" data-testid="person-card" data-person-card data-person-id="${esc(person.id)}" data-person-group="${esc(group)}" data-person-status="${esc(person.status)}">
       <header class="person-card-header"><div class="avatar" aria-hidden="true">${esc(name.slice(0,1))}</div><div><h4>${esc(name)}</h4><span class="person-status status-${esc(person.status)}">${esc(statusLabel)}</span></div>${orderControlsHtml}</header>
       ${warnings}
@@ -1391,23 +1447,6 @@ async function renderProgress() {
   `;
 }
 
-function reorderPeopleRelativeToTarget(group, visiblePeople, draggedIdValue, targetIdValue, placeBefore) {
-  const draggedId = String(draggedIdValue);
-  const targetId = String(targetIdValue);
-  const ids = visiblePeople.map(personId).filter(id => id !== draggedId);
-  const targetIndex = ids.indexOf(targetId);
-  if (targetIndex < 0) return ids;
-  const insertAt = placeBefore ? targetIndex : targetIndex + 1;
-  ids.splice(Math.max(0, Math.min(ids.length, insertAt)), 0, draggedId);
-  state.people = {
-    ...state.people,
-    orderMode: "custom",
-    [personOrderKey(group)]: ids
-  };
-  save();
-  return ids;
-}
-
 function movePeopleCard(group, visiblePeople, draggedIdValue, delta) {
   const draggedId = String(draggedIdValue);
   const ids = visiblePeople.map(personId);
@@ -1423,14 +1462,24 @@ function movePeopleCard(group, visiblePeople, draggedIdValue, delta) {
     [personOrderKey(group)]: ids
   };
   save();
+  const byId = new Map(visiblePeople.map(person => [personId(person), person]));
+  const orderedPeople = ids.map(id => byId.get(id)).filter(Boolean);
+  reorderPeopleGrid(group, orderedPeople);
   const person = visiblePeople[fromIndex];
   if (person) announcePeopleOrder(`${person.display_name || person.plex_username} moved to position ${toIndex + 1} of ${ids.length} in ${personOrderLabel(group)}.`);
   return ids;
 }
 
 function finishPeopleDrag() {
-  if (peopleDragState.sourceCard) peopleDragState.sourceCard.classList.remove("is-dragging");
   if (peopleDragState.placeholder && peopleDragState.placeholder.parentNode) peopleDragState.placeholder.parentNode.removeChild(peopleDragState.placeholder);
+  clearPeopleDragGhost();
+  restorePeopleDragSource();
+  if (peopleDragState.sourceCard) {
+    peopleDragState.sourceCard.classList.remove("is-dragging");
+    for (const property of ["position", "left", "top", "width", "height", "z-index", "pointer-events", "margin"]) {
+      peopleDragState.sourceCard.style.removeProperty(property);
+    }
+  }
   peopleDragState.pointerId = null;
   peopleDragState.personId = "";
   peopleDragState.group = "";
@@ -1442,6 +1491,8 @@ function finishPeopleDrag() {
   peopleDragState.startY = 0;
   peopleDragState.lastX = 0;
   peopleDragState.lastY = 0;
+  peopleDragState.offsetX = 0;
+  peopleDragState.offsetY = 0;
   peopleDragState.dragging = false;
   peopleDragState.ignoreClickUntil = Date.now() + 120;
 }
@@ -1460,6 +1511,9 @@ function beginPeopleDrag(handle, event) {
   peopleDragState.startY = event.clientY;
   peopleDragState.lastX = event.clientX;
   peopleDragState.lastY = event.clientY;
+  const rect = card.getBoundingClientRect();
+  peopleDragState.offsetX = event.clientX - rect.left;
+  peopleDragState.offsetY = event.clientY - rect.top;
   peopleDragState.dragging = false;
   peopleDragState.placeBefore = true;
 }
@@ -1473,18 +1527,47 @@ function updatePeopleDrag(event) {
   const moved = Math.abs(event.clientX - peopleDragState.startX) + Math.abs(event.clientY - peopleDragState.startY);
   if (!peopleDragState.dragging && moved > 10) {
     peopleDragState.dragging = true;
-    sourceCard.classList.add("is-dragging");
+    const rect = sourceCard.getBoundingClientRect();
     peopleDragState.placeholder = document.createElement("div");
     peopleDragState.placeholder.className = "person-card person-card-placeholder";
     peopleDragState.placeholder.setAttribute("aria-hidden", "true");
+    peopleDragState.placeholder.style.height = `${rect.height}px`;
+    sourceCard.parentElement?.insertBefore(peopleDragState.placeholder, sourceCard);
+    const ghost = sourceCard.cloneNode(true);
+    ghost.classList.add("is-dragging", "person-card-drag-ghost");
+    ghost.removeAttribute("data-testid");
+    ghost.removeAttribute("data-person-card");
+    ghost.removeAttribute("data-person-id");
+    ghost.removeAttribute("data-person-group");
+    ghost.removeAttribute("data-person-status");
+    ghost.setAttribute("aria-hidden", "true");
+    ghost.setAttribute("data-testid", "people-drag-ghost");
+    ghost.querySelectorAll("[id]").forEach(node => node.removeAttribute("id"));
+    ghost.querySelectorAll("[tabindex]").forEach(node => node.removeAttribute("tabindex"));
+    Object.assign(ghost.style, {
+      position: "fixed",
+      left: `${rect.left}px`,
+      top: `${rect.top}px`,
+      width: `${rect.width}px`,
+      height: `${rect.height}px`,
+      zIndex: "90",
+      pointerEvents: "none",
+      margin: "0"
+    });
+    document.body.appendChild(ghost);
+    peopleDragState.dragGhost = ghost;
+    sourceCard.style.display = "none";
   }
   if (!peopleDragState.dragging) return;
+  const dragCard = peopleDragState.dragGhost || sourceCard;
   peopleDragState.lastX = event.clientX;
   peopleDragState.lastY = event.clientY;
+  dragCard.style.left = `${event.clientX - peopleDragState.offsetX}px`;
+  dragCard.style.top = `${event.clientY - peopleDragState.offsetY}px`;
   const targetCard = findPersonCardAtPoint(peopleDragState.group, event.clientX, event.clientY, peopleDragState.personId);
   if (!targetCard || targetCard === sourceCard || targetCard.dataset.personGroup !== peopleDragState.group) return;
   const rect = targetCard.getBoundingClientRect();
-  const sourceRect = sourceCard.getBoundingClientRect();
+  const sourceRect = dragCard.getBoundingClientRect();
   const cardsShareRow = Math.abs((sourceRect.top + sourceRect.height / 2) - (rect.top + rect.height / 2)) < Math.min(sourceRect.height, rect.height) / 2;
   const placeBefore = cardsShareRow
     ? event.clientX <= rect.left + rect.width / 2
@@ -1504,20 +1587,28 @@ function commitPeopleDrag() {
     finishPeopleDrag();
     return false;
   }
+  const sourceCard = peopleDragState.sourceCard;
+  const placeholder = peopleDragState.placeholder;
+  const group = peopleDragState.group;
   const sourceId = peopleDragState.personId;
-  const targetCard = peopleDragState.targetCard || findPersonCardAtPoint(peopleDragState.group, peopleDragState.lastX, peopleDragState.lastY, sourceId);
-  const groupPeople = peopleDragState.group === "secondary" ? (peopleHeatmapState.secondaryVisible || []) : (peopleHeatmapState.activeVisible || []);
-  if (targetCard && targetCard.dataset.personId && targetCard.dataset.personId !== sourceId) {
-    const ids = reorderPeopleRelativeToTarget(peopleDragState.group, groupPeople, sourceId, targetCard.dataset.personId, peopleDragState.placeBefore);
-    const person = groupPeople.find(item => personId(item) === sourceId);
-    if (person) {
-      announcePeopleOrder(`${person.display_name || person.plex_username} moved to position ${ids.indexOf(sourceId) + 1} of ${ids.length} in ${personOrderLabel(peopleDragState.group)}.`);
-    }
+  if (!placeholder?.parentElement) {
     finishPeopleDrag();
-    return true;
+    return false;
   }
+  placeholder.replaceWith(sourceCard);
+  peopleDragState.placeholder = null;
+  const grid = sourceCard.closest(`[data-people-group="${group}"]`);
+  const ids = grid ? [...grid.querySelectorAll(":scope > [data-person-card]")].map(card => card.dataset.personId).filter(Boolean) : [];
+  const defaults = peopleGroupDefaults(group);
+  const byId = new Map(defaults.map(person => [personId(person), person]));
+  const orderedPeople = ids.map(id => byId.get(id)).filter(Boolean);
+  state.people = { ...state.people, orderMode: "custom", [personOrderKey(group)]: ids };
+  save();
+  setPeopleVisibleGroup(group, orderedPeople);
+  const person = byId.get(sourceId);
+  if (person) announcePeopleOrder(`${person.display_name || person.plex_username} moved to position ${ids.indexOf(sourceId) + 1} of ${ids.length} in ${personOrderLabel(group)}.`);
   finishPeopleDrag();
-  return false;
+  return true;
 }
 
 function syncHeatmapActiveIndex(container, index) {
@@ -1656,12 +1747,13 @@ content.addEventListener("click",async e=>{
         secondaryOrder: mode === "custom" ? (state.people.secondaryOrder || []) : state.people.secondaryOrder
       };
       save();
-      return render();
+      applyPeopleOrderPresentation();
+      return;
     }
   }
   if (e.target.closest("[data-people-order-reset]")) {
     resetPeopleOrder();
-    return render();
+    return;
   }
   const moveButton = e.target.closest("[data-person-move]");
   if (moveButton) {
@@ -1671,7 +1763,7 @@ content.addEventListener("click",async e=>{
     const groupPeople = (group === "secondary" ? (peopleHeatmapState.secondaryVisible || []) : (peopleHeatmapState.activeVisible || [])).slice();
     if (!groupPeople.find(person => personId(person) === String(moveButton.dataset.personId || ""))) return;
     movePeopleCard(group, groupPeople, moveButton.dataset.personId || "", moveButton.dataset.personMove === "earlier" ? -1 : 1);
-    return render();
+    return;
   }
   const customApply=e.target.closest("[data-people-custom-apply]");
   if(customApply){
@@ -1823,9 +1915,7 @@ document.addEventListener("pointermove", e => {
 
 document.addEventListener("pointerup", e => {
   if (peopleDragState.pointerId !== null && (e.pointerId == null || e.pointerId === peopleDragState.pointerId)) {
-    if (commitPeopleDrag()) {
-      render();
-    }
+    commitPeopleDrag();
   }
 });
 

@@ -227,20 +227,27 @@ test("people attributes confirmed viewing and restores period and heatmap semant
 
 test("people card ordering persists locally and heatmaps drill through with roving focus", async ({ page }) => {
   const pageErrors = [];
+  let peopleReadCount = 0;
   page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/dashboard/people") peopleReadCount += 1;
+  });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   await page.getByRole("button", { name: "People" }).click();
 
   const orderControls = page.getByTestId("people-order-controls");
   await expect(orderControls.getByRole("button", { name: "Default" })).toHaveAttribute("aria-pressed", "true");
-  await orderControls.getByRole("button", { name: "Custom" }).click();
 
   const activePeople = page.getByTestId("active-people");
   const activeCards = activePeople.getByTestId("person-card");
   await expect(activeCards.first()).toBeVisible();
   const initialNames = await activeCards.locator("h4").allTextContents();
   expect(initialNames.length).toBeGreaterThan(1);
+  const readsBeforeOrdering = peopleReadCount;
+  await orderControls.getByRole("button", { name: "Custom" }).click();
+  await expect.poll(() => peopleReadCount).toBe(readsBeforeOrdering);
+  await expect(activeCards.first().locator("[data-person-order-controls]")).not.toContainText("Move earlier");
 
   const secondaryPeople = page.getByTestId("secondary-people");
   await secondaryPeople.locator(":scope > summary").click();
@@ -251,15 +258,26 @@ test("people card ordering persists locally and heatmaps drill through with rovi
   const dragHandle = secondCard.locator("[data-person-drag-handle]");
   await dragHandle.scrollIntoViewIfNeeded();
   const handleBox = await dragHandle.boundingBox();
+  const sourceBox = await secondCard.boundingBox();
   const targetBox = await firstCard.boundingBox();
-  if (!handleBox || !targetBox) throw new Error("Missing drag geometry for People cards.");
+  if (!handleBox || !targetBox || !sourceBox) throw new Error("Missing drag geometry for People cards.");
   await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
   await page.mouse.down();
+  await page.mouse.move(handleBox.x + handleBox.width / 2 + 24, handleBox.y + handleBox.height / 2 + 20, { steps: 4 });
+  const dragGhost = page.getByTestId("people-drag-ghost");
+  await expect(dragGhost).toBeVisible();
+  const ghostBox = await dragGhost.boundingBox();
+  if (!ghostBox) throw new Error("Missing drag ghost geometry for People cards.");
+  expect(ghostBox.x).toBeGreaterThanOrEqual(sourceBox.x - 24);
+  expect(ghostBox.y).toBeGreaterThanOrEqual(sourceBox.y - 24);
+  expect(ghostBox.x).toBeLessThan(sourceBox.x + 160);
+  expect(ghostBox.y).toBeLessThan(sourceBox.y + 160);
   await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, { steps: 8 });
   await page.mouse.up();
 
   await expect(activeCards.locator("h4").first()).toHaveText(initialNames[1]);
   await expect(page.getByTestId("people-order-live")).toContainText("moved to position");
+  await expect.poll(() => peopleReadCount).toBe(readsBeforeOrdering);
   const afterSecondaryNames = await secondaryPeople.getByTestId("person-card").locator("h4").allTextContents();
   expect(afterSecondaryNames).toEqual(secondaryNames);
 
