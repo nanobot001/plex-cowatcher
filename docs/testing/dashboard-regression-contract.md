@@ -32,6 +32,10 @@ Protect durable dashboard behavior across numbered blocks without freezing visua
 - Ask in Discord is operator-triggered, permits one open prompt per candidate, remains separate from normal Plex-sync prompts, and exposes pending/failure state without private Discord identifiers.
 - Multi-person badges remain readable without child overlap or element overflow.
 - Library selection survives reload, Back, and Forward navigation.
+- Progress workspace shell separates Recently Active, Continue, and Recently Completed buckets.
+- Progress offset and filter parameters (category, user) are URL-restorable, browser-history preserved, and reset cleanly.
+- Unknown totals display explicit unknown stats without falsifying percentages or indicator fills.
+- Movies display progress/repeat evidence without invented TV or Audiobook season/chapter summaries.
 - Desktop and 390px layouts do not create page-level horizontal overflow or page errors in covered journeys.
 
 ## Extension Rules

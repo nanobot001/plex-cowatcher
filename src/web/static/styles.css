@@ -1011,6 +1011,137 @@ legend { font-size: 0.9rem; font-weight: 600; color: #06B6D4; padding: 0 12px; }
 .collection-card[data-cat="movie"] .ep-dot.active { background: var(--accent-movie); box-shadow: 0 0 10px var(--accent-movie); }
 .collection-card[data-cat="audiobook"] .ep-dot.active { background: var(--accent-audiobook); box-shadow: 0 0 10px var(--accent-audiobook); }
 
+/* Progress Workspace Shell */
+.progress-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 12px;
+  background: rgba(0,0,0,0.25);
+  transition: transform 0.2s, background-color 0.2s;
+  cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.02);
+}
+.progress-card:hover {
+  background: rgba(255,255,255,0.03);
+  transform: translateY(-2px);
+}
+.progress-card-header {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.progress-card-header .poster {
+  width: 64px;
+  height: 96px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.progress-card-info {
+  min-width: 0;
+  flex: 1;
+}
+.progress-card-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.progress-card-title-row h4 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.progress-card-category-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.08);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.progress-card-category-badge[data-cat="movie"] { color: var(--accent-movie); background: rgba(239,68,68,0.1); }
+.progress-card-category-badge[data-cat="tv"] { color: var(--accent-tv); background: rgba(59,130,246,0.1); }
+.progress-card-category-badge[data-cat="classic_tv"] { color: var(--accent-classic); background: rgba(139,92,246,0.1); }
+.progress-card-category-badge[data-cat="anime"] { color: var(--accent-anime); background: rgba(236,72,153,0.1); }
+.progress-card-category-badge[data-cat="audiobook"] { color: var(--accent-audiobook); background: rgba(245,158,11,0.1); }
+
+.progress-card-summary {
+  margin: 0 0 4px 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.progress-card-details, .progress-card-observed {
+  margin: 0 0 2px 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.progress-card-people-row {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.progress-card-bar-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+.progress-card-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.05);
+  overflow: hidden;
+  position: relative;
+}
+.progress-card-bar i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+.progress-card[data-cat="movie"] .progress-card-bar i { background: var(--accent-movie); }
+.progress-card[data-cat="tv"] .progress-card-bar i { background: var(--accent-tv); }
+.progress-card[data-cat="classic_tv"] .progress-card-bar i { background: var(--accent-classic); }
+.progress-card[data-cat="anime"] .progress-card-bar i { background: var(--accent-anime); }
+.progress-card[data-cat="audiobook"] .progress-card-bar i { background: var(--accent-audiobook); }
+
+.progress-card-bar.bar-unknown {
+  background: rgba(255,255,255,0.05);
+}
+.progress-card-bar.bar-unknown i {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255,255,255,0.06),
+    rgba(255,255,255,0.06) 6px,
+    rgba(255,255,255,0.12) 6px,
+    rgba(255,255,255,0.12) 12px
+  );
+}
+.progress-card-bar-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-weight: 500;
+  text-align: right;
+}
+.progress-section {
+  margin-bottom: 24px;
+}
+
 /* Library Grid */
 .poster-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 24px; }
 .poster-card { display: flex; flex-direction: column; gap: 10px; cursor: pointer; transition: transform 0.2s; }

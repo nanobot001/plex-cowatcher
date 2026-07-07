@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Db } from "../db/database.js";
-import type { DashboardActivityItem, DashboardCategory, DashboardTimelineSession } from "../types/api.js";
+import type { DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket } from "../types/api.js";
 import { CowatchingIntelligenceService } from "./cowatchingIntelligenceService.js";
 import { CowatchAdjudicationService } from "./cowatchAdjudicationService.js";
 
@@ -1500,71 +1500,310 @@ export class DashboardService {
     return { ...timed.value, timingMs: timed.timingMs };
   }
 
-  getProgress(input: unknown) {
+  getProgress(input: unknown): DashboardProgressResponse {
     const timed = withTiming(() => {
-      const all = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0 }).items;
-      const groups = new Map<string, any>();
+      const p = parseFilters(input);
+
+      // Get all matching activity items in the effective window, ignoring page limit/offset during retrieval
+      const all = this.getActivity({ ...(input as object), limit: 10000, offset: 0 }).items;
+
+      // Group items by stable media identity (using explorerGroupKey)
+      const groups = new Map<string, {
+        groupKey: string;
+        title: string;
+        category: DashboardCategory;
+        artworkUrl: string;
+        latestWatchedAt: string;
+        plays: number;
+        completedPlays: number;
+        partials: number;
+        observedMinutes: number;
+        distinctItems: Set<string>;
+        distinctCompleted: Set<string>;
+        seasons: Record<number, number[]> | null;
+        hierarchy: {
+          parentSeries: string | null;
+          subseries: string | null;
+          series: string | null;
+          book: string | null;
+        } | null;
+        peopleMap: Map<number, {
+          userId: number;
+          plexUsername: string;
+          displayName: string;
+          plays: number;
+          completedPlays: number;
+          partials: number;
+          distinctItems: Set<string>;
+          distinctCompleted: Set<string>;
+          latestWatchedAt: string;
+        }>;
+        rawItems: DashboardActivityItem[];
+        percentages: number[];
+      }>();
 
       for (const item of all) {
-        const title = item.showTitle ?? item.title;
-        const key = `${item.userId}:${item.category}:${title}`;
-        const group = groups.get(key) ?? { userId: item.userId, displayName: item.displayName, title, category: item.category, distinctItems: new Set<string>(), plays: 0, completed: 0, percentages: [] as number[], latestWatchedAt: item.watchedAt, items: [] };
-        group.plays++;
-        group.distinctItems.add(item.ratingKey);
-        if (item.completed) group.completed++;
-        if (item.percentComplete != null) group.percentages.push(item.percentComplete);
-        if (item.watchedAt > group.latestWatchedAt) group.latestWatchedAt = item.watchedAt;
-        group.items.push(item);
-        groups.set(key, group);
-      }
+        if (!isRecognizedExplorerItem(item)) continue;
+        const key = explorerGroupKey(item);
+        const title = item.category === "audiobook"
+          ? (item.audiobookTitle ?? item.showTitle ?? item.title)
+          : (item.category === "tv" || item.category === "classic_tv" || item.category === "anime")
+            ? (item.showTitle ?? item.title)
+            : item.title;
 
-      const progress = [...groups.values()].map((group) => {
-        const first = group.items[0];
-        let totalKnown = false;
-        let totalItems = null;
-        let hierarchy = null;
-        let seasons = null;
+        const artworkUrl = item.category === "audiobook"
+          ? `/api/artwork/audiobook%3A${item.audiobookId ?? item.parentRatingKey ?? item.grandparentRatingKey ?? item.ratingKey}`
+          : (item.category === "tv" || item.category === "classic_tv" || item.category === "anime")
+            ? `/api/artwork/${encodeURIComponent(item.grandparentRatingKey ?? item.ratingKey)}`
+            : `/api/artwork/${encodeURIComponent(item.ratingKey)}`;
 
-        if (first.category === "audiobook") {
-          const book = this.db.prepare(`SELECT ab.parent_series_title,ab.subseries_title,ab.series_title,ab.title,ab.chapter_count FROM content_catalog cat JOIN audiobook_books ab ON ab.id=cat.audiobook_id WHERE cat.rating_key=?`).get(first.ratingKey) as any;
-          if (book) {
-            totalKnown = Boolean(book.chapter_count);
-            totalItems = book.chapter_count;
-            hierarchy = { parentSeries: book.parent_series_title, subseries: book.subseries_title, series: book.series_title, book: book.title };
-          }
-        } else if (first.category === "tv" || first.category === "classic_tv" || first.category === "anime") {
-          const show = this.db.prepare(`SELECT leaf_count FROM content_catalog WHERE rating_key=?`).get(first.grandparentRatingKey ?? first.ratingKey) as any;
-          if (show) {
-            totalKnown = Boolean(show.leaf_count);
-            totalItems = show.leaf_count;
-          }
-          seasons = {} as Record<number, number[]>;
-          for (const it of group.items) {
-            if (it.seasonNumber != null && it.episodeNumber != null) {
-              if (!seasons[it.seasonNumber]) seasons[it.seasonNumber] = [];
-              if (!seasons[it.seasonNumber].includes(it.episodeNumber)) {
-                seasons[it.seasonNumber].push(it.episodeNumber);
-              }
-            }
-          }
-          for (const s in seasons) seasons[s].sort((a: number, b: number) => a - b);
+        let group = groups.get(key);
+        if (!group) {
+          group = {
+            groupKey: key,
+            title,
+            category: item.category,
+            artworkUrl,
+            latestWatchedAt: item.watchedAt,
+            plays: 0,
+            completedPlays: 0,
+            partials: 0,
+            observedMinutes: 0,
+            distinctItems: new Set<string>(),
+            distinctCompleted: new Set<string>(),
+            seasons: (item.category === "tv" || item.category === "classic_tv" || item.category === "anime") ? {} : null,
+            hierarchy: null,
+            peopleMap: new Map(),
+            rawItems: [],
+            percentages: []
+          };
+          groups.set(key, group);
         }
 
-        return { ...group, items: undefined, distinctItems: group.distinctItems.size, averagePercent: group.percentages.length ? Math.round(group.percentages.reduce((sum: number, value: number) => sum + value, 0) / group.percentages.length) : null, totalKnown, totalItems, hierarchy, seasons };
-      }).sort((a, b) => b.plays - a.plays || a.title.localeCompare(b.title));
+        group.plays++;
+        if (item.completed) {
+          group.completedPlays++;
+          group.distinctCompleted.add(item.ratingKey);
+        } else {
+          group.partials++;
+        }
+        group.distinctItems.add(item.ratingKey);
+        group.observedMinutes += minutesFromDuration(item.duration);
+        if (item.percentComplete != null) {
+          group.percentages.push(item.percentComplete);
+        }
+        if (item.watchedAt > group.latestWatchedAt) {
+          group.latestWatchedAt = item.watchedAt;
+        }
 
-      const recentlyCompleted = all.filter(item => item.completed).map(item => ({ ...item, displayTitle: explorerTitle(item) }));
+        // Aggregate per-season episodes for TV shows
+        if (group.seasons && item.seasonNumber != null && item.episodeNumber != null) {
+          if (!group.seasons[item.seasonNumber]) {
+            group.seasons[item.seasonNumber] = [];
+          }
+          if (!group.seasons[item.seasonNumber].includes(item.episodeNumber)) {
+            group.seasons[item.seasonNumber].push(item.episodeNumber);
+          }
+        }
+
+        // Aggregate person context
+        let pCtx = group.peopleMap.get(item.userId);
+        if (!pCtx) {
+          pCtx = {
+            userId: item.userId,
+            plexUsername: item.username,
+            displayName: item.displayName,
+            plays: 0,
+            completedPlays: 0,
+            partials: 0,
+            distinctItems: new Set<string>(),
+            distinctCompleted: new Set<string>(),
+            latestWatchedAt: item.watchedAt
+          };
+          group.peopleMap.set(item.userId, pCtx);
+        }
+        pCtx.plays++;
+        if (item.completed) {
+          pCtx.completedPlays++;
+          pCtx.distinctCompleted.add(item.ratingKey);
+        } else {
+          pCtx.partials++;
+        }
+        pCtx.distinctItems.add(item.ratingKey);
+        if (item.watchedAt > pCtx.latestWatchedAt) {
+          pCtx.latestWatchedAt = item.watchedAt;
+        }
+
+        group.rawItems.push(item);
+      }
+
+      // Convert temporary maps to the final DashboardProgressGroup structures
+      const progressGroups: DashboardProgressGroup[] = [];
+      const compatProgress: any[] = [];
+
+      for (const [key, g] of groups.entries()) {
+        const first = g.rawItems[0];
+        let totalKnown = false;
+        let totalItems: number | null = null;
+        let hierarchy: any = null;
+
+        if (first.category === "audiobook") {
+          const book = this.db.prepare(`
+            SELECT ab.parent_series_title, ab.subseries_title, ab.series_title, ab.title, ab.chapter_count
+            FROM content_catalog cat
+            JOIN audiobook_books ab ON ab.id = cat.audiobook_id
+            WHERE cat.rating_key = ?
+          `).get(first.ratingKey) as any;
+          if (book) {
+            totalKnown = Boolean(book.chapter_count && book.chapter_count > 0);
+            totalItems = book.chapter_count || null;
+            hierarchy = {
+              parentSeries: book.parent_series_title || null,
+              subseries: book.subseries_title || null,
+              series: book.series_title || null,
+              book: book.title || null
+            };
+          }
+        } else if (first.category === "tv" || first.category === "classic_tv" || first.category === "anime") {
+          const showKey = first.grandparentRatingKey ?? first.ratingKey;
+          const show = this.db.prepare(`
+            SELECT leaf_count
+            FROM content_catalog
+            WHERE rating_key = ?
+          `).get(showKey) as any;
+          if (show) {
+            totalKnown = Boolean(show.leaf_count && show.leaf_count > 0);
+            totalItems = show.leaf_count || null;
+          }
+        } else if (first.category === "movie") {
+          totalKnown = true;
+          totalItems = 1;
+        }
+
+        // Sort season episode arrays
+        if (g.seasons) {
+          for (const s in g.seasons) {
+            g.seasons[s].sort((a, b) => a - b);
+          }
+        }
+
+        // Build people array
+        const people: DashboardProgressPersonContext[] = [...g.peopleMap.values()].map((pCtx) => ({
+          userId: pCtx.userId,
+          plexUsername: pCtx.plexUsername,
+          displayName: pCtx.displayName,
+          plays: pCtx.plays,
+          completedPlays: pCtx.completedPlays,
+          partials: pCtx.partials,
+          distinctItems: pCtx.distinctItems.size,
+          distinctCompleted: pCtx.distinctCompleted.size,
+          latestWatchedAt: pCtx.latestWatchedAt
+        })).sort((a, b) => b.plays - a.plays || a.displayName.localeCompare(b.displayName));
+
+        const pg: DashboardProgressGroup = {
+          groupKey: g.groupKey,
+          title: g.title,
+          category: g.category,
+          artworkUrl: g.artworkUrl,
+          latestWatchedAt: g.latestWatchedAt,
+          totalKnown,
+          totalItems,
+          distinctItems: g.distinctItems.size,
+          distinctCompleted: g.distinctCompleted.size,
+          plays: g.plays,
+          completedPlays: g.completedPlays,
+          partials: g.partials,
+          observedMinutes: g.observedMinutes,
+          people,
+          seasons: g.seasons,
+          hierarchy
+        };
+        progressGroups.push(pg);
+
+        // Populate old compatibility progress array
+        const firstRaw = g.rawItems[0];
+        const averagePercent = g.percentages.length ? Math.round(g.percentages.reduce((sum: number, val: number) => sum + val, 0) / g.percentages.length) : null;
+        compatProgress.push({
+          userId: firstRaw.userId,
+          displayName: firstRaw.displayName,
+          title: g.title,
+          category: g.category,
+          distinctItems: g.distinctItems.size,
+          plays: g.plays,
+          completed: g.completedPlays,
+          averagePercent,
+          totalKnown,
+          totalItems,
+          hierarchy,
+          seasons: g.seasons,
+          latestWatchedAt: g.latestWatchedAt
+        });
+      }
+
+      // Sort compat progress
+      compatProgress.sort((a, b) => b.plays - a.plays || a.title.localeCompare(b.title));
+
+      // Separate into buckets
+      const recentlyActiveGroups = [...progressGroups].sort((a, b) => b.latestWatchedAt.localeCompare(a.latestWatchedAt));
+
+      const continueGroups = progressGroups.filter((g) => {
+        if (g.category === "movie") {
+          return g.distinctCompleted === 0 && g.plays > 0;
+        }
+        if (g.totalKnown) {
+          return g.distinctCompleted < (g.totalItems || 0);
+        }
+        return g.partials > 0;
+      }).sort((a, b) => b.latestWatchedAt.localeCompare(a.latestWatchedAt));
+
+      const recentlyCompletedGroups = progressGroups.filter((g) => {
+        return g.completedPlays > 0;
+      }).sort((a, b) => b.latestWatchedAt.localeCompare(a.latestWatchedAt));
+
+      // Parse pagination
+      const rawQuery = (input || {}) as any;
+      const getPagination = (prefix: string) => {
+        const limitVal = rawQuery[`${prefix}Limit`] ?? rawQuery.limit;
+        const offsetVal = rawQuery[`${prefix}Offset`] ?? rawQuery.offset;
+        const limit = limitVal !== undefined ? Math.min(Number(limitVal), 1000) : 50;
+        const offset = offsetVal !== undefined ? Number(offsetVal) : 0;
+        return { limit, offset };
+      };
+
+      const activePage = getPagination("recentlyActive");
+      const continuePage = getPagination("continue");
+      const completedPage = getPagination("recentlyCompleted");
+
+      const makeBucket = (allGroups: DashboardProgressGroup[], limit: number, offset: number): DashboardProgressBucket => {
+        return {
+          items: allGroups.slice(offset, offset + limit),
+          total: allGroups.length,
+          limit,
+          offset
+        };
+      };
+
+      // Populate old compatibility recently completed array
+      const recentlyCompletedOld = all.filter(item => item.completed).map(item => ({ ...item, displayTitle: explorerTitle(item) }));
       const uniqueCompleted: any[] = [];
       const seenTitles = new Set<string>();
-      for (const item of recentlyCompleted) {
+      for (const item of recentlyCompletedOld) {
         if (!seenTitles.has(item.displayTitle)) {
           seenTitles.add(item.displayTitle);
           uniqueCompleted.push(item);
         }
       }
+      const compatRecentlyCompleted = uniqueCompleted.slice(0, 5);
 
-      return { progress, recentlyCompleted: uniqueCompleted.slice(0, 5) };
+      return {
+        recentlyActive: makeBucket(recentlyActiveGroups, activePage.limit, activePage.offset),
+        continue: makeBucket(continueGroups, continuePage.limit, continuePage.offset),
+        recentlyCompleted: makeBucket(recentlyCompletedGroups, completedPage.limit, completedPage.offset),
+        progress: compatProgress,
+        recentlyCompletedCompat: compatRecentlyCompleted
+      };
     });
+
     return { ...timed.value, timingMs: timed.timingMs };
   }
 

@@ -2376,6 +2376,12 @@ test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed promp
       assert.equal(continueConsuming.data.total,0);
       const continueWatching = await (await fetch(base+"/api/dashboard/continue-watching?limit=1")).json();
       assert.equal(Array.isArray(continueWatching.data),true);
+      const progressHttp = await (await fetch(base+"/api/dashboard/progress?limit=1")).json();
+      assert.equal(progressHttp.ok,true);
+      assert.ok(progressHttp.data.recentlyActive);
+      assert.ok(progressHttp.data.continue);
+      assert.ok(progressHttp.data.recentlyCompleted);
+      assert.ok(Array.isArray(progressHttp.data.progress));
       const detail = await (await fetch(base+"/api/dashboard/detail/movie-http")).json();
       assert.equal(detail.ok,true);
       assert.equal(detail.data.item.title,"HTTP Movie");
@@ -2578,6 +2584,101 @@ test("dashboard service meets latency budget under load", async () => {
     assert.ok(duration < 300, `getOverview was too slow: ${duration} ms (limit: 300 ms)`);
   });
 });
+
+test("dashboard service progress contract verifies repeat plays, unknown totals, aliases, hidden users, and audiobook cover", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    // Prepare users
+    db.prepare("UPDATE users SET dashboard_alias = 'Tony Alias' WHERE plex_username = 'Tony'").run();
+    db.prepare("UPDATE users SET dashboard_shown = 0 WHERE plex_username = 'Viewer'").run(); // Hide Viewer
+
+    const users = db.prepare("SELECT id, plex_username, dashboard_alias FROM users").all();
+    const byUsername = Object.fromEntries(users.map(u => [u.plex_username, u]));
+
+    const insert = db.prepare(`
+      INSERT INTO playback_observations
+      (user_id, rating_key, grandparent_rating_key, parent_rating_key, media_type, library_name, title, show_title, watched_at, percent_complete, duration, completed, created_at, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `);
+
+    // Insert audiobook cover metadata
+    db.prepare(`
+      INSERT INTO audiobook_books (id, folder_key, title, cover_url, chapter_count, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES (10, 'hobbit-folder', 'The Hobbit', 'http://example.com/hobbit.jpg', 15, 'folder_path', 'pending', '2026-07-06T12:00:00Z', '2026-07-06T12:00:00Z')
+    `).run();
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, library_title, audiobook_id, source_provenance, refreshed_at)
+      VALUES ('track-1', 'track', 'Chapter 1', 'Audiobooks', 10, 'plex', '2026-07-06T12:00:00Z')
+    `).run();
+
+    const now = new Date();
+    const addObs = (username, key, gpKey, pKey, type, lib, title, showTitle, minutesAgo, completed, progress, duration = 1800000) => {
+      const watchedAt = new Date(now.getTime() - minutesAgo * 60 * 1000).toISOString();
+      const u = byUsername[username];
+      if (!u) throw new Error(`User not found: ${username}`);
+      insert.run(u.id, key, gpKey, pKey, type, lib, title, showTitle, watchedAt, progress, duration, completed ? 1 : 0, watchedAt, watchedAt);
+    };
+
+    // 1. Repeat completed plays: Tony plays Episode 1 twice (completed both times)
+    addObs("Tony", "ep-1", "show-1", "season-1", "episode", "TV Shows", "Episode 1", "Great Show", 10, true, 100);
+    addObs("Tony", "ep-1", "show-1", "season-1", "episode", "TV Shows", "Episode 1", "Great Show", 5, true, 100);
+
+    // 2. Partial play: Tony plays Episode 2 (incomplete)
+    addObs("Tony", "ep-2", "show-1", "season-1", "episode", "TV Shows", "Episode 2", "Great Show", 2, false, 45);
+
+    // 3. Hidden user plays: Viewer plays show-1 Episode 3 (should be ignored in progress since Viewer is hidden)
+    addObs("Viewer", "ep-3", "show-1", "season-1", "episode", "TV Shows", "Episode 3", "Great Show", 1, true, 100);
+
+    // 4. Audiobook play
+    addObs("Tony", "track-1", "gp-audio", "parent-audio", "track", "Audiobooks", "Chapter 1", "The Hobbit", 12, false, 25);
+
+    // Insert TV Show metadata
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, library_title, leaf_count, source_provenance, refreshed_at)
+      VALUES ('show-1', 'show', 'Great Show', 'TV Shows', 24, 'plex', '2026-07-06T12:00:00Z')
+    `).run();
+
+    const service = new DashboardService(db);
+    const result = service.getProgress({});
+
+    // Verify response structure
+    assert.ok(result.recentlyActive);
+    assert.ok(result.continue);
+    assert.ok(result.recentlyCompleted);
+    assert.ok(Array.isArray(result.recentlyActive.items));
+    assert.ok(Array.isArray(result.continue.items));
+    assert.ok(Array.isArray(result.recentlyCompleted.items));
+
+    // Verify TV Show aggregation
+    const tvGroup = result.recentlyActive.items.find(x => x.title === "Great Show");
+    assert.ok(tvGroup);
+    assert.equal(tvGroup.category, "tv");
+    assert.equal(tvGroup.totalKnown, true);
+    assert.equal(tvGroup.totalItems, 24);
+    assert.equal(tvGroup.plays, 3); // 2 completed + 1 partial by Tony (Viewer ignored)
+    assert.equal(tvGroup.completedPlays, 2);
+    assert.equal(tvGroup.partials, 1);
+    assert.equal(tvGroup.distinctItems, 2); // ep-1 and ep-2 (Viewer's ep-3 ignored)
+    assert.equal(tvGroup.distinctCompleted, 1); // Only ep-1 completed (repeated completed plays did not inflate this!)
+
+    // Verify hidden user exclusion and alias application in person context
+    assert.equal(tvGroup.people.length, 1); // Only Tony is visible, Viewer excluded
+    assert.equal(tvGroup.people[0].displayName, "Tony Alias");
+    assert.equal(tvGroup.people[0].plays, 3);
+    assert.equal(tvGroup.people[0].distinctItems, 2);
+    assert.equal(tvGroup.people[0].distinctCompleted, 1);
+
+    // Verify Audiobook aggregation and canonical book-cover artwork
+    const abGroup = result.recentlyActive.items.find(x => x.title === "The Hobbit");
+    assert.ok(abGroup);
+    assert.equal(abGroup.category, "audiobook");
+    assert.equal(abGroup.totalKnown, true);
+    assert.equal(abGroup.totalItems, 15);
+    // Artwork key must use canonical book identity
+    assert.equal(abGroup.artworkUrl, "/api/artwork/audiobook%3A10");
+  });
+});
+
 
 let passed = 0;
 for (const { name, fn } of tests) {

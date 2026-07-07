@@ -149,8 +149,12 @@ The corrective sequence is mandatory and ordered:
 11. **3-2m-3 - Discord Co-Watch Review:** Add an operator-triggered review-only Discord path that cannot invoke Plex sync or notification loops.
 12. **3-2m-4 - People Co-Watch Attribution And Window Controls:** Count confirmed shared viewing in participant profiles with explicit provenance, deduplication, and selectable People periods.
 13. **3-2m-5 - People Ordering And Heatmap Interaction:** Add browser-local People card ordering, accessible daily evidence popovers, Timeline drill-through, and a clearer Together marker.
-14. **3-2n - Hierarchy Progress Workspace:** Provide lazy, bounded progress for episodic media, audiobooks, and movies.
-15. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
+14. **3-2n - Hierarchy Progress Workspace Umbrella:** Reviewed and split into smaller implementation blocks; do not implement directly.
+15. **3-2n-1 - Progress Read Model Contract:** Stabilize typed, bounded progress summary groups, filters, repeat/unknown semantics, aliases, hidden-user exclusion, artwork identity, and fixtures.
+16. **3-2n-2 - Progress Workspace Shell:** Replace the all-card Progress render with bounded Recently Active, Continue, and Recently Completed sections plus URL-restorable person/category controls.
+17. **3-2n-3 - Progress Lazy Hierarchy Endpoints:** Add indexed, read-only hierarchy expansion endpoints for one TV/Classic TV/Anime/Audiobook identity at a time.
+18. **3-2n-4 - Progress Hierarchy UI And Regression:** Wire lazy expansion into the browser, reuse the shared detail workspace, and lock Progress interaction, DOM, payload, and viewport coverage.
+19. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
 
 Each block, including every 3-2m sub-block, must pass its own exit gate before the next begins. Block 3-3 is paused until 3-2o completes.
 

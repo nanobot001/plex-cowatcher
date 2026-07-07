@@ -1,5 +1,5 @@
 const layouts = new Set(["overview","timeline","explorer","people","progress"]);
-const state = { layout: "overview", filters: {}, offset: 0, totals: null, users: null, libraries: null, explorer: { section: "", sort: "recent", offset: 0, selected: "" }, timeline: { date: "", offset: 0 }, people: { period: "30d", dateFrom: "", dateTo: "", orderMode: "default", activeOrder: [], secondaryOrder: [] } };
+const state = { layout: "overview", filters: {}, offset: 0, totals: null, users: null, libraries: null, explorer: { section: "", sort: "recent", offset: 0, selected: "" }, timeline: { date: "", offset: 0 }, people: { period: "30d", dateFrom: "", dateTo: "", orderMode: "default", activeOrder: [], secondaryOrder: [] }, progress: { recentlyActiveOffset: 0, continueOffset: 0, recentlyCompletedOffset: 0 } };
 const content = document.querySelector("#dashboard-content");
 const form = document.querySelector("#dashboard-filters");
 const dialog = document.querySelector("#detail-dialog");
@@ -168,6 +168,11 @@ const routeQuery=()=>{
   if(state.layout==="timeline"){
     if(state.timeline.date)p.set("timelineDate",state.timeline.date);
     if(state.timeline.offset)p.set("timelineOffset",String(state.timeline.offset));
+  }
+  if(state.layout==="progress"){
+    if(state.progress.recentlyActiveOffset)p.set("recentlyActiveOffset",String(state.progress.recentlyActiveOffset));
+    if(state.progress.continueOffset)p.set("continueOffset",String(state.progress.continueOffset));
+    if(state.progress.recentlyCompletedOffset)p.set("recentlyCompletedOffset",String(state.progress.recentlyCompletedOffset));
   }
   if(state.explorer.selected)p.set("selected",state.explorer.selected);
   return p;
@@ -360,6 +365,11 @@ function restoreLocationState(){
   state.explorer.selected=params.get("selected")||"";
   state.timeline.date=params.get("timelineDate")||"";
   state.timeline.offset=Math.max(0,Number(params.get("timelineOffset"))||0);
+  if(state.layout==="progress"){
+    state.progress.recentlyActiveOffset=Math.max(0,Number(params.get("recentlyActiveOffset"))||0);
+    state.progress.continueOffset=Math.max(0,Number(params.get("continueOffset"))||0);
+    state.progress.recentlyCompletedOffset=Math.max(0,Number(params.get("recentlyCompletedOffset"))||0);
+  }
 }
 const toneClass=status=>({failed:"is-danger",error:"is-danger",missing:"is-warning",review:"is-neutral",pending:"is-info",prompted:"is-info"})[status]||"is-neutral";
 const deltaText=value=>value==null?"":`${value>0?"+":value<0?"-":""}${fmtHourValue(Math.abs(value))}`;
@@ -1400,50 +1410,162 @@ async function renderPeople() {
 }
 
 async function renderProgress() {
-  const d = await fetchJson("/api/dashboard/progress?" + query());
-  
-  const recHtml = (d.recentlyCompleted || []).length > 0
-    ? '<div class="recent-completed-list">' + d.recentlyCompleted.map(x => `
-        <div class="rec-comp-row" tabindex="0" data-item="${encodeURIComponent(JSON.stringify(x))}">
-          ${art(x)}
-          <div><strong>${esc(x.displayTitle)}</strong><br><span>Completed by ${esc(x.displayName)}</span></div>
+  const d = await fetchJson("/api/dashboard/progress?" + query({
+    recentlyActiveLimit: 6,
+    recentlyActiveOffset: state.progress.recentlyActiveOffset,
+    continueLimit: 6,
+    continueOffset: state.progress.continueOffset,
+    recentlyCompletedLimit: 6,
+    recentlyCompletedOffset: state.progress.recentlyCompletedOffset
+  }));
+
+  const renderCard = (x) => {
+    const isTv = x.category === "tv" || x.category === "classic_tv" || x.category === "anime";
+    const isAudiobook = x.category === "audiobook";
+
+    // Progress Bar or Unknown Total
+    let barHtml = "";
+    if (x.totalKnown && x.totalItems) {
+      const pct = Math.min(100, Math.round((x.distinctCompleted / x.totalItems) * 100));
+      const label = x.category === "movie" ? "Completed" : `${x.distinctCompleted} of ${x.totalItems} completed (${pct}%)`;
+      barHtml = `
+        <div class="progress-card-bar-wrapper">
+          <div class="progress-card-bar" data-testid="progress-bar" title="${esc(label)}">
+            <i style="width: ${pct}%"></i>
+          </div>
+          <span class="progress-card-bar-label">${esc(label)}</span>
         </div>
-      `).join('') + '</div>'
-    : '<p class="text-muted">Nothing completed recently.</p>';
+      `;
+    } else {
+      const label = `Total unknown · ${x.distinctCompleted} completed`;
+      barHtml = `
+        <div class="progress-card-bar-wrapper">
+          <div class="progress-card-bar bar-unknown" data-testid="progress-bar" title="${esc(label)}">
+            <i style="width: 100%"></i>
+          </div>
+          <span class="progress-card-bar-label">${esc(label)}</span>
+        </div>
+      `;
+    }
+
+    // Stats
+    const totalLabel = x.totalKnown ? x.totalItems : "unknown";
+    const observedStr = x.observedMinutes > 0 ? fmtHourValue(x.observedMinutes) : "0m";
+
+    // People Badges
+    const peopleBadges = (x.people || []).map(p => `
+      <span class="media-badge" style="position: static; display: inline-block; margin-right: 4px; font-size: 0.65rem;">
+        ${esc(p.displayName)}
+      </span>
+    `).join("");
+
+    // TV summary or Audiobook series
+    let summaryLine = "";
+    if (isTv && x.seasons) {
+      const parts = [];
+      for (const [sNum, eps] of Object.entries(x.seasons)) {
+        parts.push(`S${sNum} (${eps.length} ep${eps.length > 1 ? "s" : ""})`);
+      }
+      summaryLine = parts.join(" &middot; ");
+    } else if (isAudiobook && x.hierarchy) {
+      const h = x.hierarchy;
+      const parts = [h.parentSeries, h.series, h.subseries].filter(Boolean);
+      if (parts.length > 0) {
+        summaryLine = parts.join(" &middot; ");
+      }
+    }
+
+    return `
+      <article class="collection-card progress-card" data-testid="progress-card" data-cat="${esc(x.category)}" data-group-key="${esc(x.groupKey)}" data-item="${encodeURIComponent(JSON.stringify(x))}">
+        <div class="progress-card-header">
+          ${art(x)}
+          <div class="progress-card-info">
+            <div class="progress-card-title-row">
+              <h4>${esc(x.title)}</h4>
+              <span class="progress-card-category-badge" data-cat="${esc(x.category)}">${esc(categoryLabel(x.category))}</span>
+            </div>
+            ${summaryLine ? `<p class="progress-card-summary">${summaryLine}</p>` : ""}
+            <p class="progress-card-details">
+              ${x.distinctItems} distinct &middot; ${x.plays} play${x.plays > 1 ? "s" : ""} ${x.plays - x.distinctItems > 0 ? `(${x.plays - x.distinctItems} repeat${x.plays - x.distinctItems > 1 ? "s" : ""})` : ""}
+            </p>
+            <p class="progress-card-observed">Observed: ${observedStr}</p>
+            <div class="progress-card-people-row">${peopleBadges}</div>
+          </div>
+        </div>
+        ${barHtml}
+      </article>
+    `;
+  };
+
+  const continueHtml = (d.continue.items || []).length > 0
+    ? d.continue.items.map(renderCard).join("")
+    : `<p class="text-muted" data-testid="progress-empty-continue">No items currently in progress.</p>`;
+
+  const activeHtml = (d.recentlyActive.items || []).length > 0
+    ? d.recentlyActive.items.map(renderCard).join("")
+    : `<p class="text-muted" data-testid="progress-empty-recentlyActive">No active items.</p>`;
+
+  const completedHtml = (d.recentlyCompleted.items || []).length > 0
+    ? d.recentlyCompleted.items.map(x => `
+        <div class="rec-comp-row" tabindex="0" data-item="${encodeURIComponent(JSON.stringify(x))}" data-testid="progress-completed-row">
+          ${art(x)}
+          <div>
+            <strong>${esc(x.title)}</strong>
+            <br>
+            <span class="text-muted" style="font-size:0.8rem;">
+              Completed by ${x.people.map(p => esc(p.displayName)).join(", ")}
+            </span>
+          </div>
+        </div>
+      `).join("")
+    : `<p class="text-muted" data-testid="progress-empty-recentlyCompleted">Nothing completed recently.</p>`;
 
   content.innerHTML = `
     <section class="dashboard-grid">
       <div class="dashboard-panel panel-wide">
-        <div class="panel-title"><h3>Progress</h3><span>Episode dot grids & hierarchy</span></div>
-        <div class="collection-grid">
-          ${(d.progress.length ? d.progress.map(x => {
-            let dots = '';
-            if (x.seasons) {
-              let maxEp = 12;
-              for (const s of Object.values(x.seasons)) {
-                if (s.length > 0) maxEp = Math.max(maxEp, Math.max(...s));
-              }
-              dots = '<div class="ep-dots-container">';
-              for (const [season, eps] of Object.entries(x.seasons)) {
-                dots += `<div class="ep-dot-row"><span class="season-label">S${season}</span><div class="dots-wrapper">`;
-                for (let i = 1; i <= maxEp; i++) {
-                  dots += `<span class="ep-dot ${eps.includes(i) ? 'active' : ''}"></span>`;
-                }
-                dots += `</div></div>`;
-              }
-              dots += '</div>';
-            }
-            return `<article class="collection-card" data-cat="${esc(x.category)}"><span>${esc(x.displayName)} &middot; ${esc(x.category)}</span><h4>${esc(x.title)}</h4><div class="bar"><i style="width:${Math.min(100,x.averagePercent??0)}%"></i></div><p>${x.distinctItems} distinct &middot; ${x.plays} plays</p><small>Total available: ${x.totalKnown ? x.totalItems : 'unknown'}</small>${dots}</article>`;
-          }).join("") : empty("progress"))}
+        <div class="progress-section">
+          <div class="panel-title">
+            <h3>Continue Watching & Listening</h3>
+            <span>Pick up where you left off</span>
+          </div>
+          <div class="collection-grid" data-testid="progress-continue-list">
+            ${continueHtml}
+          </div>
+          ${progressPager(d.continue, "continue")}
+        </div>
+
+        <div class="progress-section" style="margin-top: 40px;">
+          <div class="panel-title">
+            <h3>Recently Active</h3>
+            <span>Latest activity across all series</span>
+          </div>
+          <div class="collection-grid" data-testid="progress-active-list">
+            ${activeHtml}
+          </div>
+          ${progressPager(d.recentlyActive, "recentlyActive")}
         </div>
       </div>
       <aside>
         <div class="dashboard-panel">
           <h3>Recently Completed</h3>
-          ${recHtml}
+          <div class="recent-completed-list" data-testid="progress-completed-list">
+            ${completedHtml}
+          </div>
+          ${progressPager(d.recentlyCompleted, "recentlyCompleted")}
         </div>
       </aside>
     </section>
+  `;
+}
+
+function progressPager(bucket, stateKey) {
+  if (bucket.total <= bucket.limit) return "";
+  return `
+    <nav class="pager" aria-label="${stateKey} pagination" style="margin-top: 16px;">
+      <button data-progress-page="${stateKey}:prev" ${bucket.offset === 0 ? "disabled" : ""}>Previous</button>
+      <span>${bucket.offset + 1}-${Math.min(bucket.total, bucket.offset + bucket.limit)} of ${bucket.total}</span>
+      <button data-progress-page="${stateKey}:next" ${bucket.offset + bucket.limit >= bucket.total ? "disabled" : ""}>Next</button>
+    </nav>
   `;
 }
 
@@ -1703,6 +1825,7 @@ form.addEventListener("change",()=>{
   if((state.filters.category||"")!==previousCategory)state.explorer.section=state.filters.category||"";
   state.explorer.offset=0;
   state.explorer.selected="";
+  state.progress={recentlyActiveOffset:0,continueOffset:0,recentlyCompletedOffset:0};
   save();
   render();
   loadGlobals();
@@ -1712,6 +1835,7 @@ form.addEventListener("reset",()=>setTimeout(()=>{
   state.filters={};
   state.offset=0;
   state.explorer={section:"",sort:"recent",offset:0,selected:""};
+  state.progress={recentlyActiveOffset:0,continueOffset:0,recentlyCompletedOffset:0};
   save();
   render();
   loadGlobals();
@@ -1800,6 +1924,19 @@ content.addEventListener("click",async e=>{
     } else {
       state.offset=Math.max(0,state.offset+(page.dataset.page==="next"?50:-50));
     }
+    return render();
+  }
+  const progressPage = e.target.closest("[data-progress-page]");
+  if (progressPage) {
+    const [key, dir] = progressPage.dataset.progressPage.split(":");
+    const offsetKey = key + "Offset";
+    const step = 6;
+    if (dir === "next") {
+      state.progress[offsetKey] += step;
+    } else {
+      state.progress[offsetKey] = Math.max(0, state.progress[offsetKey] - step);
+    }
+    save();
     return render();
   }
   const libraryPage=e.target.closest("[data-library-page]");

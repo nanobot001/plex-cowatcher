@@ -6,7 +6,7 @@ Blocks are numbered, bounded AI-buildable tickets for code, logic, docs, folder 
 
 The project is currently in the Phase 3 refinement set. A live Playwright review found that the completed 3-2f redesign did not meet its intended usability, bounded-rendering, or responsive outcome. The immediate next selected block is:
 
-- `block-3-2n-hierarchy-progress-workspace.md`
+- `block-3-2n-3-progress-lazy-hierarchy-endpoints.md`
 
 Phase 3 builds on the completed playback-intelligence foundation with domain-specific refinement, richer operator ergonomics, and reporting.
 Blocks 3-2a through 3-2e form one sequential dashboard implementation path:
@@ -21,25 +21,29 @@ Blocks 3-2a through 3-2f are implemented historical work. Blocks 3-2g through 3-
 
 Corrective sequence:
 
-1. `block-3-2g-dashboard-contract-and-performance-baseline.md`
-2. `block-3-2h-dashboard-shell-and-design-system.md`
-3. `block-3-2i-overview-decision-surface.md`
-4. `block-3-2j-library-category-browser.md`
-5. `block-3-2j-1-cowatch-evidence-semantics.md`
-6. `block-3-2k-rich-media-detail-workspace.md`
+1. `completed/block-3-2g-dashboard-contract-and-performance-baseline.md`
+2. `completed/block-3-2h-dashboard-shell-and-design-system.md`
+3. `completed/block-3-2i-overview-decision-surface.md`
+4. `completed/block-3-2j-library-category-browser.md`
+5. `completed/block-3-2j-1-cowatch-evidence-semantics.md`
+6. `completed/block-3-2k-rich-media-detail-workspace.md`
 7. `completed/block-3-2l-daily-session-timeline.md`
-8. `block-3-2m-people-and-cowatch-intelligence.md`
-9. `block-3-2m-1-person-pairings-and-operations.md`
-10. `block-3-2m-2-browser-cowatch-adjudication.md`
-11. `block-3-2m-3-discord-cowatch-review.md`
-12. `block-3-2m-4-people-cowatch-attribution.md`
-13. `block-3-2m-5-people-ordering-and-heatmap-interaction.md`
-14. `block-3-2n-hierarchy-progress-workspace.md`
-15. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
+8. `completed/block-3-2m-people-and-cowatch-intelligence.md`
+9. `completed/block-3-2m-1-person-pairings-and-operations.md`
+10. `completed/block-3-2m-2-browser-cowatch-adjudication.md`
+11. `completed/block-3-2m-3-discord-cowatch-review.md`
+12. `completed/block-3-2m-4-people-cowatch-attribution.md`
+13. `completed/block-3-2m-5-people-ordering-and-heatmap-interaction.md`
+14. `block-3-2n-hierarchy-progress-workspace.md` - umbrella only; do not implement directly.
+15. `completed/block-3-2n-1-progress-read-model-contract.md`
+16. `completed/block-3-2n-2-progress-workspace-shell.md`
+17. `block-3-2n-3-progress-lazy-hierarchy-endpoints.md`
+18. `block-3-2n-4-progress-hierarchy-ui-regression.md`
+19. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
 
 Do not implement a later corrective block until the previous block's exit gate is recorded as passing. A later block must not conceal, waive, or silently absorb a failed earlier acceptance criterion.
 
-The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n is the next corrective block.
+The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n was reviewed and split; Block 3-2n-1 is completed and verified, and Block 3-2n-2 is completed and verified, and Block 3-2n-3 is the next corrective implementation block.
 
 ## Umbrella Specifications
 
@@ -69,6 +73,14 @@ The full 3-2m sequence is implemented and verified: household profiles, person p
 - `completed/block-3-2e-progress-export-hardening.md`
 - `completed/block-3-2f-premium-dashboard-redesign.md`
 - `completed/block-3-2l-daily-session-timeline.md`
+- `completed/block-3-2m-people-and-cowatch-intelligence.md`
+- `completed/block-3-2m-1-person-pairings-and-operations.md`
+- `completed/block-3-2m-2-browser-cowatch-adjudication.md`
+- `completed/block-3-2m-3-discord-cowatch-review.md`
+- `completed/block-3-2m-4-people-cowatch-attribution.md`
+- `completed/block-3-2m-5-people-ordering-and-heatmap-interaction.md`
+- `completed/block-3-2n-1-progress-read-model-contract.md`
+- `completed/block-3-2n-2-progress-workspace-shell.md`
 
 - `completed/block-3-4-hierarchical-audiobook-series-modeling.md`
 - `completed/block-3-5-proactive-audiobook-scanner.md`

@@ -394,3 +394,69 @@ test("Ask in Discord queues one review-only prompt without blanking People", asy
   await expectNoVisualOverflow(page);
 });
 
+test("Progress shell renders bounded sections with correct cards and no page errors", async ({ page }) => {
+  const pageErrors = [];
+  page.on("pageerror", error => pageErrors.push(error.message));
+  await page.goto("/");
+  await page.getByRole("button", { name: "Progress", exact: true }).click();
+
+  // Wait for the progress sections to load
+  await expect(page.getByTestId("progress-continue-list")).toBeVisible();
+  await expect(page.getByTestId("progress-active-list")).toBeVisible();
+  await expect(page.getByTestId("progress-completed-list")).toBeVisible();
+
+  // Assert cards are present and bounded
+  const cards = page.getByTestId("progress-card");
+  const count = await cards.count();
+  expect(count).toBeGreaterThan(0);
+  expect(count).toBeLessThanOrEqual(5);
+
+  // Assert TV Show cards display correct details and progress bar
+  const tvCard = page.getByTestId("progress-continue-list").getByTestId("progress-card").filter({ hasText: "Regression Show" }).first();
+  await expect(tvCard).toBeVisible();
+  await expect(tvCard.getByTestId("progress-bar")).toBeVisible();
+  await expect(tvCard).toContainText("S1 (2 eps)");
+
+  // Assert Hidden user is excluded
+  await expect(tvCard).not.toContainText("Hidden");
+
+  // Assert Movies do not render season summaries
+  const movieCard = cards.filter({ hasText: "Fixture Movie" }).first();
+  if (await movieCard.count() > 0) {
+    await expect(movieCard).toBeVisible();
+    await expect(movieCard.locator(".progress-card-summary")).not.toBeVisible();
+  }
+
+  // Assert no visual overflow
+  await expectNoVisualOverflow(page);
+  expect(pageErrors).toEqual([]);
+});
+
+test("Progress URL state survives reload, Back, and Forward", async ({ page }) => {
+  const pageErrors = [];
+  page.on("pageerror", error => pageErrors.push(error.message));
+  await page.goto("/");
+  await page.getByRole("button", { name: "Progress", exact: true }).click();
+
+  // Filter by category
+  await page.locator("select[name='category']").selectOption("movie");
+  await expect.poll(() => page.url()).toContain("category=movie");
+  const filteredUrl = page.url();
+
+  // Reload page
+  await page.reload();
+  await expect(page.locator("select[name='category']")).toHaveValue("movie");
+
+  // Go back
+  await page.goBack();
+  await expect.poll(() => page.url()).not.toBe(filteredUrl);
+
+  // Go forward
+  await page.goForward();
+  await expect.poll(() => page.url()).toBe(filteredUrl);
+  await expect(page.locator("select[name='category']")).toHaveValue("movie");
+
+  expect(pageErrors).toEqual([]);
+});
+
+

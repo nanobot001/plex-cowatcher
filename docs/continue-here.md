@@ -1,5 +1,14 @@
 # Continue Here
 
+## 2026-07-06
+
+Current state:
+- Block 3-2n-1 (Progress Read Model Contract) and Block 3-2n-2 (Progress Workspace Shell) are completed and verified. The backend response contract is typed and bounded, and the Progress workspace displays three paginated sections (Continue, Recently Active, Recently Completed) with category/user filter preservation and browser history support.
+- Verification passed: `npm run verify:block` (76/76 unit tests, 28/28 Playwright E2E tests, syntax and tool contracts).
+
+Next step:
+- Implement **Block 3-2n-3: Progress Lazy Hierarchy Endpoints** (`docs/blocks/block-3-2n-3-progress-lazy-hierarchy-endpoints.md`).
+
 ## 2026-07-05
 
 Current state:
@@ -13,9 +22,10 @@ Current state:
 - Verification passed: `npm run verify:block` (73/73 service tests, 20/20 E2E Playwright tests, dashboard syntax, and tool contracts) plus `npm run verify:live-dashboard` at 1440px and 390px.
 - Block 3-2m-4 verification passed: `npm run verify:block` (75/75 service tests, 22/22 E2E Playwright tests, dashboard syntax, and tool contracts) plus `npm run verify:live-dashboard` after PM2 restart.
 - Block 3-2m-5 verification passed: `npm run verify:block` (75/75 service tests, 24/24 E2E Playwright tests, dashboard syntax, and tool contracts).
+- Block 3-2n was reviewed for risk, drift, dependencies, and opportunities, then split into four smaller implementation blocks: 3-2n-1 through 3-2n-4.
 
 Next step:
-- Implement **Block 3-2n: Hierarchy Progress Workspace** (`docs/blocks/block-3-2n-hierarchy-progress-workspace.md`).
+- Implement **Block 3-2n-1: Progress Read Model Contract** (`docs/blocks/block-3-2n-1-progress-read-model-contract.md`).
 
 ## 2026-07-04
 
@@ -67,6 +77,7 @@ Do-not-forget checks:
 
 ## Next Recommended Step
 
-- Start with **Block 3-2n: Hierarchy Progress Workspace**.
+- Start with **Block 3-2n-3: Progress Lazy Hierarchy Endpoints**.
 - Implement only one corrective block at a time and do not begin the next block until the current block's exit gate is recorded as passing.
 - Resume Block 3-3 only after Block 3-2o completes the final dashboard release gate.
+

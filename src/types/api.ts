@@ -162,3 +162,55 @@ export interface DashboardTimelineSession {
   cowatchEventId?: string | null;
   item?: DashboardActivityItem;
 }
+
+export interface DashboardProgressPersonContext {
+  userId: number;
+  plexUsername: string;
+  displayName: string;
+  plays: number;
+  completedPlays: number;
+  partials: number;
+  distinctItems: number;
+  distinctCompleted: number;
+  latestWatchedAt: string;
+}
+
+export interface DashboardProgressGroup {
+  groupKey: string;
+  title: string;
+  category: DashboardCategory;
+  artworkUrl: string;
+  latestWatchedAt: string;
+  totalKnown: boolean;
+  totalItems: number | null;
+  distinctItems: number;
+  distinctCompleted: number;
+  plays: number;
+  completedPlays: number;
+  partials: number;
+  observedMinutes: number;
+  people: DashboardProgressPersonContext[];
+  seasons: Record<number, number[]> | null;
+  hierarchy: {
+    parentSeries: string | null;
+    subseries: string | null;
+    series: string | null;
+    book: string | null;
+  } | null;
+}
+
+export interface DashboardProgressBucket {
+  items: DashboardProgressGroup[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface DashboardProgressResponse {
+  recentlyActive: DashboardProgressBucket;
+  continue: DashboardProgressBucket;
+  recentlyCompleted: DashboardProgressBucket;
+  timingMs: number;
+  progress: any[];
+  recentlyCompletedCompat: any[];
+}
