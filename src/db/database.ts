@@ -34,6 +34,7 @@ export function migrateDatabase(db: Db): void {
   migrateAudiobookHierarchy(db);
   migrateCowatchAdjudications(db);
   migrateCowatchReviewPrompts(db);
+  migrateContentCatalogHierarchyIndexes(db);
 }
 
 function migrateCowatchReviewPrompts(db: Db): void {
@@ -240,4 +241,24 @@ export function openMigratedDatabase(sqlitePath = appConfig.SQLITE_PATH): Db {
   const db = openDatabase(sqlitePath);
   migrateDatabase(db);
   return db;
+}
+
+function migrateContentCatalogHierarchyIndexes(db: Db): void {
+  const applied = db.prepare("SELECT 1 FROM schema_migrations WHERE version = 12").get();
+  if (applied) return;
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_content_catalog_grandparent
+        ON content_catalog(grandparent_rating_key);
+      CREATE INDEX IF NOT EXISTS idx_content_catalog_audiobook
+        ON content_catalog(audiobook_id) WHERE audiobook_id IS NOT NULL;
+    `);
+    db.prepare("INSERT INTO schema_migrations (version, name) VALUES (12, ?)").run("content_catalog_hierarchy_indexes");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }

@@ -1601,7 +1601,7 @@ test("dashboard service returns bounded mixed-media data and honest progress", (
     const now = new Date().toISOString();
     insert.run(users[0].id,"movie-1","movie","Movies","Moonrise",null,now,100,7200000,1,now,now);
     insert.run(users[1].id,"anime-1","episode","Anime","Episode 1","Skyward",now,73,1500000,0,now,now);
-    insert.run(users[0].id,"book-1","track","Audiobooks","Chapter 1","The Long Book",now,35,1800000,0,now,now);
+    insert.run(users[0].id,"book-1","track","Audiobooks","The Long Book","Author Name",now,35,1800000,0,now,now);
     const indexes=db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_playback_dashboard_%'").all();
     assert.ok(indexes.length >= 3);
     const service = new DashboardService(db);
@@ -2676,6 +2676,130 @@ test("dashboard service progress contract verifies repeat plays, unknown totals,
     assert.equal(abGroup.totalItems, 15);
     // Artwork key must use canonical book identity
     assert.equal(abGroup.artworkUrl, "/api/artwork/audiobook%3A10");
+  });
+
+  tests.push({
+    name: "dashboard progress expansion contract verifies lazy-loaded hierarchies, distinct completion, hidden user exclusion, and timingMs",
+    fn: () => withTestDb(async (db) => {
+      // Seed users (including hidden user and alias)
+      db.prepare(`
+        INSERT INTO users (plex_username, display_name, dashboard_alias, dashboard_shown, enabled, created_at, updated_at)
+        VALUES ('tony-plex', 'Tony', 'Tony Alias', 1, 1, '2026-07-06T00:00:00Z', '2026-07-06T00:00:00Z')
+      `).run();
+      const tonyId = Number(db.prepare("SELECT last_insert_rowid()").get()["last_insert_rowid()"]);
+
+      db.prepare(`
+        INSERT INTO users (plex_username, display_name, dashboard_alias, dashboard_shown, enabled, created_at, updated_at)
+        VALUES ('alex-plex', 'Alex', 'Ace', 1, 1, '2026-07-06T00:00:00Z', '2026-07-06T00:00:00Z')
+      `).run();
+      const alexId = Number(db.prepare("SELECT last_insert_rowid()").get()["last_insert_rowid()"]);
+
+      db.prepare(`
+        INSERT INTO users (plex_username, display_name, dashboard_alias, dashboard_shown, enabled, created_at, updated_at)
+        VALUES ('hidden-plex', 'Hidden', 'Hidden Alias', 0, 1, '2026-07-06T00:00:00Z', '2026-07-06T00:00:00Z')
+      `).run();
+      const hiddenId = Number(db.prepare("SELECT last_insert_rowid()").get()["last_insert_rowid()"]);
+
+      // Seed TV Show content catalog grandparent
+      db.prepare(`
+        INSERT INTO content_catalog (rating_key, media_type, title, library_title, leaf_count, source_provenance, refreshed_at)
+        VALUES ('show-1', 'show', 'Great Show', 'TV Shows', 24, 'plex', '2026-07-06T12:00:00Z')
+      `).run();
+
+      // Seed TV Show episodes
+      db.prepare(`
+        INSERT INTO content_catalog (rating_key, media_type, title, library_title, grandparent_rating_key, grandparent_title, parent_title, parent_rating_key, source_provenance, refreshed_at)
+        VALUES ('ep-1', 'episode', 'Episode 1', 'TV Shows', 'show-1', 'Great Show', 'Season 1', 'season-1', 'plex', '2026-07-06T12:00:00Z')
+      `).run();
+      db.prepare(`
+        INSERT INTO content_catalog (rating_key, media_type, title, library_title, grandparent_rating_key, grandparent_title, parent_title, parent_rating_key, source_provenance, refreshed_at)
+        VALUES ('ep-2', 'episode', 'Episode 2', 'TV Shows', 'show-1', 'Great Show', 'Season 1', 'season-1', 'plex', '2026-07-06T12:00:00Z')
+      `).run();
+
+      // Seed audiobook book
+      db.prepare(`
+        INSERT INTO audiobook_books (id, folder_key, title, series_title, chapter_count, source_provenance, enrichment_status, created_at, updated_at)
+        VALUES (10, 'hobbit-folder', 'The Hobbit', 'Middle Earth', 3, 'audnexus', 'enriched', '2026-07-06T00:00:00Z', '2026-07-06T00:00:00Z')
+      `).run();
+
+      // Seed audiobook chapters
+      db.prepare(`
+        INSERT INTO content_catalog (rating_key, media_type, title, library_title, audiobook_id, source_provenance, refreshed_at)
+        VALUES ('ch-1', 'track', 'Chapter 1', 'Audiobooks', 10, 'plex', '2026-07-06T12:00:00Z')
+      `).run();
+      db.prepare(`
+        INSERT INTO content_catalog (rating_key, media_type, title, library_title, audiobook_id, source_provenance, refreshed_at)
+        VALUES ('ch-2', 'track', 'Chapter 2', 'Audiobooks', 10, 'plex', '2026-07-06T12:00:00Z')
+      `).run();
+
+      // Seed TV observations (Tony watched Ep 1 & Ep 2; Alex watched Ep 1; Hidden watched Ep 2)
+      db.prepare(`
+        INSERT INTO playback_observations (user_id, rating_key, grandparent_rating_key, parent_rating_key, media_type, library_name, title, show_title, watched_at, watched_at_provenance, percent_complete, duration, completed, created_at, updated_at)
+        VALUES (${tonyId}, 'ep-1', 'show-1', 'season-1', 'episode', 'TV Shows', 'Episode 1', 'Great Show', '2026-07-06T10:00:00Z', 'plex', 100, 1800000, 1, '2026-07-06T10:00:00Z', '2026-07-06T10:00:00Z')
+      `).run();
+      db.prepare(`
+        INSERT INTO playback_observations (user_id, rating_key, grandparent_rating_key, parent_rating_key, media_type, library_name, title, show_title, watched_at, watched_at_provenance, percent_complete, duration, completed, created_at, updated_at)
+        VALUES (${tonyId}, 'ep-2', 'show-1', 'season-1', 'episode', 'TV Shows', 'Episode 2', 'Great Show', '2026-07-06T11:00:00Z', 'plex', 50, 1800000, 0, '2026-07-06T11:00:00Z', '2026-07-06T11:00:00Z')
+      `).run();
+      db.prepare(`
+        INSERT INTO playback_observations (user_id, rating_key, grandparent_rating_key, parent_rating_key, media_type, library_name, title, show_title, watched_at, watched_at_provenance, percent_complete, duration, completed, created_at, updated_at)
+        VALUES (${alexId}, 'ep-1', 'show-1', 'season-1', 'episode', 'TV Shows', 'Episode 1', 'Great Show', '2026-07-06T14:00:00Z', 'plex', 100, 1800000, 1, '2026-07-06T14:00:00Z', '2026-07-06T14:00:00Z')
+      `).run();
+      db.prepare(`
+        INSERT INTO playback_observations (user_id, rating_key, grandparent_rating_key, parent_rating_key, media_type, library_name, title, show_title, watched_at, watched_at_provenance, percent_complete, duration, completed, created_at, updated_at)
+        VALUES (${hiddenId}, 'ep-2', 'show-1', 'season-1', 'episode', 'TV Shows', 'Episode 2', 'Great Show', '2026-07-06T11:00:00Z', 'plex', 100, 1800000, 1, '2026-07-06T11:00:00Z', '2026-07-06T11:00:00Z')
+      `).run();
+
+      // Seed Audiobook observations (Tony listened to Ch 1)
+      db.prepare(`
+        INSERT INTO playback_observations (user_id, rating_key, media_type, library_name, title, watched_at, watched_at_provenance, percent_complete, duration, completed, created_at, updated_at)
+        VALUES (${tonyId}, 'ch-1', 'track', 'Audiobooks', 'Chapter 1', '2026-07-06T12:00:00Z', 'plex', 100, 900000, 1, '2026-07-06T12:00:00Z', '2026-07-06T12:00:00Z')
+      `).run();
+
+      const service = new DashboardService(db);
+
+      // 1. Expand TV Show Group Key
+      const tvExpansion = service.getProgressExpansion("series:tv:TV Shows:show-1");
+      assert.ok(tvExpansion);
+      assert.equal(tvExpansion.category, "tv");
+      assert.equal(tvExpansion.title, "Great Show");
+      assert.equal(tvExpansion.totalKnown, true);
+      assert.equal(tvExpansion.totalItems, 24);
+      assert.equal(tvExpansion.distinctItems, 2); // ep-1 and ep-2 (plays exist)
+      assert.equal(tvExpansion.distinctCompleted, 1); // Only ep-1 completed by Tony & Alex
+      assert.ok(tvExpansion.timingMs >= 0);
+
+      // Verify TV Hierarchy Node structure
+      assert.equal(tvExpansion.hierarchy.type, "tv");
+      const seasons = tvExpansion.hierarchy.seasons;
+      assert.equal(seasons.length, 1);
+      assert.equal(seasons[0].seasonNumber, 1);
+      assert.equal(seasons[0].episodes.length, 2);
+
+      const ep1 = seasons[0].episodes.find(e => e.ratingKey === "ep-1");
+      assert.ok(ep1);
+      assert.equal(ep1.watchedStates["Tony Alias"], "watched");
+      assert.equal(ep1.watchedStates["Ace"], "watched"); // Alias resolved
+      assert.equal(ep1.watchedStates["Hidden Alias"], undefined); // Hidden excluded
+
+      const ep2 = seasons[0].episodes.find(e => e.ratingKey === "ep-2");
+      assert.ok(ep2);
+      assert.equal(ep2.watchedStates["Tony Alias"], "partial"); // 50% complete
+      assert.equal(ep2.watchedStates["Hidden Alias"], undefined); // Hidden excluded
+
+      // 2. Expand Audiobook Group Key
+      const abExpansion = service.getProgressExpansion("audiobook:Audiobooks:10");
+      assert.ok(abExpansion);
+      assert.equal(abExpansion.category, "audiobook");
+      assert.equal(abExpansion.title, "The Hobbit");
+      assert.equal(abExpansion.hierarchy.type, "audiobook");
+      assert.equal(abExpansion.hierarchy.series, "Middle Earth");
+      assert.equal(abExpansion.hierarchy.chapters.length, 2);
+
+      const ch1 = abExpansion.hierarchy.chapters.find(c => c.ratingKey === "ch-1");
+      assert.ok(ch1);
+      assert.equal(ch1.watchedStates["Tony Alias"], "watched");
+    })
   });
 });
 

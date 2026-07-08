@@ -1,7 +1,7 @@
 # Block 3-2n-3: Progress Lazy Hierarchy Endpoints
 
-> Status: Planned.
-> Result: Not implemented.
+> Status: Completed.
+> Result: Implemented and verified with `npm run verify:block`.
 > Notes: Third child of the 3-2n Progress sequence; adds backend lazy hierarchy retrieval before browser expansion consumes it.
 
 ## Goal

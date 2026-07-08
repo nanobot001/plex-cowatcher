@@ -131,6 +131,7 @@ export interface DashboardActivityItem {
   categoryLabel: string; categoryDerived: boolean; libraryName?: string; watchedAt: string;
   duration?: number; percentComplete?: number; completed: boolean; artworkUrl: string;
   grandparentRatingKey?: string; parentRatingKey?: string; audiobookId?: number; audiobookTitle?: string;
+  parentTitle?: string; grandparentTitle?: string;
   seasonNumber?: number; episodeNumber?: number;
   displayTitle?: string;
   displayNames?: string[];
@@ -213,4 +214,43 @@ export interface DashboardProgressResponse {
   timingMs: number;
   progress: any[];
   recentlyCompletedCompat: any[];
+}
+
+export interface ProgressEpisodeNode {
+  ratingKey: string;
+  title: string;
+  episodeNumber: number | null;
+  duration: number;
+  watchedStates: Record<string, "watched" | "partial" | "repeated" | "unknown">;
+}
+
+export interface ProgressSeasonNode {
+  seasonName: string;
+  seasonNumber: number;
+  episodes: ProgressEpisodeNode[];
+}
+
+export interface ProgressChapterNode {
+  ratingKey: string;
+  title: string;
+  duration: number;
+  watchedStates: Record<string, "watched" | "partial" | "repeated" | "unknown">;
+}
+
+export interface ProgressHierarchyExpansion {
+  groupKey: string;
+  category: DashboardCategory;
+  title: string;
+  artworkUrl: string;
+  totalKnown: boolean;
+  totalItems: number | null;
+  distinctItems: number;
+  distinctCompleted: number;
+  people: Array<{ displayName: string }>;
+  hierarchy:
+    | { type: "tv"; showTitle: string; seasons: ProgressSeasonNode[] }
+    | { type: "audiobook"; parentSeries: string | null; subseries: string | null; series: string | null; bookTitle: string; chapters: ProgressChapterNode[] }
+    | { type: "movie" }
+    | null;
+  timingMs: number;
 }

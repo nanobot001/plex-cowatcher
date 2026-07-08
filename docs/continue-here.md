@@ -3,11 +3,11 @@
 ## 2026-07-06
 
 Current state:
-- Block 3-2n-1 (Progress Read Model Contract) and Block 3-2n-2 (Progress Workspace Shell) are completed and verified. The backend response contract is typed and bounded, and the Progress workspace displays three paginated sections (Continue, Recently Active, Recently Completed) with category/user filter preservation and browser history support.
-- Verification passed: `npm run verify:block` (76/76 unit tests, 28/28 Playwright E2E tests, syntax and tool contracts).
+- Block 3-2n-1, Block 3-2n-2, and Block 3-2n-3 (Progress Lazy Hierarchy Endpoints) are completed and verified. The backend features a dedicated read-only expansion endpoint `/api/dashboard/progress/expand/:groupKey` with optimized queries using database indexes on content catalog lookups.
+- Verification passed: `npm run verify:block` (77/77 unit tests, 28/28 Playwright E2E tests, syntax and tool contracts).
 
 Next step:
-- Implement **Block 3-2n-3: Progress Lazy Hierarchy Endpoints** (`docs/blocks/block-3-2n-3-progress-lazy-hierarchy-endpoints.md`).
+- Implement **Block 3-2n-4: Progress Hierarchy UI & Regression** (`docs/blocks/block-3-2n-4-progress-hierarchy-ui-regression.md`).
 
 ## 2026-07-05
 
@@ -77,7 +77,7 @@ Do-not-forget checks:
 
 ## Next Recommended Step
 
-- Start with **Block 3-2n-3: Progress Lazy Hierarchy Endpoints**.
+- Start with **Block 3-2n-4: Progress Hierarchy UI & Regression**.
 - Implement only one corrective block at a time and do not begin the next block until the current block's exit gate is recorded as passing.
 - Resume Block 3-3 only after Block 3-2o completes the final dashboard release gate.
 

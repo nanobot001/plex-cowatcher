@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Db } from "../db/database.js";
-import type { DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket } from "../types/api.js";
+import type { DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket, ProgressHierarchyExpansion } from "../types/api.js";
 import { CowatchingIntelligenceService } from "./cowatchingIntelligenceService.js";
 import { CowatchAdjudicationService } from "./cowatchAdjudicationService.js";
 
@@ -114,9 +114,9 @@ function normalizeAudiobookDisplayTitle(value?: string | null): string {
   return title.trim();
 }
 
-function resolveDashboardDisplayTitle(item: Pick<DashboardActivityItem, "category" | "showTitle" | "title" | "audiobookTitle">): string {
+function resolveDashboardDisplayTitle(item: Pick<DashboardActivityItem, "category" | "showTitle" | "title" | "audiobookTitle" | "parentTitle">): string {
   if (item.category === "audiobook") {
-    return normalizeAudiobookDisplayTitle(item.audiobookTitle ?? item.title) || item.showTitle?.trim() || "";
+    return normalizeAudiobookDisplayTitle(item.audiobookTitle ?? item.parentTitle ?? item.title) || item.showTitle?.trim() || "";
   }
   if (item.category === "tv" || item.category === "classic_tv" || item.category === "anime") {
     return item.showTitle?.trim() || item.title.trim() || "";
@@ -124,7 +124,7 @@ function resolveDashboardDisplayTitle(item: Pick<DashboardActivityItem, "categor
   return item.title.trim();
 }
 
-function explorerTitle(item: Pick<DashboardActivityItem, "category" | "showTitle" | "title" | "audiobookTitle">): string {
+function explorerTitle(item: Pick<DashboardActivityItem, "category" | "showTitle" | "title" | "audiobookTitle" | "parentTitle">): string {
   return resolveDashboardDisplayTitle(item);
 }
 
@@ -279,7 +279,7 @@ export class DashboardService {
     const confirmedUserFilter = p.user ? " AND confirmed_user.plex_username = ?" : "";
     const confirmedArgs = p.user ? [p.user] : [];
     const confirmedParticipantsSql = `(SELECT json_group_array(json_object('userId', confirmed_user.id, 'displayName', COALESCE(NULLIF(confirmed_user.dashboard_alias, ''), confirmed_user.plex_username))) FROM cowatch_confirmations confirmed JOIN users confirmed_user ON confirmed_user.id=confirmed.target_user_id WHERE confirmed.watch_event_id=we.id AND confirmed.status='confirmed' AND COALESCE(confirmed_user.dashboard_shown, confirmed_user.enabled)=1${confirmedUserFilter}) AS confirmed_participants_json`;
-    const rows = this.db.prepare(`SELECT po.*,u.plex_username,u.display_name AS synced_display_name,u.dashboard_alias,u.dashboard_shown,we.prompt_status,cc.status confirmation_status,cc.plex_sync_status,cat.library_title AS catalog_library_title,groupcat.library_title AS group_catalog_library_title,cat.audiobook_id AS audiobook_id,ab.title AS audiobook_title,${confirmedParticipantsSql}${from}${where} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...confirmedArgs, ...args, p.limit, p.offset) as any[];
+    const rows = this.db.prepare(`SELECT po.*,u.plex_username,u.display_name AS synced_display_name,u.dashboard_alias,u.dashboard_shown,we.prompt_status,cc.status confirmation_status,cc.plex_sync_status,cat.library_title AS catalog_library_title,groupcat.library_title AS group_catalog_library_title,cat.audiobook_id AS audiobook_id,ab.title AS audiobook_title,cat.parent_title AS catalog_parent_title,cat.grandparent_title AS catalog_grandparent_title,${confirmedParticipantsSql}${from}${where} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...confirmedArgs, ...args, p.limit, p.offset) as any[];
 
     const cowatchMap = new Map<number, { event: any; participant: any }>();
     if (rows.length > 0) {
@@ -1000,7 +1000,8 @@ export class DashboardService {
 
     const directRows = this.db.prepare(`SELECT po.*,u.plex_username,u.dashboard_alias,
       cat.library_title AS catalog_library_title,groupcat.library_title AS group_catalog_library_title,
-      cat.audiobook_id AS audiobook_id,ab.title AS audiobook_title
+      cat.audiobook_id AS audiobook_id,ab.title AS audiobook_title,
+      cat.parent_title AS catalog_parent_title,cat.grandparent_title AS catalog_grandparent_title
       FROM playback_observations po JOIN users u ON u.id=po.user_id
       LEFT JOIN content_catalog cat ON cat.rating_key=po.rating_key
       LEFT JOIN content_catalog groupcat ON groupcat.rating_key=po.grandparent_rating_key
@@ -1545,11 +1546,7 @@ export class DashboardService {
       for (const item of all) {
         if (!isRecognizedExplorerItem(item)) continue;
         const key = explorerGroupKey(item);
-        const title = item.category === "audiobook"
-          ? (item.audiobookTitle ?? item.showTitle ?? item.title)
-          : (item.category === "tv" || item.category === "classic_tv" || item.category === "anime")
-            ? (item.showTitle ?? item.title)
-            : item.title;
+        const title = item.displayTitle ?? item.title;
 
         const artworkUrl = item.category === "audiobook"
           ? `/api/artwork/audiobook%3A${item.audiobookId ?? item.parentRatingKey ?? item.grandparentRatingKey ?? item.ratingKey}`
@@ -1925,133 +1922,9 @@ export class DashboardService {
 
       if (category === "tv" || category === "classic_tv" || category === "anime") {
         const showKey = catalog.grandparent_rating_key || ratingKey;
-        // Query distinct episodes belonging to this show
-        const episodesCatalog = this.db.prepare(`
-          SELECT rating_key, title, parent_title, parent_rating_key, leaf_count
-          FROM content_catalog
-          WHERE grandparent_rating_key = ?
-          UNION
-          SELECT rating_key, title, 'Season ' || season_number AS parent_title, parent_rating_key, NULL as leaf_count
-          FROM playback_observations
-          WHERE grandparent_rating_key = ?
-        `).all(showKey, showKey) as any[];
-
-        const episodePlays = new Map<string, DashboardActivityItem[]>();
-        for (const play of plays) {
-          if (!episodePlays.has(play.ratingKey)) {
-            episodePlays.set(play.ratingKey, []);
-          }
-          episodePlays.get(play.ratingKey)!.push(play);
-        }
-
-        const seasonsMap = new Map<string, { seasonName: string; episodes: any[] }>();
-        const seenEpisodes = new Set<string>();
-
-        for (const ep of episodesCatalog) {
-          if (seenEpisodes.has(ep.rating_key)) continue;
-          seenEpisodes.add(ep.rating_key);
-
-          const epPlays = episodePlays.get(ep.rating_key) || [];
-          const watchedStates: { [displayName: string]: string } = {};
-
-          for (const person of people) {
-            const userPlays = epPlays.filter(p => {
-              const names = p.displayNames?.length ? p.displayNames : [p.displayName];
-              return names.includes(person.displayName);
-            });
-            if (userPlays.length === 0) {
-              watchedStates[person.displayName] = "unknown";
-            } else if (userPlays.length === 1) {
-              watchedStates[person.displayName] = userPlays[0].completed ? "watched" : "partial";
-            } else {
-              watchedStates[person.displayName] = "repeated";
-            }
-          }
-
-          const seasonName = ep.parent_title || "Season 1";
-          if (!seasonsMap.has(seasonName)) {
-            seasonsMap.set(seasonName, { seasonName, episodes: [] });
-          }
-
-          let episodeNumber = null;
-          const match = ep.title.match(/(?:Episode|Ep\.)\s*(\d+)/i);
-          if (match) {
-            episodeNumber = Number(match[1]);
-          } else if (epPlays.length > 0) {
-            episodeNumber = epPlays[0].episodeNumber;
-          }
-
-          seasonsMap.get(seasonName)!.episodes.push({
-            ratingKey: ep.rating_key,
-            title: ep.title,
-            episodeNumber,
-            duration: epPlays[0]?.duration || 0,
-            watchedStates
-          });
-        }
-
-        const seasons = [...seasonsMap.values()].map(s => {
-          const seasonNum = Number(s.seasonName.replace(/\D/g, "")) || 1;
-          s.episodes.sort((a, b) => (a.episodeNumber || 0) - (b.episodeNumber || 0) || a.title.localeCompare(b.title));
-          return { ...s, seasonNumber: seasonNum };
-        }).sort((a, b) => a.seasonNumber - b.seasonNumber);
-
-        hierarchy = {
-          type: "tv",
-          showTitle: catalog.grandparent_title || catalog.title,
-          seasons
-        };
-
+        hierarchy = this.buildTvHierarchy(showKey, catalog.grandparent_title || catalog.title, plays, people);
       } else if (category === "audiobook" && audiobook) {
-        const chaptersCatalog = this.db.prepare(`
-          SELECT rating_key, title, duration
-          FROM content_catalog
-          WHERE audiobook_id = ?
-          ORDER BY title, rating_key
-        `).all(audiobook.id) as any[];
-
-        const chapterPlays = new Map<string, DashboardActivityItem[]>();
-        for (const play of plays) {
-          if (!chapterPlays.has(play.ratingKey)) {
-            chapterPlays.set(play.ratingKey, []);
-          }
-          chapterPlays.get(play.ratingKey)!.push(play);
-        }
-
-        const chapters = chaptersCatalog.map(ch => {
-          const chPlays = chapterPlays.get(ch.rating_key) || [];
-          const watchedStates: { [displayName: string]: string } = {};
-
-          for (const person of people) {
-            const userPlays = chPlays.filter(p => {
-              const names = p.displayNames?.length ? p.displayNames : [p.displayName];
-              return names.includes(person.displayName);
-            });
-            if (userPlays.length === 0) {
-              watchedStates[person.displayName] = "unknown";
-            } else if (userPlays.length === 1) {
-              watchedStates[person.displayName] = userPlays[0].completed ? "watched" : "partial";
-            } else {
-              watchedStates[person.displayName] = "repeated";
-            }
-          }
-
-          return {
-            ratingKey: ch.rating_key,
-            title: ch.title,
-            duration: ch.duration || chPlays[0]?.duration || 0,
-            watchedStates
-          };
-        });
-
-        hierarchy = {
-          type: "audiobook",
-          parentSeries: audiobook.parent_series_title,
-          subseries: audiobook.subseries_title,
-          series: audiobook.series_title,
-          bookTitle: audiobook.title,
-          chapters
-        };
+        hierarchy = this.buildAudiobookHierarchy(audiobook, plays, people);
       } else {
         hierarchy = {
           type: "movie"
@@ -2086,6 +1959,290 @@ export class DashboardService {
     });
     return timed.value ? { ...timed.value, timingMs: timed.timingMs } : null;
   }
+
+  private buildTvHierarchy(
+    showKey: string,
+    showTitle: string,
+    plays: DashboardActivityItem[],
+    people: Array<{ displayName: string }>
+  ) {
+    const episodesCatalog = this.db.prepare(`
+      SELECT rating_key, title, parent_title, parent_rating_key, leaf_count
+      FROM content_catalog
+      WHERE grandparent_rating_key = ?
+      UNION
+      SELECT rating_key, title, 'Season ' || season_number AS parent_title, parent_rating_key, NULL as leaf_count
+      FROM playback_observations
+      WHERE grandparent_rating_key = ?
+    `).all(showKey, showKey) as any[];
+
+    const episodePlays = new Map<string, DashboardActivityItem[]>();
+    for (const play of plays) {
+      if (!episodePlays.has(play.ratingKey)) {
+        episodePlays.set(play.ratingKey, []);
+      }
+      episodePlays.get(play.ratingKey)!.push(play);
+    }
+
+    const seasonsMap = new Map<string, { seasonName: string; episodes: any[] }>();
+    const seenEpisodes = new Set<string>();
+
+    for (const ep of episodesCatalog) {
+      if (seenEpisodes.has(ep.rating_key)) continue;
+      seenEpisodes.add(ep.rating_key);
+
+      const epPlays = episodePlays.get(ep.rating_key) || [];
+      const watchedStates: { [displayName: string]: "watched" | "partial" | "repeated" | "unknown" } = {};
+
+      for (const person of people) {
+        const userPlays = epPlays.filter(p => {
+          const names = p.displayNames?.length ? p.displayNames : [p.displayName];
+          return names.includes(person.displayName);
+        });
+        if (userPlays.length === 0) {
+          watchedStates[person.displayName] = "unknown";
+        } else if (userPlays.length === 1) {
+          watchedStates[person.displayName] = userPlays[0].completed ? "watched" : "partial";
+        } else {
+          watchedStates[person.displayName] = "repeated";
+        }
+      }
+
+      const seasonName = ep.parent_title || "Season 1";
+      if (!seasonsMap.has(seasonName)) {
+        seasonsMap.set(seasonName, { seasonName, episodes: [] });
+      }
+
+      let episodeNumber = null;
+      const match = ep.title.match(/(?:Episode|Ep\.)\s*(\d+)/i);
+      if (match) {
+        episodeNumber = Number(match[1]);
+      } else if (epPlays.length > 0) {
+        episodeNumber = epPlays[0].episodeNumber;
+      }
+
+      seasonsMap.get(seasonName)!.episodes.push({
+        ratingKey: ep.rating_key,
+        title: ep.title,
+        episodeNumber,
+        duration: epPlays[0]?.duration || 0,
+        watchedStates
+      });
+    }
+
+    const seasons = [...seasonsMap.values()].map(s => {
+      const seasonNum = Number(s.seasonName.replace(/\D/g, "")) || 1;
+      s.episodes.sort((a, b) => (a.episodeNumber || 0) - (b.episodeNumber || 0) || a.title.localeCompare(b.title));
+      return { ...s, seasonNumber: seasonNum };
+    }).sort((a, b) => a.seasonNumber - b.seasonNumber);
+
+    return {
+      type: "tv" as const,
+      showTitle,
+      seasons
+    };
+  }
+
+  private buildAudiobookHierarchy(
+    audiobook: any,
+    plays: DashboardActivityItem[],
+    people: Array<{ displayName: string }>
+  ) {
+    const chaptersCatalog = this.db.prepare(`
+      SELECT rating_key, title, duration
+      FROM content_catalog
+      WHERE audiobook_id = ?
+      ORDER BY title, rating_key
+    `).all(audiobook.id) as any[];
+
+    const chapterPlays = new Map<string, DashboardActivityItem[]>();
+    for (const play of plays) {
+      if (!chapterPlays.has(play.ratingKey)) {
+        chapterPlays.set(play.ratingKey, []);
+      }
+      chapterPlays.get(play.ratingKey)!.push(play);
+    }
+
+    const chapters = chaptersCatalog.map(ch => {
+      const chPlays = chapterPlays.get(ch.rating_key) || [];
+      const watchedStates: { [displayName: string]: "watched" | "partial" | "repeated" | "unknown" } = {};
+
+      for (const person of people) {
+        const userPlays = chPlays.filter(p => {
+          const names = p.displayNames?.length ? p.displayNames : [p.displayName];
+          return names.includes(person.displayName);
+        });
+        if (userPlays.length === 0) {
+          watchedStates[person.displayName] = "unknown";
+        } else if (userPlays.length === 1) {
+          watchedStates[person.displayName] = userPlays[0].completed ? "watched" : "partial";
+        } else {
+          watchedStates[person.displayName] = "repeated";
+        }
+      }
+
+      return {
+        ratingKey: ch.rating_key,
+        title: ch.title,
+        duration: ch.duration || chPlays[0]?.duration || 0,
+        watchedStates
+      };
+    });
+
+    return {
+      type: "audiobook" as const,
+      parentSeries: audiobook.parent_series_title,
+      subseries: audiobook.subseries_title,
+      series: audiobook.series_title,
+      bookTitle: audiobook.title,
+      chapters
+    };
+  }
+
+  getProgressExpansion(groupKey: string): ProgressHierarchyExpansion | null {
+    const timed = withTiming(() => {
+      const tvMatch = groupKey.match(/^series:(tv|classic_tv|anime):([^:]+):(.+)$/);
+      if (tvMatch) {
+        const category = tvMatch[1] as DashboardCategory;
+        const grandparentRatingKey = tvMatch[3];
+
+        const catalog = this.db.prepare(`
+          SELECT title, leaf_count
+          FROM content_catalog
+          WHERE rating_key = ?
+        `).get(grandparentRatingKey) as any;
+
+        if (!catalog) return null;
+
+        const plays = this.getActivity({ grandparentRatingKey, limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
+        const peopleByName = new Map<string, { displayName: string }>();
+        for (const play of plays) {
+          const names = play.displayNames?.length ? play.displayNames : [play.displayName];
+          for (const displayName of names) {
+            peopleByName.set(displayName, { displayName });
+          }
+        }
+        const people = [...peopleByName.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+        const hierarchy = this.buildTvHierarchy(grandparentRatingKey, catalog.title, plays, people);
+
+        // Calculate distinct completed
+        const distinctCompleted = new Set<string>();
+        const distinctItems = new Set<string>();
+        for (const play of plays) {
+          distinctItems.add(play.ratingKey);
+          if (play.completed) {
+            distinctCompleted.add(play.ratingKey);
+          }
+        }
+
+        const result: ProgressHierarchyExpansion = {
+          groupKey,
+          category,
+          title: catalog.title,
+          artworkUrl: `/api/artwork/${encodeURIComponent(grandparentRatingKey)}`,
+          totalKnown: Boolean(catalog.leaf_count && catalog.leaf_count > 0),
+          totalItems: catalog.leaf_count || null,
+          distinctItems: distinctItems.size,
+          distinctCompleted: distinctCompleted.size,
+          people,
+          hierarchy,
+          timingMs: 0
+        };
+        return result;
+      }
+
+      const abMatch = groupKey.match(/^audiobook:([^:]+):(.+)$/);
+      if (abMatch) {
+        const audiobookId = Number(abMatch[2]);
+        const audiobook = this.db.prepare(`
+          SELECT id, title, parent_series_title, subseries_title, series_title, chapter_count, cover_url
+          FROM audiobook_books
+          WHERE id = ?
+        `).get(audiobookId) as any;
+
+        if (!audiobook) return null;
+
+        const plays = this.getActivity({ audiobookId, limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
+        const peopleByName = new Map<string, { displayName: string }>();
+        for (const play of plays) {
+          const names = play.displayNames?.length ? play.displayNames : [play.displayName];
+          for (const displayName of names) {
+            peopleByName.set(displayName, { displayName });
+          }
+        }
+        const people = [...peopleByName.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+        const hierarchy = this.buildAudiobookHierarchy(audiobook, plays, people);
+
+        const distinctCompleted = new Set<string>();
+        const distinctItems = new Set<string>();
+        for (const play of plays) {
+          distinctItems.add(play.ratingKey);
+          if (play.completed) {
+            distinctCompleted.add(play.ratingKey);
+          }
+        }
+
+        const result: ProgressHierarchyExpansion = {
+          groupKey,
+          category: "audiobook",
+          title: audiobook.title,
+          artworkUrl: `/api/artwork/audiobook%3A${audiobookId}`,
+          totalKnown: Boolean(audiobook.chapter_count && audiobook.chapter_count > 0),
+          totalItems: audiobook.chapter_count || null,
+          distinctItems: distinctItems.size,
+          distinctCompleted: distinctCompleted.size,
+          people,
+          hierarchy,
+          timingMs: 0
+        };
+        return result;
+      }
+
+      const mvMatch = groupKey.match(/^movie:([^:]+):(.+)$/);
+      if (mvMatch) {
+        const ratingKey = mvMatch[2];
+        const catalog = this.db.prepare(`
+          SELECT title, duration, library_title, media_type, leaf_count, source_provenance
+          FROM content_catalog
+          WHERE rating_key = ?
+        `).get(ratingKey) as any;
+
+        if (!catalog) return null;
+
+        const plays = this.getActivity({ ratingKey, limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
+        const peopleByName = new Map<string, { displayName: string }>();
+        for (const play of plays) {
+          const names = play.displayNames?.length ? play.displayNames : [play.displayName];
+          for (const displayName of names) {
+            peopleByName.set(displayName, { displayName });
+          }
+        }
+        const people = [...peopleByName.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+        const result: ProgressHierarchyExpansion = {
+          groupKey,
+          category: "movie",
+          title: catalog.title,
+          artworkUrl: `/api/artwork/${encodeURIComponent(ratingKey)}`,
+          totalKnown: true,
+          totalItems: 1,
+          distinctItems: 1,
+          distinctCompleted: plays.some(p => p.completed) ? 1 : 0,
+          people,
+          hierarchy: { type: "movie" },
+          timingMs: 0
+        };
+        return result;
+      }
+
+      return null;
+    });
+
+    return timed.value ? { ...timed.value, timingMs: timed.timingMs } : null;
+  }
+
 
   private mapActivity(row: any, cowatchMap?: Map<number, { event: any; participant: any }>): DashboardActivityItem {
     const libraryName = resolveLibraryName(row.library_name, row.catalog_library_title ?? row.group_catalog_library_title);
@@ -2141,11 +2298,14 @@ export class DashboardService {
         category: category.category,
         title: row.title,
         showTitle: row.show_title ?? undefined,
-        audiobookTitle: row.audiobook_title ?? undefined
+        audiobookTitle: row.audiobook_title ?? undefined,
+        parentTitle: row.catalog_parent_title ?? undefined
       }),
       ratingKey: row.rating_key, 
       title: row.title, 
       showTitle: row.show_title ?? undefined, 
+      parentTitle: row.catalog_parent_title ?? undefined,
+      grandparentTitle: row.catalog_grandparent_title ?? undefined,
       mediaType: row.media_type, 
       category: category.category, 
       categoryLabel: category.label, 

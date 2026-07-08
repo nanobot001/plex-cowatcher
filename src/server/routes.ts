@@ -163,6 +163,13 @@ export function buildRouter(
     try { res.json({ ok: true, data: dashboardService.getProgress(req.query) }); }
     catch (e) { next(e); }
   });
+  router.get("/api/dashboard/progress/expand/:groupKey", (req, res, next) => {
+    try {
+      const result = dashboardService.getProgressExpansion(decodeURIComponent(req.params.groupKey));
+      res.json({ ok: true, data: result });
+    }
+    catch (e) { next(e); }
+  });
   router.get("/api/dashboard/continue-watching", (req, res, next) => {
     try { res.json({ ok: true, data: dashboardService.getContinueWatching(req.query) }); }
     catch (e) { next(e); }
