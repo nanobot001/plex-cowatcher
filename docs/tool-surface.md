@@ -27,6 +27,7 @@ Here is how the project's implemented commands and API routes map to the standar
 | `project.cowatching` | `node dist/cli/cli.js cowatching` | `GET /api/cowatching` | `public_read` | Infers co-watching from overlapping evidence plus confirmations. |
 | `project.audiobook_backfill` | `node dist/cli/cli.js audiobook-backfill` | *(none)* | `write_action` | Dry-run by default; optionally links audiobook tracks, enriches canonical book rows, writes resumable cursors, and creates a verified SQLite backup before apply. |
 | `project.audiobook_scan` | `node dist/cli/cli.js scan-audiobooks` | `POST /webhooks/plex` | `write_action` | Proactively scans the Plex Audiobooks library or processes real-time webhook triggers to import and enrich new audiobooks. |
+| `project.audiobook_import_chapters` | `node dist/cli/cli.js import-audiobook-chapters` | *(none)* | `write_action` | Dry-run by default; imports verified audiobook chapter boundaries from a JSON file. |
 
 ## Contract Notes
 

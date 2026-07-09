@@ -1,8 +1,9 @@
 # Block 3-2n-5a: Audiobook Chapter Import And Cache
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Follow-up to 3-2n-5; imports verified chapter boundaries from an explicit chapter source instead of asking Plex CoWatcher to discover chapters itself.
+> Status: Implemented on 2026-07-09.
+> Result: Implemented.
+> Verification: `npm run verify:block` - passed.
+> Notes: Added SQLite schema for chapter sources and chapter cache boundaries, implemented the CLI import command with dry-run support, and updated dashboard endpoints to expose verified chapter availability.
 
 ## Goal
 

@@ -1,5 +1,15 @@
 # Continue Here
 
+## 2026-07-09
+
+Current state:
+- Block 3-2n-5 (Audiobook Progress Source Honesty) is completed and verified. The dashboard endpoints and UI now explicitly expose progress unit, label, and source metadata, and set `totalKnown = false` for unverified audiobooks to avoid rendering incorrect percentages.
+- Block 3-2n-5a (Audiobook Chapter Import and Cache) is completed and verified. We created SQLite schemas for chapter sources and boundaries, implemented the CLI import command with dry-run support, and updated dashboard endpoints to expose verified chapter availability.
+- Verification passed: `npm run verify:block` (78/78 service tests, 30/30 Playwright E2E tests, dashboard syntax, and tool contracts).
+
+Next step:
+- Implement **Block 3-2n-5b: True Audiobook Chapter Progress** (`docs/blocks/block-3-2n-5b-true-audiobook-chapter-progress.md`), then **Block 3-2n-6: Progress Evidence Map Polish** (`docs/blocks/block-3-2n-6-progress-evidence-map-polish.md`) before starting 3-2o.
+
 ## 2026-07-08
 
 Current state:

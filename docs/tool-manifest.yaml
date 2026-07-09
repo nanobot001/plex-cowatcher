@@ -173,3 +173,19 @@ tools:
           default: Audiobooks
     output_schema:
       type: object
+
+  - name: project.audiobook_import_chapters
+    risk: write_action
+    description: Import verified audiobook chapter boundaries from a JSON file.
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        file_path:
+          type: string
+        apply:
+          type: boolean
+          default: false
+    output_schema:
+      type: object
+

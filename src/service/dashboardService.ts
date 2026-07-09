@@ -1647,6 +1647,7 @@ export class DashboardService {
         let progressUnitLabel: any = undefined;
         let progressSource: any = undefined;
         let progressSourceVerified: any = undefined;
+        let hasVerifiedChapters: boolean | undefined = undefined;
 
         if (first.category === "audiobook") {
           progressUnit = "track";
@@ -1655,7 +1656,7 @@ export class DashboardService {
           progressSourceVerified = false;
 
           const book = this.db.prepare(`
-            SELECT ab.parent_series_title, ab.subseries_title, ab.series_title, ab.title, ab.chapter_count
+            SELECT ab.id, ab.parent_series_title, ab.subseries_title, ab.series_title, ab.title, ab.chapter_count
             FROM content_catalog cat
             JOIN audiobook_books ab ON ab.id = cat.audiobook_id
             WHERE cat.rating_key = ?
@@ -1669,6 +1670,12 @@ export class DashboardService {
               series: book.series_title || null,
               book: book.title || null
             };
+            const hasSource = this.db.prepare(`
+              SELECT 1 FROM audiobook_chapter_sources 
+              WHERE audiobook_id = ? AND source_status = 'active'
+              LIMIT 1
+            `).get(book.id);
+            hasVerifiedChapters = !!hasSource;
           }
         } else if (first.category === "tv" || first.category === "classic_tv" || first.category === "anime") {
           progressUnit = "episode";
@@ -1725,6 +1732,7 @@ export class DashboardService {
           progressUnitLabel,
           progressSource,
           progressSourceVerified,
+          hasVerifiedChapters,
           totalKnown,
           totalItems,
           distinctItems: g.distinctItems.size,
@@ -2210,6 +2218,13 @@ export class DashboardService {
           }
         }
 
+        const hasSource = this.db.prepare(`
+          SELECT 1 FROM audiobook_chapter_sources 
+          WHERE audiobook_id = ? AND source_status = 'active'
+          LIMIT 1
+        `).get(audiobookId);
+        const hasVerifiedChapters = !!hasSource;
+
         const result: ProgressHierarchyExpansion = {
           groupKey,
           category: "audiobook",
@@ -2219,6 +2234,7 @@ export class DashboardService {
           progressUnitLabel: "tracks",
           progressSource: "plex",
           progressSourceVerified: false,
+          hasVerifiedChapters,
           totalKnown: false,
           totalItems: audiobook.chapter_count || null,
           distinctItems: distinctItems.size,

@@ -1339,6 +1339,7 @@ test("audiobook migration is repeatable and does not denormalize onto observatio
     migrateDatabase(db);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 5").get().count, 1);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 7").get().count, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 13").get().count, 1);
     const catalogColumns = db.prepare("PRAGMA table_info(content_catalog)").all().map((column) => column.name);
     const bookColumns = db.prepare("PRAGMA table_info(audiobook_books)").all().map((column) => column.name);
     const observationColumns = db.prepare("PRAGMA table_info(playback_observations)").all().map((column) => column.name);
@@ -2803,6 +2804,77 @@ test("dashboard service progress contract verifies repeat plays, unknown totals,
     })
   });
 });
+
+test("audiobook chapter import verifies dry-run, apply database caching, and hasVerifiedChapters reporting", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO audiobook_books (id, folder_key, title, series_title, chapter_count, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES (10, 'hobbit-folder', 'The Hobbit', 'Middle Earth', 3, 'audnexus', 'enriched', '2026-07-06T00:00:00Z', '2026-07-06T00:00:00Z')
+    `).run();
+
+    const catalog = new AudiobookCatalogService(db);
+
+    const importData = {
+      audiobookId: 10,
+      chapters: [
+        { index: 1, title: "Chapter 1", start_offset_ms: 0, end_offset_ms: 60000 },
+        { index: 2, title: "Chapter 2", start_offset_ms: 60000, end_offset_ms: 120000 }
+      ]
+    };
+
+    const dryRunResult = catalog.importChapters(importData, { apply: false });
+    assert.equal(dryRunResult.success, true);
+    assert.equal(dryRunResult.dryRun, true);
+    assert.equal(dryRunResult.chaptersCount, 2);
+
+    const dryRunSources = db.prepare("SELECT COUNT(*) AS count FROM audiobook_chapter_sources").get().count;
+    assert.equal(dryRunSources, 0);
+
+    const applyResult = catalog.importChapters(importData, { apply: true });
+    assert.equal(applyResult.success, true);
+    assert.equal(applyResult.dryRun, false);
+
+    const source = db.prepare("SELECT * FROM audiobook_chapter_sources WHERE audiobook_id = 10").get();
+    assert.ok(source);
+    assert.equal(source.source_type, "audiobook_tool");
+    assert.equal(source.source_status, "active");
+
+    const chapters = db.prepare("SELECT * FROM audiobook_chapters WHERE audiobook_id = 10 ORDER BY chapter_index").all();
+    assert.equal(chapters.length, 2);
+    assert.equal(chapters[0].title, "Chapter 1");
+    assert.equal(chapters[1].title, "Chapter 2");
+    assert.equal(chapters[1].start_offset_ms, 60000);
+
+    const { DashboardService } = await import("../dist/service/dashboardService.js");
+    const dashboard = new DashboardService(db);
+
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, enabled, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, '2026-07-06T00:00:00Z', '2026-07-06T00:00:00Z')
+    `).run();
+
+    db.prepare(`
+      INSERT INTO playback_observations (user_id, rating_key, media_type, library_name, title, watched_at, watched_at_provenance, completed, duration, created_at, updated_at)
+      VALUES (1, 'ch-1', 'track', 'Audiobooks', 'Chapter 1', '2026-07-06T10:00:00Z', 'plex', 1, 60000, '2026-07-06T10:00:00Z', '2026-07-06T10:00:00Z')
+    `).run();
+
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, library_title, audiobook_id, source_provenance, refreshed_at)
+      VALUES ('ch-1', 'track', 'Chapter 1', 'Audiobooks', 10, 'plex', '2026-07-06T12:00:00Z')
+    `).run();
+
+    const progress = dashboard.getProgress({ user: "Tony" });
+    const progressItem = progress.recentlyActive.items.find(x => x.title === "The Hobbit");
+    assert.ok(progressItem);
+    assert.equal(progressItem.hasVerifiedChapters, true);
+
+    const expansion = dashboard.getProgressExpansion("audiobook:Audiobooks:10");
+    assert.ok(expansion);
+    assert.equal(expansion.hasVerifiedChapters, true);
+  });
+});
+
+
 
 
 let passed = 0;

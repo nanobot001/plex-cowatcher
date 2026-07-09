@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Db } from "../db/database.js";
 import type { AudiobookBook, PlexRichMetadata, TautulliHistoryRow } from "../types/index.js";
 import { nowIso } from "../utils/time.js";
+import { AuditService } from "./auditService.js";
 
 export interface AudiobookPathIdentity {
   folderKey: string;
@@ -587,6 +588,87 @@ export class AudiobookCatalogService {
         data.language ?? null, data.sourceProvenance,
         now, id
       );
+    }
+  }
+
+  importChapters(input: any, options: { apply: boolean }): { success: boolean; chaptersCount: number; audiobookId: number; dryRun: boolean; title: string } {
+    const audit = new AuditService(this.db);
+    const actor = "cli-import";
+    const payload = { input, options };
+
+    try {
+      let audiobook: any = null;
+      if (input.audiobookId) {
+        audiobook = this.db.prepare("SELECT id, title FROM audiobook_books WHERE id = ?").get(input.audiobookId);
+      } else if (input.asin) {
+        audiobook = this.db.prepare("SELECT id, title FROM audiobook_books WHERE asin = ?").get(input.asin);
+      } else if (input.folderKey) {
+        audiobook = this.db.prepare("SELECT id, title FROM audiobook_books WHERE folder_key = ?").get(input.folderKey);
+      }
+
+      if (!audiobook) {
+        throw new Error("Audiobook not found in database using the provided audiobookId, asin, or folderKey.");
+      }
+
+      if (!input.chapters || !Array.isArray(input.chapters)) {
+        throw new Error("Chapters array is missing or invalid.");
+      }
+
+      for (const ch of input.chapters) {
+        if (typeof ch.index !== "number" || typeof ch.title !== "string" || typeof ch.start_offset_ms !== "number" || typeof ch.end_offset_ms !== "number") {
+          throw new Error(`Invalid chapter at index: ${ch.index ?? "unknown"}. Must contain index (number), title (string), start_offset_ms (number), end_offset_ms (number)`);
+        }
+      }
+
+      const sourceType = input.sourceType || "audiobook_tool";
+      const status = input.sourceStatus || "active";
+      const confidence = typeof input.confidence === "number" ? input.confidence : 1.0;
+      const now = nowIso();
+
+      if (options.apply) {
+        this.db.exec("BEGIN IMMEDIATE");
+        try {
+          this.db.prepare(`
+            INSERT INTO audiobook_chapter_sources (audiobook_id, source_type, source_status, confidence, refreshed_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(audiobook_id, source_type) DO UPDATE SET
+              source_status = excluded.source_status,
+              confidence = excluded.confidence,
+              refreshed_at = excluded.refreshed_at
+          `).run(audiobook.id, sourceType, status, confidence, now);
+
+          this.db.prepare("DELETE FROM audiobook_chapters WHERE audiobook_id = ?").run(audiobook.id);
+
+          const insertStmt = this.db.prepare(`
+            INSERT INTO audiobook_chapters (audiobook_id, chapter_index, title, start_offset_ms, end_offset_ms, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `);
+          for (const ch of input.chapters) {
+            insertStmt.run(audiobook.id, ch.index, ch.title, ch.start_offset_ms, ch.end_offset_ms, now, now);
+          }
+
+          this.db.exec("COMMIT");
+        } catch (dbErr: any) {
+          this.db.exec("ROLLBACK");
+          throw dbErr;
+        }
+
+        audit.record("import-audiobook-chapters", actor, "success", { ...payload, audiobookId: audiobook.id, chaptersCount: input.chapters.length });
+      } else {
+        audit.record("import-audiobook-chapters-dryrun", actor, "success", { ...payload, audiobookId: audiobook.id, chaptersCount: input.chapters.length });
+      }
+
+      return {
+        success: true,
+        chaptersCount: input.chapters.length,
+        audiobookId: audiobook.id,
+        dryRun: !options.apply,
+        title: audiobook.title
+      };
+
+    } catch (err: any) {
+      audit.record("import-audiobook-chapters", actor, "failed", payload, err.message);
+      throw err;
     }
   }
 }

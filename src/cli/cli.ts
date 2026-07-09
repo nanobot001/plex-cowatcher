@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import fs from "node:fs";
 import { openMigratedDatabase } from "../db/database.js";
 import { createPlexAdapter } from "../adapters/plexAdapter.js";
 import { createTautulliAdapter } from "../adapters/tautulliAdapter.js";
@@ -315,8 +316,58 @@ async function main(): Promise<void> {
         }
       }
       break;
+    case "import-audiobook-chapters":
+      {
+        const filePath = args[0];
+        if (!filePath) {
+          print({
+            ok: false,
+            tool: "project.audiobook_import_chapters",
+            timestamp: new Date().toISOString(),
+            error: {
+              code: "MISSING_FILE_PATH",
+              message: "Provide a JSON file path as the first argument.",
+              retryable: false,
+              severity: "error"
+            }
+          });
+          break;
+        }
+
+        try {
+          if (!fs.existsSync(filePath)) {
+            throw new Error(`File does not exist: ${filePath}`);
+          }
+          const content = fs.readFileSync(filePath, "utf8");
+          const json = JSON.parse(content);
+
+          const { AudiobookCatalogService } = await import("../service/audiobookService.js");
+          const catalogService = new AudiobookCatalogService(db);
+          const apply = args.includes("--apply");
+          const result = catalogService.importChapters(json, { apply });
+          print({
+            ok: true,
+            tool: "project.audiobook_import_chapters",
+            timestamp: new Date().toISOString(),
+            data: result
+          });
+        } catch (error) {
+          print({
+            ok: false,
+            tool: "project.audiobook_import_chapters",
+            timestamp: new Date().toISOString(),
+            error: {
+              code: "IMPORT_AUDIOBOOK_CHAPTERS_FAILED",
+              message: error instanceof Error ? error.message : String(error),
+              retryable: false,
+              severity: "error"
+            }
+          });
+        }
+      }
+      break;
     default:
-      print({ ok: true, commands: ["health", "users", "recent", "pending", "preview-copy", "apply-copy", "audiobook-backfill", "scan-audiobooks", "audit", "retry-failed", "verify-plex-watched-state", "test-discord-prompt"] });
+      print({ ok: true, commands: ["health", "users", "recent", "pending", "preview-copy", "apply-copy", "audiobook-backfill", "scan-audiobooks", "import-audiobook-chapters", "audit", "retry-failed", "verify-plex-watched-state", "test-discord-prompt"] });
   }
 }
 

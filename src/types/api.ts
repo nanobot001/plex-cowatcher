@@ -189,6 +189,7 @@ export interface DashboardProgressGroup {
   progressUnitLabel?: string;
   progressSource?: ProgressSource;
   progressSourceVerified?: boolean;
+  hasVerifiedChapters?: boolean;
   totalKnown: boolean;
   totalItems: number | null;
   distinctItems: number;
@@ -253,6 +254,7 @@ export interface ProgressHierarchyExpansion {
   progressUnitLabel?: string;
   progressSource?: ProgressSource;
   progressSourceVerified?: boolean;
+  hasVerifiedChapters?: boolean;
   totalKnown: boolean;
   totalItems: number | null;
   distinctItems: number;
