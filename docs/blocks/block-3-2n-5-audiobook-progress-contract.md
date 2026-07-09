@@ -1,87 +1,93 @@
-# Block 3-2n-5: Audiobook Progress Contract
+# Block 3-2n-5: Audiobook Progress Source Honesty
 
 > Status: Planned.
 > Result: Not implemented.
-> Notes: Fifth child of the 3-2n Progress sequence; corrects audiobook progress semantics before visual polish or final dashboard gating.
+> Notes: Fifth child of the 3-2n Progress sequence; corrects the current unsafe assumption that Plex audiobook track rows are verified chapters.
 
 ## Goal
 
-Make audiobook Progress honest, readable, and contract-backed by treating an audiobook as a book with chapter progress, known or unknown totals, partial listening, repeats, and reliable book/series context. This block should make the data shape trustworthy before a later UI polish block turns it into a compact evidence map.
+Make audiobook Progress honest before adding richer chapter support. Current local data can prove canonical book identity, Plex/Tautulli playback evidence, linked catalog rows, partial plays, repeats, duration, and book-level progress. It cannot yet prove true audiobook chapter boundaries for every book. This block must expose source quality explicitly, stop labeling unverified track/file rows as chapters, and trigger lightweight audiobook metadata caching when audiobook watches are ingested.
 
 ## Dependencies And Entry Gate
 
 - Blocks 3-2n-1 through 3-2n-4 are implemented and verified.
-- Existing audiobook catalog tables, content catalog links, and hierarchy expansion endpoints are available.
-- Block 3-2o must not start until this block and the follow-up readability block have passed their exit gates.
+- Existing audiobook catalog tables, content catalog links, playback observations, and hierarchy expansion endpoints are available.
+- `docs/blocks/completed/block-3-1-audiobook-differentiation.md` is treated as a drift warning: Plex tracks do not map 1:1 to chapters.
+- Block 3-2n-5a must not start until this block passes its exit gate.
 
 ## Scope
 
-- Define audiobook Progress semantics explicitly: completed chapters over total chapters when total is known, observed chapters when total is unknown, partial chapters as partial, and repeated chapters as repeated rather than extra completion.
-- Tighten the typed Progress summary and expansion contract for audiobooks so cards and expanded hierarchy can distinguish known total chapters, unknown total chapters, catalogued chapter count, observed distinct chapters, completed distinct chapters, partial distinct chapters, repeated chapter evidence, and optional total/observed duration when chapter totals are incomplete.
-- Ensure audiobook grouping uses stable book identity (`audiobook_books.id` when available) and canonical book title/artwork, not author, artist, series, album, or chapter identity.
-- Ensure expanded audiobook hierarchy orders chapters by the best available stable catalog order; if only title/rating-key fallback exists, keep it deterministic and do not imply authoritative chapter order.
-- Preserve unknown-total semantics: unknown must not render as zero, complete, or 100%.
-- Extend deterministic service fixtures and tests for a known-total audiobook, an unknown-total audiobook, a partial chapter, and a repeated chapter.
-- Update browser-facing copy only as needed to expose the corrected contract in a minimal readable way; leave full visual dot-map polish to 3-2n-6.
+- Add typed audiobook Progress source fields such as `progressUnit`, `progressUnitLabel`, `progressSource`, and `progressSourceVerified` to summary and expansion contracts.
+- Establish a durable vocabulary contract: `progressUnit` ("episode", "movie", "track", "chapter", "book") and `progressSource` ("plex", "audiobook_tool", "unknown").
+- Treat current `audiobook_books.chapter_count` as an observed track count. Explicitly set `totalKnown = false` for unverified audiobooks so progress bars do not show false percentages.
+- Rename browser-facing audiobook copy away from "chapters" for unverified Plex track/file data.
+- Preserve partial, completed, repeated, observed-duration, canonical book identity, series context, and artwork behavior.
+- Trigger lightweight `MetadataService` caching/linking for audiobook playback observations during ingestion, matching the existing movie/episode enrichment pattern without running heavy chapter discovery.
+- Extend deterministic service and dashboard tests so current audiobook Progress cannot regress back to false chapter claims.
 
 ## Out Of Scope
 
-- Broad audiobook enrichment, scanner redesign, external metadata lookups, or full library backfill.
-- Changing Plex, Tautulli, Discord, copy-history, or watched-state mutation behavior.
-- Replacing the lazy expansion model, adding multi-card expansion, or rendering all audiobook chapters on first paint.
-- Final typography, animation, and dot-map visual polish beyond the minimum needed to verify the corrected contract.
-- Inventing movie hierarchy or changing TV/Classic TV/Anime progress math except where shared types require non-behavioral compatibility updates.
+- Running `ffprobe`, Audnexus, silence detection, Whisper, Prologue automation, media repair, or sidecar chapter imports.
+- Creating chapter boundary tables or mapping playback offsets to chapters.
+- Treating Plex track rows, file parts, or `audiobook_books.chapter_count` as verified chapters.
+- Replacing the lazy expansion model, adding multi-card expansion, or rendering all audiobook evidence on first paint.
+- Visual dot-map polish; Block 3-2n-6 owns the final readable evidence-map treatment after source honesty is in place.
 
 ## Risk And Mitigation Plan
 
-- Risk: chapter counts may be missing or wrong, causing the UI to display false precision.
-- Mitigation: carry explicit `totalKnown` and catalog-quality fields; render unknown totals as unknown and test missing-total cases.
-- Risk: repeated listens may inflate completion.
-- Mitigation: count distinct completed chapters separately from plays and repeats, and test repeated chapter evidence.
-- Risk: chapter ordering may be unreliable if catalog metadata lacks an index.
-- Mitigation: use the best stable order available, document fallback behavior in the contract, and avoid labels that imply verified order when the order is only deterministic.
-- Risk: fixing audiobook semantics could drift into a broad audiobook catalog rebuild.
-- Mitigation: constrain changes to Progress read models, expansion responses, fixtures, and tests unless a narrowly scoped catalog linkage bug blocks the contract.
+- Risk: false precision from old `chapter_count` semantics.
+- Mitigation: rename exposed copy and add explicit source-quality fields before later UI polish consumes the data.
+- Risk: audiobook metadata remains stale because ingestion does not cache audiobook rows.
+- Mitigation: add lightweight metadata caching for audiobook observations only; leave heavy chapter probing to explicit later blocks.
+- Risk: dashboard copy becomes vague.
+- Mitigation: use precise labels such as `tracks/files`, `book progress`, or `unknown`, and reserve `chapters` for future verified chapter sources.
+- Risk: future blocks forget why this correction exists.
+- Mitigation: update durable dashboard/data/testing docs with the source-honesty contract.
 
 ## Drift Controls
 
-- Do not hide bad audiobook catalog data behind polished copy.
-- Do not convert unknown totals into percentages.
-- Do not use duration-only progress as primary progress when reliable chapter totals exist.
-- Do not add write actions, Plex mutations, recommendations, goals, ratings, or collection editing.
-- Do not weaken existing 3-2n TV/Movie regression coverage while adding audiobook cases.
+- Do not hide poor audiobook metadata behind polished chapter language.
+- Do not convert unknown or unverified totals into percentages.
+- Do not expose private file paths, adapter secrets, API keys, or local-only details in dashboard/tool responses.
+- Do not add write actions, Plex mutations, recommendations, ratings, or collection editing.
+- Do not weaken existing TV, Classic TV, Anime, Movie, People, Timeline, or tool-contract coverage.
 
 ## Dependency Plan
 
 - Start from `src/service/dashboardService.ts` audiobook Progress grouping and expansion behavior.
-- Check `src/types/api.ts` before browser changes so the contract names and nullability are explicit.
-- Extend `tests/run-tests.mjs` before or alongside browser tests to lock service-level audiobook semantics.
-- Use `tests/e2e/fixture-server.mjs` only for deterministic UI cases needed by this block and 3-2n-6.
+- Check `src/types/api.ts` before browser changes so source-quality names and nullability are explicit.
+- Update `src/service/ingestionService.ts` to cache audiobook metadata through the existing `MetadataService` seam.
+- Extend `tests/run-tests.mjs` before or alongside browser tests to lock service-level source semantics.
+- Use `tests/e2e/fixture-server.mjs` only for deterministic UI cases needed by this block and later polish.
 
 ## Opportunities To Use
 
-- Reuse `audiobook_books.chapter_count`, `total_duration_seconds`, hierarchy series fields, and canonical artwork routing.
-- Reuse the lazy `/api/dashboard/progress/expand/:groupKey` endpoint instead of creating a second audiobook detail path.
-- Produce a cleaner contract that makes the 3-2n-6 dot-map UI smaller, more accessible, and less ambiguous.
+- Reuse canonical `audiobook_books.id`, title, artwork, hierarchy fields, linked `content_catalog` rows, and playback observations.
+- Reuse the lazy `/api/dashboard/progress/expand/:groupKey` endpoint while making its unit/source semantics honest.
+- Produce a contract that lets 3-2n-5a import true chapters later without another browser vocabulary reset.
 
 ## Likely Files Or Areas
 
 - `src/service/dashboardService.ts`
+- `src/service/ingestionService.ts`
 - `src/types/api.ts`
+- `src/web/static/dashboard.js`
 - `tests/run-tests.mjs`
 - `tests/e2e/fixture-server.mjs`
 - `tests/e2e/dashboard-regression.spec.mjs`
+- `docs/data/README.md`
 - `docs/testing/dashboard-regression-contract.md`
 - `docs/design/dashboard-redesign-contract.md`
 
 ## Acceptance Criteria
 
-- Known-total audiobook Progress summaries expose and display `completed chapters / total chapters` without counting repeats as additional completion.
-- Unknown-total audiobook summaries expose and display observed chapter evidence without fake percentages, zero totals, or complete states.
-- Partial, watched, repeated, and unknown chapter states are represented distinctly in the typed expansion response.
-- Audiobook cards and expanded hierarchy use canonical book title, book cover, and book identity when available.
-- Expanded audiobook chapter ordering is deterministic and documented by contract behavior.
-- Deterministic tests cover known-total, unknown-total, partial, repeated, and missing-catalog cases.
+- Audiobook Progress responses include explicit unit/source fields for summary cards and expansion responses.
+- Existing Plex catalog rows are displayed as tracks/files or book-level evidence, not as verified chapters.
+- Audiobook `totalKnown` is `false` when the only source of total count is observed catalog rows. Progress bars do not show percentages for audiobooks with `totalKnown = false`.
+- Browser-facing Progress copy never says `chapters` for unverified Plex track/file evidence.
+- Audiobook metadata caching is triggered for newly ingested audiobook observations without invoking heavy chapter discovery.
+- Partial, completed, repeated, observed-duration, canonical book identity, and artwork behavior remain intact.
+- Deterministic tests cover multi-track audiobook evidence, single-file/book-level progress evidence, unknown source evidence, partials, repeats, and missing-catalog cases.
 - Existing TV, Classic TV, Anime, Movie, People, Timeline, and tool-contract tests continue to pass.
 
 ## Verification

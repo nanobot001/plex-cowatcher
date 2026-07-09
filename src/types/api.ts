@@ -40,6 +40,9 @@ export interface HealthResponse {
 export type DashboardLayout = "overview" | "timeline" | "explorer" | "people" | "progress";
 export type DashboardCategory = "movie" | "tv" | "classic_tv" | "anime" | "audiobook";
 
+export type ProgressUnit = "episode" | "movie" | "track" | "chapter" | "book" | "unknown";
+export type ProgressSource = "plex" | "audiobook_tool" | "unknown";
+
 export interface DashboardFilters {
   dateFrom?: string;
   dateTo?: string;
@@ -182,6 +185,10 @@ export interface DashboardProgressGroup {
   category: DashboardCategory;
   artworkUrl: string;
   latestWatchedAt: string;
+  progressUnit?: ProgressUnit;
+  progressUnitLabel?: string;
+  progressSource?: ProgressSource;
+  progressSourceVerified?: boolean;
   totalKnown: boolean;
   totalItems: number | null;
   distinctItems: number;
@@ -242,6 +249,10 @@ export interface ProgressHierarchyExpansion {
   category: DashboardCategory;
   title: string;
   artworkUrl: string;
+  progressUnit?: ProgressUnit;
+  progressUnitLabel?: string;
+  progressSource?: ProgressSource;
+  progressSourceVerified?: boolean;
   totalKnown: boolean;
   totalItems: number | null;
   distinctItems: number;

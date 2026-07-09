@@ -6,10 +6,10 @@ Current state:
 - Block 3-2n-4 (Progress Hierarchy UI & Regression) is completed and verified. Progress cards now lazily expand one URL-restorable hierarchy at a time, cache fetched expansion responses, preserve filters/pagination/history state, keep Movies non-expandable, and drill through to the shared detail workspace.
 - The deterministic dashboard fixture now covers TV, Classic TV, Anime, Audiobook, and Movie Progress behavior.
 - Verification passed: `npm run verify:block` (77/77 service tests, 30/30 Playwright E2E tests, dashboard syntax, and tool contracts).
-- Follow-up planning identified that the 3-2n-4 outcome is technically safe but not yet acceptable for audiobook correctness or Progress readability: audiobook Progress needs explicit chapter-total semantics, and expanded Progress needs compact accessible evidence maps instead of chunky text rows.
+- Follow-up planning identified that the 3-2n-4 outcome is technically safe but not yet acceptable for audiobook correctness or Progress readability. Source review corrected the next step: current audiobook totals are linked Plex track/file evidence, not verified chapter truth, so Progress must first expose source honesty before any true chapter progress or dot-map polish.
 
 Next step:
-- Implement **Block 3-2n-5: Audiobook Progress Contract** (`docs/blocks/block-3-2n-5-audiobook-progress-contract.md`), then **Block 3-2n-6: Progress Evidence Map Polish** (`docs/blocks/block-3-2n-6-progress-evidence-map-polish.md`) before starting 3-2o.
+- Implement **Block 3-2n-5: Audiobook Progress Source Honesty** (`docs/blocks/block-3-2n-5-audiobook-progress-contract.md`), then **Block 3-2n-5a: Audiobook Chapter Import And Cache** (`docs/blocks/block-3-2n-5a-audiobook-chapter-import-cache.md`), then **Block 3-2n-5b: True Audiobook Chapter Progress** (`docs/blocks/block-3-2n-5b-true-audiobook-chapter-progress.md`), then **Block 3-2n-6: Progress Evidence Map Polish** (`docs/blocks/block-3-2n-6-progress-evidence-map-polish.md`) before starting 3-2o.
 
 ## 2026-07-06
 
@@ -88,8 +88,8 @@ Do-not-forget checks:
 
 ## Next Recommended Step
 
-- Start with **Block 3-2n-5: Audiobook Progress Contract**.
-- Then implement **Block 3-2n-6: Progress Evidence Map Polish** before starting 3-2o.
+- Start with **Block 3-2n-5: Audiobook Progress Source Honesty**.
+- Then implement **Block 3-2n-5a: Audiobook Chapter Import And Cache**, **Block 3-2n-5b: True Audiobook Chapter Progress**, and **Block 3-2n-6: Progress Evidence Map Polish** before starting 3-2o.
 - Implement only one corrective block at a time and do not begin the next block until the current block's exit gate is recorded as passing.
 - Resume Block 3-3 only after Block 3-2o completes the final dashboard release gate.
 

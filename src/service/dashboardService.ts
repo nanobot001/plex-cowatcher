@@ -1643,8 +1643,17 @@ export class DashboardService {
         let totalKnown = false;
         let totalItems: number | null = null;
         let hierarchy: any = null;
+        let progressUnit: any = undefined;
+        let progressUnitLabel: any = undefined;
+        let progressSource: any = undefined;
+        let progressSourceVerified: any = undefined;
 
         if (first.category === "audiobook") {
+          progressUnit = "track";
+          progressUnitLabel = "tracks";
+          progressSource = "plex";
+          progressSourceVerified = false;
+
           const book = this.db.prepare(`
             SELECT ab.parent_series_title, ab.subseries_title, ab.series_title, ab.title, ab.chapter_count
             FROM content_catalog cat
@@ -1652,7 +1661,7 @@ export class DashboardService {
             WHERE cat.rating_key = ?
           `).get(first.ratingKey) as any;
           if (book) {
-            totalKnown = Boolean(book.chapter_count && book.chapter_count > 0);
+            totalKnown = false;
             totalItems = book.chapter_count || null;
             hierarchy = {
               parentSeries: book.parent_series_title || null,
@@ -1662,6 +1671,10 @@ export class DashboardService {
             };
           }
         } else if (first.category === "tv" || first.category === "classic_tv" || first.category === "anime") {
+          progressUnit = "episode";
+          progressUnitLabel = "episodes";
+          progressSource = "plex";
+          progressSourceVerified = true;
           const showKey = first.grandparentRatingKey ?? first.ratingKey;
           const show = this.db.prepare(`
             SELECT leaf_count
@@ -1673,6 +1686,11 @@ export class DashboardService {
             totalItems = show.leaf_count || null;
           }
         } else if (first.category === "movie") {
+          progressUnit = "movie";
+          progressUnitLabel = "movie";
+          progressSource = "plex";
+          progressSourceVerified = true;
+
           totalKnown = true;
           totalItems = 1;
         }
@@ -1703,6 +1721,10 @@ export class DashboardService {
           category: g.category,
           artworkUrl: g.artworkUrl,
           latestWatchedAt: g.latestWatchedAt,
+          progressUnit,
+          progressUnitLabel,
+          progressSource,
+          progressSourceVerified,
           totalKnown,
           totalItems,
           distinctItems: g.distinctItems.size,
@@ -2141,6 +2163,10 @@ export class DashboardService {
           category,
           title: catalog.title,
           artworkUrl: `/api/artwork/${encodeURIComponent(grandparentRatingKey)}`,
+          progressUnit: "episode",
+          progressUnitLabel: "episodes",
+          progressSource: "plex",
+          progressSourceVerified: true,
           totalKnown: Boolean(catalog.leaf_count && catalog.leaf_count > 0),
           totalItems: catalog.leaf_count || null,
           distinctItems: distinctItems.size,
@@ -2189,7 +2215,11 @@ export class DashboardService {
           category: "audiobook",
           title: audiobook.title,
           artworkUrl: `/api/artwork/audiobook%3A${audiobookId}`,
-          totalKnown: Boolean(audiobook.chapter_count && audiobook.chapter_count > 0),
+          progressUnit: "track",
+          progressUnitLabel: "tracks",
+          progressSource: "plex",
+          progressSourceVerified: false,
+          totalKnown: false,
           totalItems: audiobook.chapter_count || null,
           distinctItems: distinctItems.size,
           distinctCompleted: distinctCompleted.size,
@@ -2226,6 +2256,10 @@ export class DashboardService {
           category: "movie",
           title: catalog.title,
           artworkUrl: `/api/artwork/${encodeURIComponent(ratingKey)}`,
+          progressUnit: "movie",
+          progressUnitLabel: "movie",
+          progressSource: "plex",
+          progressSourceVerified: true,
           totalKnown: true,
           totalItems: 1,
           distinctItems: 1,

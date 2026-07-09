@@ -201,8 +201,8 @@ export class IngestionService {
       return { inserted: false };
     }
 
-    if (this.metadata && (mediaType === "movie" || mediaType === "episode")) {
-      const catalogKey = mediaType === "episode" ? row.grandparentRatingKey : row.ratingKey;
+    if (this.metadata && (mediaType === "movie" || mediaType === "episode" || mediaType === "audiobook")) {
+      const catalogKey = mediaType === "episode" ? row.grandparentRatingKey : (mediaType === "audiobook" ? row.grandparentRatingKey ?? row.parentRatingKey ?? row.ratingKey : row.ratingKey);
       if (catalogKey) {
         this.metadata.getMetadata(catalogKey, mediaType === "movie" ? row.plexGuid : undefined).catch(err => {
           console.warn(`[IngestionService] Failed to cache metadata for ${catalogKey}:`, err);

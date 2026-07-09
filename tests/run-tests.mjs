@@ -2672,8 +2672,9 @@ test("dashboard service progress contract verifies repeat plays, unknown totals,
     const abGroup = result.recentlyActive.items.find(x => x.title === "The Hobbit");
     assert.ok(abGroup);
     assert.equal(abGroup.category, "audiobook");
-    assert.equal(abGroup.totalKnown, true);
+    assert.equal(abGroup.totalKnown, false);
     assert.equal(abGroup.totalItems, 15);
+    assert.equal(abGroup.progressUnit, "track");
     // Artwork key must use canonical book identity
     assert.equal(abGroup.artworkUrl, "/api/artwork/audiobook%3A10");
   });

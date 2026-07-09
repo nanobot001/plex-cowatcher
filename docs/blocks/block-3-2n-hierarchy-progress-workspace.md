@@ -19,7 +19,9 @@ Implement the outcome through these ordered sub-blocks:
 3. `block-3-2n-3-progress-lazy-hierarchy-endpoints.md`
 4. `block-3-2n-4-progress-hierarchy-ui-regression.md`
 5. `block-3-2n-5-audiobook-progress-contract.md`
-6. `block-3-2n-6-progress-evidence-map-polish.md`
+6. `block-3-2n-5a-audiobook-chapter-import-cache.md`
+7. `block-3-2n-5b-true-audiobook-chapter-progress.md`
+8. `block-3-2n-6-progress-evidence-map-polish.md`
 
 ## Dependencies And Entry Gate
 
@@ -62,7 +64,9 @@ Implement the outcome through these ordered sub-blocks:
 - 3-2n-2 replaces the visible Progress workspace with bounded groups, filters, and URL-restorable state.
 - 3-2n-3 adds lazy hierarchy expansion endpoints and supporting indexes without broad UI integration.
 - 3-2n-4 wires hierarchy expansion into the browser and locks the Progress regression coverage.
-- 3-2n-5 corrects audiobook Progress semantics so books report honest chapter totals, unknown totals, partials, repeats, and canonical book context.
+- 3-2n-5 corrects audiobook Progress source semantics so Plex track/file rows are not mislabeled as verified chapters and audiobook watches trigger lightweight metadata caching.
+- 3-2n-5a imports and caches verified chapter boundaries from the separate tool-friendly `audiobook` project or compatible structured fixtures.
+- 3-2n-5b maps playback evidence onto cached verified chapter boundaries while preserving honest track/file or book-level fallbacks.
 - 3-2n-6 polishes the expanded Progress UI into compact lazy evidence maps with accessible dots and readable typography.
 
 ## Likely Files Or Areas Across The Sequence

@@ -1240,7 +1240,10 @@ async function renderExplorer() {
   const secondary=x=>{
     const count=Number(x.distinctItems||0);
     if(x.category==="movie")return `${x.plays} play${x.plays===1?"":"s"}`;
-    if(x.category==="audiobook")return `${count} chapter${count===1?"":"s"} · ${x.plays} play${x.plays===1?"":"s"}`;
+    if(x.category==="audiobook"){
+      const unit = x.progressUnitLabel ? (count === 1 ? x.progressUnitLabel.replace(/s$/, '') : x.progressUnitLabel) : (count===1?"track":"tracks");
+      return `${count} ${unit} · ${x.plays} play${x.plays===1?"":"s"}`;
+    }
     return `${count} episode${count===1?"":"s"} · ${x.plays} play${x.plays===1?"":"s"}`;
   };
   const card=x=>`<article class="poster-card library-card ${state.explorer.selected===x.groupKey?"selected":""}" data-testid="library-card" tabindex="0" role="button" aria-pressed="${state.explorer.selected===x.groupKey}" data-library-item="${encodeURIComponent(JSON.stringify(x))}" data-select-key="${esc(x.groupKey)}">${libraryArt(x)}${x.percentComplete!=null&&!x.completed?`<div class="cw-bar"><i style="width:${esc(x.percentComplete)}%"></i></div>`:""}<strong>${mediaTitle(x)}</strong><span>${esc(secondary(x))}</span>${watchedBy(x)}</article>`;
@@ -1657,13 +1660,13 @@ function renderProgressHierarchy(expansion) {
             <strong>${esc(expansion.hierarchy.bookTitle || expansion.title)}</strong>
             ${parentInfo ? `<span>${esc(parentInfo)}</span>` : ""}
           </div>
-          <small>${esc(chapters.length)} chapter${chapters.length === 1 ? "" : "s"} loaded &middot; ${esc(expansion.timingMs)} ms</small>
+          <small>${esc(chapters.length)} ${esc(expansion.progressUnitLabel || "items")} loaded &middot; ${esc(expansion.timingMs)} ms</small>
         </div>
         <div class="progress-chapter-list">
           ${chapters.map(ch => {
             const item = progressDetailItem(expansion, ch, "chapter");
             return `
-              <button type="button" class="progress-node progress-chapter" data-testid="progress-chapter" data-item="${encodeURIComponent(JSON.stringify(item))}" aria-label="${esc(ch.title)} chapter detail">
+              <button type="button" class="progress-node progress-chapter" data-testid="progress-chapter" data-item="${encodeURIComponent(JSON.stringify(item))}" aria-label="${esc(ch.title)} detail">
                 <span class="progress-node-title">${esc(ch.title)}</span>
                 <span class="progress-node-states">${progressStateBadges(ch.watchedStates, ch.title)}</span>
               </button>

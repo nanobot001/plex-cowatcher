@@ -40,12 +40,14 @@ Corrective sequence:
 17. `completed/block-3-2n-3-progress-lazy-hierarchy-endpoints.md`
 18. `completed/block-3-2n-4-progress-hierarchy-ui-regression.md`
 19. `block-3-2n-5-audiobook-progress-contract.md`
-20. `block-3-2n-6-progress-evidence-map-polish.md`
-21. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
+20. `block-3-2n-5a-audiobook-chapter-import-cache.md`
+21. `block-3-2n-5b-true-audiobook-chapter-progress.md`
+22. `block-3-2n-6-progress-evidence-map-polish.md`
+23. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
 
 Do not implement a later corrective block until the previous block's exit gate is recorded as passing. A later block must not conceal, waive, or silently absorb a failed earlier acceptance criterion.
 
-The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n was reviewed, split, and implemented through Block 3-2n-4, then extended with two planned acceptance-correction blocks for audiobook progress correctness and readable lazy evidence maps. Block 3-2n-5 is the next corrective implementation block.
+The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n was reviewed, split, and implemented through Block 3-2n-4. Follow-up source review proved that current audiobook totals are Plex track/file evidence, not verified chapter truth, so the remaining sequence now separates source honesty, external chapter import/cache, true chapter progress, and readable evidence-map polish. Block 3-2n-5 is the next corrective implementation block.
 
 ## Umbrella Specifications
 

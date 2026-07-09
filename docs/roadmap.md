@@ -154,9 +154,11 @@ The corrective sequence is mandatory and ordered:
 16. **3-2n-2 - Progress Workspace Shell:** Replace the all-card Progress render with bounded Recently Active, Continue, and Recently Completed sections plus URL-restorable person/category controls.
 17. **3-2n-3 - Progress Lazy Hierarchy Endpoints:** Add indexed, read-only hierarchy expansion endpoints for one TV/Classic TV/Anime/Audiobook identity at a time.
 18. **3-2n-4 - Progress Hierarchy UI And Regression:** Implemented and verified; Progress lazily expands one URL-restorable hierarchy card at a time, reuses the shared detail workspace, and locks Progress interaction, DOM, payload, and viewport coverage.
-19. **3-2n-5 - Audiobook Progress Contract:** Correct audiobook Progress semantics around completed chapters, known and unknown totals, partials, repeats, duration fallback, canonical book identity, and deterministic fixtures.
-20. **3-2n-6 - Progress Evidence Map Polish:** Restore readable lazy evidence maps with accessible dots, compact legends, smoother expansion, and polished Progress typography without returning to all-dot first paint.
-21. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
+19. **3-2n-5 - Audiobook Progress Source Honesty:** Stop treating Plex track/file rows as verified chapters, expose progress source fields, and trigger lightweight audiobook metadata caching on watch ingestion.
+20. **3-2n-5a - Audiobook Chapter Import And Cache:** Add an explicit sanitized import/cache path for verified chapter boundaries produced by the separate `audiobook` tool.
+21. **3-2n-5b - True Audiobook Chapter Progress:** Map playback offsets and completion evidence onto cached verified chapter boundaries while preserving honest fallback behavior.
+22. **3-2n-6 - Progress Evidence Map Polish:** Restore readable lazy evidence maps with accessible dots, compact legends, smoother expansion, and polished Progress typography without returning to all-dot first paint.
+23. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
 
 Each block, including every 3-2m sub-block, must pass its own exit gate before the next begins. Block 3-3 is paused until 3-2o completes.
 

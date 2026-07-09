@@ -10,15 +10,15 @@ Make the Progress workspace feel polished, scannable, and easy to read by replac
 
 ## Dependencies And Entry Gate
 
-- Block 3-2n-5 is implemented and verified.
-- Audiobook Progress contract exposes honest chapter totals, unknown totals, partials, repeats, and canonical book context.
+- Blocks 3-2n-5, 3-2n-5a, and 3-2n-5b are implemented and verified.
+- Audiobook Progress contract exposes source-qualified chapter, track/file, book-level, and unknown progress without treating Plex track rows as verified chapters.
 - The single URL-restorable expanded-card model from 3-2n-4 remains the interaction baseline.
 
 ## Scope
 
 - Redesign expanded Progress hierarchy presentation into compact, readable evidence maps:
   - TV, Classic TV, Anime: show -> season rows -> episode dots.
-  - Audiobooks: book/series context -> chapter rows or chapter dot strips.
+  - Audiobooks: book/series context -> verified chapter rows/dots when available, otherwise source-qualified track/file or book-level evidence.
 - Replace chunky state labels with small accessible dots or chips for watched, partial, repeated, and unknown states.
 - Add a compact legend that explains states without overwhelming the card.
 - Improve Progress card typography, spacing, hierarchy, contrast, and button labels so the expanded state is readable at a glance.
@@ -29,7 +29,7 @@ Make the Progress workspace feel polished, scannable, and easy to read by replac
 
 ## Out Of Scope
 
-- Changing backend progress math beyond narrow fixes needed to consume the 3-2n-5 contract.
+- Changing backend progress math beyond narrow fixes needed to consume the 3-2n-5b contract.
 - Broad dashboard redesign outside the Progress workspace.
 - Rendering all Progress hierarchies or dot maps on initial page load.
 - Adding a new Progress-only detail modal.
@@ -57,7 +57,7 @@ Make the Progress workspace feel polished, scannable, and easy to read by replac
 
 ## Dependency Plan
 
-- Consume the 3-2n-5 audiobook contract as the source of truth for chapter totals and states.
+- Consume the 3-2n-5b audiobook contract as the source of truth for verified chapter states and the 3-2n-5 contract as the source of truth for fallback labels.
 - Reuse existing `progress-expand-toggle`, `progress-hierarchy`, `progress-season`, `progress-episode`, and `progress-chapter` selectors, adding only stable selectors needed for the evidence map such as `progress-evidence-map`, `progress-evidence-dot`, and `progress-state-legend`.
 - Update `docs/testing/dashboard-regression-contract.md` with durable Progress readability invariants before or alongside Playwright assertions.
 
@@ -79,7 +79,7 @@ Make the Progress workspace feel polished, scannable, and easy to read by replac
 ## Acceptance Criteria
 
 - Expanded TV, Classic TV, and Anime cards show compact season evidence rows with episode dots for watched, partial, repeated, and unknown states.
-- Expanded Audiobook cards show compact chapter progress using the 3-2n-5 contract, including known-total and unknown-total cases.
+- Expanded Audiobook cards show compact verified chapter progress when chapter cache exists, and compact source-qualified track/file or book-level evidence when it does not.
 - Dot/state markers have accessible names and are explained by a compact legend.
 - Progress card labels, typography, spacing, and hierarchy are readable on desktop and narrow viewports without chunky button clutter.
 - Expanding, collapsing, Back/Forward, reload restoration, and detail drill-through do not trigger whole-workspace reloads or accidental detail opens.
