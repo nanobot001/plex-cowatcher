@@ -153,7 +153,7 @@ The corrective sequence is mandatory and ordered:
 15. **3-2n-1 - Progress Read Model Contract:** Stabilize typed, bounded progress summary groups, filters, repeat/unknown semantics, aliases, hidden-user exclusion, artwork identity, and fixtures.
 16. **3-2n-2 - Progress Workspace Shell:** Replace the all-card Progress render with bounded Recently Active, Continue, and Recently Completed sections plus URL-restorable person/category controls.
 17. **3-2n-3 - Progress Lazy Hierarchy Endpoints:** Add indexed, read-only hierarchy expansion endpoints for one TV/Classic TV/Anime/Audiobook identity at a time.
-18. **3-2n-4 - Progress Hierarchy UI And Regression:** Wire lazy expansion into the browser, reuse the shared detail workspace, and lock Progress interaction, DOM, payload, and viewport coverage.
+18. **3-2n-4 - Progress Hierarchy UI And Regression:** Implemented and verified; Progress lazily expands one URL-restorable hierarchy card at a time, reuses the shared detail workspace, and locks Progress interaction, DOM, payload, and viewport coverage.
 19. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
 
 Each block, including every 3-2m sub-block, must pass its own exit gate before the next begins. Block 3-3 is paused until 3-2o completes.

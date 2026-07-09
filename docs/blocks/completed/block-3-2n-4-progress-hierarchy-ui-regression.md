@@ -1,8 +1,9 @@
 # Block 3-2n-4: Progress Hierarchy UI And Regression
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Final child of the 3-2n Progress sequence; wires lazy hierarchy expansion into the browser and closes the Progress regression coverage.
+> Status: Implemented on 2026-07-08.
+> Result: Implemented.
+> Verification: `npm run verify:block` - passed.
+> Notes: Progress now lazily expands one URL-restorable hierarchy card at a time with cached responses, stable selectors, keyboard/pointer coverage, and deterministic TV/Classic TV/Anime/Audiobook/Movie regression coverage.
 
 ## Goal
 

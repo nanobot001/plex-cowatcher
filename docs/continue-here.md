@@ -1,5 +1,15 @@
 # Continue Here
 
+## 2026-07-08
+
+Current state:
+- Block 3-2n-4 (Progress Hierarchy UI & Regression) is completed and verified. Progress cards now lazily expand one URL-restorable hierarchy at a time, cache fetched expansion responses, preserve filters/pagination/history state, keep Movies non-expandable, and drill through to the shared detail workspace.
+- The deterministic dashboard fixture now covers TV, Classic TV, Anime, Audiobook, and Movie Progress behavior.
+- Verification passed: `npm run verify:block` (77/77 service tests, 30/30 Playwright E2E tests, dashboard syntax, and tool contracts).
+
+Next step:
+- Implement **Block 3-2o: Dashboard Accessibility And Regression Gate** (`docs/blocks/block-3-2o-dashboard-accessibility-and-regression-gate.md`).
+
 ## 2026-07-06
 
 Current state:
@@ -77,7 +87,7 @@ Do-not-forget checks:
 
 ## Next Recommended Step
 
-- Start with **Block 3-2n-4: Progress Hierarchy UI & Regression**.
+- Start with **Block 3-2o: Dashboard Accessibility And Regression Gate**.
 - Implement only one corrective block at a time and do not begin the next block until the current block's exit gate is recorded as passing.
 - Resume Block 3-3 only after Block 3-2o completes the final dashboard release gate.
 

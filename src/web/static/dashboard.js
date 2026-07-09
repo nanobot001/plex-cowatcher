@@ -1,10 +1,11 @@
 const layouts = new Set(["overview","timeline","explorer","people","progress"]);
-const state = { layout: "overview", filters: {}, offset: 0, totals: null, users: null, libraries: null, explorer: { section: "", sort: "recent", offset: 0, selected: "" }, timeline: { date: "", offset: 0 }, people: { period: "30d", dateFrom: "", dateTo: "", orderMode: "default", activeOrder: [], secondaryOrder: [] }, progress: { recentlyActiveOffset: 0, continueOffset: 0, recentlyCompletedOffset: 0 } };
+const state = { layout: "overview", filters: {}, offset: 0, totals: null, users: null, libraries: null, explorer: { section: "", sort: "recent", offset: 0, selected: "" }, timeline: { date: "", offset: 0 }, people: { period: "30d", dateFrom: "", dateTo: "", orderMode: "default", activeOrder: [], secondaryOrder: [] }, progress: { recentlyActiveOffset: 0, continueOffset: 0, recentlyCompletedOffset: 0, expandedProgress: "" } };
 const content = document.querySelector("#dashboard-content");
 const form = document.querySelector("#dashboard-filters");
 const dialog = document.querySelector("#detail-dialog");
 let explorerRenderVersion=0;
 let peopleRenderVersion=0;
+const progressExpansionCache = new Map();
 const peopleDragState = { pointerId: null, personId: "", group: "", sourceCard: null, dragGhost: null, placeholder: null, targetCard: null, placeBefore: true, startX: 0, startY: 0, lastX: 0, lastY: 0, offsetX: 0, offsetY: 0, dragging: false, ignoreClickUntil: 0 };
 const peopleHeatmapState = { activeByPerson: new Map(), activeDefault: [], secondaryDefault: [], activeVisible: [], secondaryVisible: [], hoveredCell: null, popover: null, announcer: null, pendingAnnouncement: "" };
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -173,6 +174,7 @@ const routeQuery=()=>{
     if(state.progress.recentlyActiveOffset)p.set("recentlyActiveOffset",String(state.progress.recentlyActiveOffset));
     if(state.progress.continueOffset)p.set("continueOffset",String(state.progress.continueOffset));
     if(state.progress.recentlyCompletedOffset)p.set("recentlyCompletedOffset",String(state.progress.recentlyCompletedOffset));
+    if(state.progress.expandedProgress)p.set("expandedProgress",state.progress.expandedProgress);
   }
   if(state.explorer.selected)p.set("selected",state.explorer.selected);
   return p;
@@ -369,11 +371,13 @@ function restoreLocationState(){
     state.progress.recentlyActiveOffset=Math.max(0,Number(params.get("recentlyActiveOffset"))||0);
     state.progress.continueOffset=Math.max(0,Number(params.get("continueOffset"))||0);
     state.progress.recentlyCompletedOffset=Math.max(0,Number(params.get("recentlyCompletedOffset"))||0);
+    state.progress.expandedProgress=params.get("expandedProgress")||"";
   }
 }
 const toneClass=status=>({failed:"is-danger",error:"is-danger",missing:"is-warning",review:"is-neutral",pending:"is-info",prompted:"is-info"})[status]||"is-neutral";
 const deltaText=value=>value==null?"":`${value>0?"+":value<0?"-":""}${fmtHourValue(Math.abs(value))}`;
 const progressText=value=>value==null?"Progress unknown":`${value}% finished`;
+const progressExpandable=category=>category==="tv"||category==="classic_tv"||category==="anime"||category==="audiobook";
 const attentionHeading=item=>({
   unresolved_prompt:"Waiting on a co-watch answer",
   discord_delivery_failed:"Prompt delivery failed",
@@ -1422,6 +1426,11 @@ async function renderProgress() {
   const renderCard = (x) => {
     const isTv = x.category === "tv" || x.category === "classic_tv" || x.category === "anime";
     const isAudiobook = x.category === "audiobook";
+    const canExpand = progressExpandable(x.category);
+    const isExpanded = state.progress.expandedProgress === x.groupKey;
+    const expansionButton = canExpand
+      ? `<button type="button" class="text-button progress-expand-toggle" data-testid="progress-expand-toggle" data-progress-expand="${esc(x.groupKey)}" aria-expanded="${isExpanded}" aria-label="${isExpanded ? "Hide" : "Show"} hierarchy for ${esc(x.title)}">${isExpanded ? "Hide hierarchy" : "Show hierarchy"}</button>`
+      : "";
 
     // Progress Bar or Unknown Total
     let barHtml = "";
@@ -1475,8 +1484,12 @@ async function renderProgress() {
       }
     }
 
+    const cardInteractionAttrs = canExpand
+      ? `data-progress-card="${esc(x.groupKey)}" tabindex="0" aria-expanded="${isExpanded}" aria-label="${esc(x.title)} progress hierarchy"`
+      : `data-item="${encodeURIComponent(JSON.stringify(x))}"`;
+
     return `
-      <article class="collection-card progress-card" data-testid="progress-card" data-cat="${esc(x.category)}" data-group-key="${esc(x.groupKey)}" data-item="${encodeURIComponent(JSON.stringify(x))}">
+      <article class="collection-card progress-card" data-testid="progress-card" data-cat="${esc(x.category)}" data-group-key="${esc(x.groupKey)}" ${cardInteractionAttrs}>
         <div class="progress-card-header">
           ${art(x)}
           <div class="progress-card-info">
@@ -1490,9 +1503,11 @@ async function renderProgress() {
             </p>
             <p class="progress-card-observed">Observed: ${observedStr}</p>
             <div class="progress-card-people-row">${peopleBadges}</div>
+            ${expansionButton ? `<div class="progress-card-actions">${expansionButton}</div>` : ""}
           </div>
         </div>
         ${barHtml}
+        <div class="progress-hierarchy-slot" data-progress-expansion-slot hidden></div>
       </article>
     `;
   };
@@ -1556,6 +1571,172 @@ async function renderProgress() {
       </aside>
     </section>
   `;
+
+  await syncProgressExpansionFromState();
+}
+
+function getProgressCardByKey(groupKey) {
+  return [...content.querySelectorAll("[data-testid='progress-card']")].find(card => card.dataset.groupKey === groupKey) || null;
+}
+
+function updateProgressRoute(push) {
+  const targetHash = "#" + state.layout + "?" + routeQuery();
+  if (location.hash === targetHash) return;
+  if (push) history.pushState({}, "", targetHash);
+  else history.replaceState({}, "", targetHash);
+}
+
+function resetProgressExpansionSlots(preferredCard = null) {
+  let expandedCardSeen = false;
+  content.querySelectorAll("[data-testid='progress-card']").forEach(card => {
+    const matchesExpanded = card.dataset.groupKey === state.progress.expandedProgress;
+    const expanded = matchesExpanded && !expandedCardSeen && (!preferredCard || card === preferredCard);
+    if (expanded) expandedCardSeen = true;
+    card.classList.toggle("is-expanded", expanded);
+    if (card.hasAttribute("data-progress-card")) {
+      card.setAttribute("aria-expanded", String(expanded));
+    }
+    const slot = card.querySelector("[data-progress-expansion-slot]");
+    if (slot && !expanded) {
+      slot.hidden = true;
+      slot.innerHTML = "";
+    }
+    const toggle = card.querySelector("[data-progress-expand]");
+    if (toggle) {
+      toggle.setAttribute("aria-expanded", String(expanded));
+      const title = card.querySelector(".progress-card-title-row h4")?.textContent || "this title";
+      toggle.textContent = expanded ? "Hide hierarchy" : "Show hierarchy";
+      toggle.setAttribute("aria-label", `${expanded ? "Hide" : "Show"} hierarchy for ${title}`);
+    }
+  });
+}
+
+function progressStateText(stateValue) {
+  return ({ watched: "watched", partial: "partial", repeated: "repeated", unknown: "unknown" })[stateValue] || "unknown";
+}
+
+function progressStateBadges(watchedStates, itemTitle) {
+  const entries = Object.entries(watchedStates || {}).sort(([a], [b]) => a.localeCompare(b));
+  if (!entries.length) return '<span class="text-muted">No visible person state</span>';
+  return entries.map(([person, stateValue]) => {
+    const label = `${itemTitle}: ${person} ${progressStateText(stateValue)}`;
+    return `<span class="state-badge ${esc(stateValue)}" data-testid="progress-state" aria-label="${esc(label)}" title="${esc(label)}">${esc(person)} <span>${esc(progressStateText(stateValue))}</span></span>`;
+  }).join("");
+}
+
+function progressDetailItem(expansion, node, kind) {
+  return {
+    ratingKey: node.ratingKey,
+    title: node.title,
+    displayTitle: node.title,
+    showTitle: expansion.title,
+    category: expansion.category,
+    categoryLabel: categoryLabel(expansion.category),
+    artworkUrl: expansion.artworkUrl,
+    duration: node.duration,
+    mediaType: kind === "chapter" ? "track" : "episode",
+    watchedAt: "",
+    percentComplete: null
+  };
+}
+
+function renderProgressHierarchy(expansion) {
+  if (!expansion || !expansion.hierarchy) {
+    return '<div class="panel-state compact error">Hierarchy unavailable.</div>';
+  }
+  if (expansion.hierarchy.type === "movie") {
+    return '<div class="panel-state compact">Movies do not have a Progress hierarchy.</div>';
+  }
+  if (expansion.hierarchy.type === "audiobook") {
+    const parentInfo = [expansion.hierarchy.parentSeries, expansion.hierarchy.subseries, expansion.hierarchy.series].filter(Boolean).join(" / ");
+    const chapters = expansion.hierarchy.chapters || [];
+    return `
+      <section class="progress-hierarchy" data-testid="progress-hierarchy" aria-label="${esc(expansion.title)} audiobook hierarchy">
+        <div class="progress-hierarchy-heading">
+          <div>
+            <strong>${esc(expansion.hierarchy.bookTitle || expansion.title)}</strong>
+            ${parentInfo ? `<span>${esc(parentInfo)}</span>` : ""}
+          </div>
+          <small>${esc(chapters.length)} chapter${chapters.length === 1 ? "" : "s"} loaded &middot; ${esc(expansion.timingMs)} ms</small>
+        </div>
+        <div class="progress-chapter-list">
+          ${chapters.map(ch => {
+            const item = progressDetailItem(expansion, ch, "chapter");
+            return `
+              <button type="button" class="progress-node progress-chapter" data-testid="progress-chapter" data-item="${encodeURIComponent(JSON.stringify(item))}" aria-label="${esc(ch.title)} chapter detail">
+                <span class="progress-node-title">${esc(ch.title)}</span>
+                <span class="progress-node-states">${progressStateBadges(ch.watchedStates, ch.title)}</span>
+              </button>
+            `;
+          }).join("")}
+        </div>
+      </section>
+    `;
+  }
+  if (expansion.hierarchy.type === "tv") {
+    const seasons = expansion.hierarchy.seasons || [];
+    return `
+      <section class="progress-hierarchy" data-testid="progress-hierarchy" aria-label="${esc(expansion.title)} show hierarchy">
+        <div class="progress-hierarchy-heading">
+          <div>
+            <strong>${esc(expansion.hierarchy.showTitle || expansion.title)}</strong>
+            <span>${esc(seasons.length)} season${seasons.length === 1 ? "" : "s"} loaded</span>
+          </div>
+          <small>${esc(expansion.timingMs)} ms</small>
+        </div>
+        <div class="progress-season-list">
+          ${seasons.map(season => `
+            <section class="progress-season" data-testid="progress-season" aria-label="${esc(season.seasonName)}">
+              <header>
+                <strong>${esc(season.seasonName)}</strong>
+                <span>${esc((season.episodes || []).length)} episode${(season.episodes || []).length === 1 ? "" : "s"}</span>
+              </header>
+              <div class="progress-episode-list">
+                ${(season.episodes || []).map(ep => {
+                  const item = progressDetailItem(expansion, ep, "episode");
+                  const episodeLabel = `Episode ${ep.episodeNumber ?? "?"}: ${ep.title}`;
+                  return `
+                    <button type="button" class="progress-node progress-episode" data-testid="progress-episode" data-item="${encodeURIComponent(JSON.stringify(item))}" aria-label="${esc(episodeLabel)} detail">
+                      <span class="progress-node-title">${esc(episodeLabel)}</span>
+                      <span class="progress-node-states">${progressStateBadges(ep.watchedStates, ep.title)}</span>
+                    </button>
+                  `;
+                }).join("")}
+              </div>
+            </section>
+          `).join("")}
+        </div>
+      </section>
+    `;
+  }
+  return '<div class="panel-state compact error">Unsupported hierarchy response.</div>';
+}
+
+async function syncProgressExpansionFromState(preferredCard = null) {
+  resetProgressExpansionSlots(preferredCard);
+  const groupKey = state.progress.expandedProgress;
+  if (!groupKey) return;
+  const card = preferredCard?.dataset?.groupKey === groupKey ? preferredCard : getProgressCardByKey(groupKey);
+  if (!card) return;
+  const slot = card.querySelector("[data-progress-expansion-slot]");
+  if (!slot) return;
+  slot.hidden = false;
+  if (progressExpansionCache.has(groupKey)) {
+    slot.innerHTML = renderProgressHierarchy(progressExpansionCache.get(groupKey));
+    return;
+  }
+  slot.innerHTML = '<div class="panel-state compact" data-testid="progress-hierarchy-loading">Loading hierarchy...</div>';
+  try {
+    const expansion = await fetchJson("/api/dashboard/progress/expand/" + encodeURIComponent(groupKey));
+    progressExpansionCache.set(groupKey, expansion);
+    if (state.progress.expandedProgress === groupKey && document.contains(slot)) {
+      slot.innerHTML = renderProgressHierarchy(expansion);
+    }
+  } catch (error) {
+    if (state.progress.expandedProgress === groupKey && document.contains(slot)) {
+      slot.innerHTML = '<div class="panel-state compact error" data-testid="progress-hierarchy-error">Hierarchy could not load.</div>';
+    }
+  }
 }
 
 function progressPager(bucket, stateKey) {
@@ -1825,7 +2006,7 @@ form.addEventListener("change",()=>{
   if((state.filters.category||"")!==previousCategory)state.explorer.section=state.filters.category||"";
   state.explorer.offset=0;
   state.explorer.selected="";
-  state.progress={recentlyActiveOffset:0,continueOffset:0,recentlyCompletedOffset:0};
+  state.progress={recentlyActiveOffset:0,continueOffset:0,recentlyCompletedOffset:0,expandedProgress:""};
   save();
   render();
   loadGlobals();
@@ -1835,7 +2016,7 @@ form.addEventListener("reset",()=>setTimeout(()=>{
   state.filters={};
   state.offset=0;
   state.explorer={section:"",sort:"recent",offset:0,selected:""};
-  state.progress={recentlyActiveOffset:0,continueOffset:0,recentlyCompletedOffset:0};
+  state.progress={recentlyActiveOffset:0,continueOffset:0,recentlyCompletedOffset:0,expandedProgress:""};
   save();
   render();
   loadGlobals();
@@ -1904,6 +2085,27 @@ content.addEventListener("click",async e=>{
     const item=JSON.parse(decodeURIComponent(libraryItem.dataset.libraryItem));
     state.explorer.selected=item.groupKey;
     return render();
+  }
+  const progressExpand=e.target.closest("[data-progress-expand]");
+  if(progressExpand){
+    e.preventDefault();
+    e.stopPropagation();
+    const groupKey=progressExpand.dataset.progressExpand;
+    state.progress.expandedProgress=state.progress.expandedProgress===groupKey?"":groupKey;
+    updateProgressRoute(true);
+    await syncProgressExpansionFromState();
+    return;
+  }
+  const progressCard=e.target.closest("[data-progress-card]");
+  const progressDetailItem=e.target.closest(".progress-node[data-item]");
+  if(progressCard && !progressDetailItem){
+    e.preventDefault();
+    const groupKey=progressCard.dataset.progressCard;
+    const collapseCurrent=state.progress.expandedProgress===groupKey&&progressCard.classList.contains("is-expanded");
+    state.progress.expandedProgress=collapseCurrent?"":groupKey;
+    updateProgressRoute(true);
+    await syncProgressExpansionFromState(state.progress.expandedProgress ? progressCard : null);
+    return;
   }
   const item=e.target.closest("[data-item]");
   if(item)return openDetail(JSON.parse(decodeURIComponent(item.dataset.item)));
@@ -2073,6 +2275,15 @@ content.addEventListener("keydown",e=>{
   if((e.key==="Enter"||e.key===" ")&&e.target.matches("[data-item]")){
     e.preventDefault();
     openDetail(JSON.parse(decodeURIComponent(e.target.dataset.item)));
+    return;
+  }
+  if((e.key==="Enter"||e.key===" ")&&e.target.matches("[data-progress-card]")){
+    e.preventDefault();
+    const groupKey=e.target.dataset.progressCard;
+    const collapseCurrent=state.progress.expandedProgress===groupKey&&e.target.classList.contains("is-expanded");
+    state.progress.expandedProgress=collapseCurrent?"":groupKey;
+    updateProgressRoute(true);
+    syncProgressExpansionFromState(state.progress.expandedProgress ? e.target : null);
     return;
   }
   const heatmapContainer = e.target.closest("[data-person-heatmap]");

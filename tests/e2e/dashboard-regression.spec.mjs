@@ -409,7 +409,8 @@ test("Progress shell renders bounded sections with correct cards and no page err
   const cards = page.getByTestId("progress-card");
   const count = await cards.count();
   expect(count).toBeGreaterThan(0);
-  expect(count).toBeLessThanOrEqual(5);
+  expect(count).toBeLessThanOrEqual(12);
+  await expect(page.getByTestId("progress-hierarchy")).toHaveCount(0);
 
   // Assert TV Show cards display correct details and progress bar
   const tvCard = page.getByTestId("progress-continue-list").getByTestId("progress-card").filter({ hasText: "Regression Show" }).first();
@@ -428,6 +429,94 @@ test("Progress shell renders bounded sections with correct cards and no page err
   }
 
   // Assert no visual overflow
+  await expectNoVisualOverflow(page);
+  expect(pageErrors).toEqual([]);
+});
+
+test("Progress hierarchy expands lazily, caches responses, and preserves route state", async ({ page }) => {
+  const pageErrors = [];
+  const expansionRequests = [];
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("request", request => {
+    if (request.url().includes("/api/dashboard/progress/expand/")) {
+      expansionRequests.push(request.url());
+    }
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Progress", exact: true }).click();
+  await expect(page.getByTestId("progress-continue-list")).toBeVisible();
+  await expect(page.getByTestId("progress-hierarchy")).toHaveCount(0);
+
+  const cardFor = title => page.getByTestId("progress-card").filter({ hasText: title }).first();
+  const tvCard = cardFor("Regression Show");
+  await expect(tvCard).toBeVisible();
+  await tvCard.click();
+  await expect(tvCard.getByTestId("progress-hierarchy")).toBeVisible();
+  await expect(page.locator("#detail-dialog")).not.toBeVisible();
+  await expect(tvCard.getByTestId("progress-season").first()).toContainText("Season 1");
+  await expect(tvCard.getByTestId("progress-episode").filter({ hasText: "Confirmed Episode" }).first()).toBeVisible();
+  await expect.poll(() => expansionRequests.length).toBe(1);
+  const expandedTvUrl = page.url();
+  expect(expandedTvUrl).toContain("expandedProgress=");
+
+  await tvCard.getByTestId("progress-expand-toggle").click();
+  await expect(page.getByTestId("progress-hierarchy")).toHaveCount(0);
+  expect(expansionRequests.length).toBe(1);
+
+  const regressionCards = page.getByTestId("progress-card").filter({ hasText: "Regression Show" });
+  const duplicateTvCard = regressionCards.nth(Math.min(1, await regressionCards.count() - 1));
+  await duplicateTvCard.click();
+  await expect(duplicateTvCard.getByTestId("progress-hierarchy")).toBeVisible();
+  if (await regressionCards.count() > 1) {
+    await expect(tvCard.getByTestId("progress-hierarchy")).toHaveCount(0);
+  }
+  expect(expansionRequests.length).toBe(1);
+
+  await page.reload();
+  const restoredTvCard = cardFor("Regression Show");
+  await expect(restoredTvCard.getByTestId("progress-hierarchy")).toBeVisible();
+  await expect(restoredTvCard.getByTestId("progress-episode").filter({ hasText: "Confirmed Episode" }).first()).toBeVisible();
+
+  const audiobookCard = cardFor("Fixture Audiobook");
+  await expect(audiobookCard).toBeVisible();
+  await audiobookCard.getByTestId("progress-expand-toggle").click();
+  await expect(audiobookCard.getByTestId("progress-hierarchy")).toBeVisible();
+  await expect(audiobookCard.getByTestId("progress-chapter").filter({ hasText: "Chapter 1" }).first()).toBeVisible();
+  await expect.poll(() => expansionRequests.length).toBeGreaterThanOrEqual(3);
+  await expect(restoredTvCard.getByTestId("progress-hierarchy")).toHaveCount(0);
+
+  await page.goBack();
+  const backTvCard = cardFor("Regression Show");
+  await expect(backTvCard.getByTestId("progress-hierarchy")).toBeVisible();
+  await page.goForward();
+  const forwardAudioCard = cardFor("Fixture Audiobook");
+  await expect(forwardAudioCard.getByTestId("progress-hierarchy")).toBeVisible();
+
+  for (const title of ["Classic Regression", "Anime Regression"]) {
+    const card = cardFor(title);
+    await expect(card).toBeVisible();
+    await card.getByTestId("progress-expand-toggle").click();
+    await expect(card.getByTestId("progress-hierarchy")).toBeVisible();
+    await expect(card.getByTestId("progress-episode").first()).toBeVisible();
+  }
+
+  const movieCard = cardFor("Fixture Movie");
+  await expect(movieCard).toBeVisible();
+  await expect(movieCard.getByTestId("progress-expand-toggle")).toHaveCount(0);
+  await movieCard.click();
+  await expect(page.locator("#detail-dialog")).toBeVisible();
+  await expect(page.getByTestId("detail-people")).toContainText("Tony");
+  await page.locator("#detail-dialog .dialog-close").click();
+
+  const keyboardCard = cardFor("Anime Regression");
+  await keyboardCard.getByTestId("progress-expand-toggle").focus();
+  await page.keyboard.press("Enter");
+  await expect(keyboardCard.getByTestId("progress-hierarchy")).toHaveCount(0);
+  await keyboardCard.focus();
+  await page.keyboard.press("Enter");
+  await expect(keyboardCard.getByTestId("progress-hierarchy")).toBeVisible();
+
   await expectNoVisualOverflow(page);
   expect(pageErrors).toEqual([]);
 });

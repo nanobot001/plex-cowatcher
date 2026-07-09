@@ -1141,6 +1141,136 @@ legend { font-size: 0.9rem; font-weight: 600; color: #06B6D4; padding: 0 12px; }
 .progress-section {
   margin-bottom: 24px;
 }
+.progress-card.is-expanded {
+  border-color: rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.035);
+}
+.progress-card-actions {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.progress-expand-toggle {
+  align-self: flex-start;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.04);
+}
+.progress-expand-toggle:focus-visible,
+.progress-card[data-progress-card]:focus-visible,
+.progress-node:focus-visible {
+  outline: 3px solid var(--accent-tv);
+  outline-offset: 3px;
+}
+.progress-hierarchy-slot[hidden] {
+  display: none;
+}
+.progress-hierarchy {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px;
+  background: rgba(0,0,0,0.18);
+  min-width: 0;
+}
+.progress-hierarchy-heading,
+.progress-season header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+.progress-hierarchy-heading div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.progress-hierarchy-heading strong,
+.progress-node-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.progress-hierarchy-heading span,
+.progress-hierarchy-heading small,
+.progress-season header span {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+.progress-season-list,
+.progress-chapter-list,
+.progress-episode-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.progress-season {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.025);
+  min-width: 0;
+}
+.progress-node {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+  background: rgba(0,0,0,0.16);
+  color: var(--text-main);
+  text-align: left;
+  cursor: pointer;
+}
+.progress-node:hover {
+  background: rgba(255,255,255,0.04);
+}
+.progress-node-states {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+.progress-node-states .state-badge {
+  position: static;
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.68rem;
+}
+.progress-node-states .state-badge span {
+  color: var(--text-muted);
+}
+
+@media (max-width: 640px) {
+  .progress-card-header,
+  .progress-hierarchy-heading,
+  .progress-season header,
+  .progress-node {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .progress-node {
+    display: flex;
+  }
+  .progress-node-states {
+    justify-content: flex-start;
+  }
+}
 
 /* Library Grid */
 .poster-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 24px; }

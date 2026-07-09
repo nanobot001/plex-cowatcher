@@ -31,26 +31,72 @@ for (const user of [
 const insertObservation = db.prepare(`INSERT INTO playback_observations
   (user_id,rating_key,grandparent_rating_key,parent_rating_key,media_type,library_name,title,show_title,season_number,episode_number,watched_at,watched_at_provenance,percent_complete,percent_complete_provenance,duration,completed,created_at,updated_at)
   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-const addEpisode = ({ user, ratingKey, title, minutesAgo, percent = 100, completed = 1 }) => {
+const addEpisodic = ({ user, ratingKey, grandparentRatingKey, parentRatingKey, libraryName, title, showTitle, minutesAgo, percent = 100, completed = 1, duration = 1_800_000 }) => {
   const watchedAt = isoMinutesAgo(minutesAgo);
-  insertObservation.run(userIds[user], ratingKey, "show-regression", "season-regression", "episode", "TV Shows", title, "Regression Show", 1, Number(ratingKey.slice(-1)), watchedAt, "fixture", percent, "fixture", 1_800_000, completed, watchedAt, watchedAt);
+  insertObservation.run(userIds[user], ratingKey, grandparentRatingKey, parentRatingKey, "episode", libraryName, title, showTitle, 1, Number(ratingKey.match(/(\d+)$/)?.[1] || 1), watchedAt, "fixture", percent, "fixture", duration, completed, watchedAt, watchedAt);
   return watchedAt;
 };
+const addEpisode = ({ user, ratingKey, title, minutesAgo, percent = 100, completed = 1 }) => addEpisodic({
+  user,
+  ratingKey,
+  grandparentRatingKey: "show-regression",
+  parentRatingKey: "season-regression",
+  libraryName: "TV Shows",
+  title,
+  showTitle: "Regression Show",
+  minutesAgo,
+  percent,
+  completed
+});
 
 const confirmedWatchedAt = addEpisode({ user: "Tony", ratingKey: "episode-regression-1", title: "Confirmed Episode", minutesAgo: 30, percent: 93, completed: 0 });
 addEpisode({ user: "Alex", ratingKey: "episode-regression-2", title: "Different Episode", minutesAgo: 90 });
 addEpisode({ user: "Hidden", ratingKey: "episode-regression-3", title: "Hidden Episode", minutesAgo: 120 });
+addEpisodic({ user: "Tony", ratingKey: "classic-regression-1", grandparentRatingKey: "classic-regression", parentRatingKey: "classic-season-1", libraryName: "Classic TV", title: "Episode 1: Analog Start", showTitle: "Classic Regression", minutesAgo: 42, percent: 45, completed: 0, duration: 0 });
+addEpisodic({ user: "Alex", ratingKey: "classic-regression-2", grandparentRatingKey: "classic-regression", parentRatingKey: "classic-season-1", libraryName: "Classic TV", title: "Episode 2: Broadcast Finish", showTitle: "Classic Regression", minutesAgo: 44, percent: 100, completed: 1, duration: 0 });
+addEpisodic({ user: "Tony", ratingKey: "anime-regression-1", grandparentRatingKey: "anime-regression", parentRatingKey: "anime-season-1", libraryName: "Anime", title: "Episode 1: Pilot Light", showTitle: "Anime Regression", minutesAgo: 48, percent: 100, completed: 1, duration: 0 });
+addEpisodic({ user: "Tony", ratingKey: "anime-regression-1", grandparentRatingKey: "anime-regression", parentRatingKey: "anime-season-1", libraryName: "Anime", title: "Episode 1: Pilot Light", showTitle: "Anime Regression", minutesAgo: 46, percent: 100, completed: 1, duration: 0 });
 
 const movieWatchedAt = isoMinutesAgo(150);
 insertObservation.run(userIds.Tony, "movie-regression", null, null, "movie", "Movies", "Fixture Movie", null, null, null, movieWatchedAt, "fixture", 100, "fixture", 7_200_000, 1, movieWatchedAt, movieWatchedAt);
+const audiobookWatchedAt = isoMinutesAgo(52);
+insertObservation.run(userIds.Tony, "audio-regression-1", null, null, "track", "Audiobooks", "Chapter 1: Open", "Fixture Audiobook", null, null, audiobookWatchedAt, "fixture", 65, "fixture", 0, 0, audiobookWatchedAt, audiobookWatchedAt);
 const reviewSourceAt = isoMinutesAgo(210);
 const reviewTargetAt = isoMinutesAgo(205);
 insertObservation.run(userIds.Tony, "review-movie", null, null, "movie", "Movies", "Review Movie", null, null, null, reviewSourceAt, "fixture", 100, "fixture", 7_200_000, 1, reviewSourceAt, reviewSourceAt);
 insertObservation.run(userIds.Alex, "review-movie", null, null, "movie", "Movies", "Review Movie", null, null, null, reviewTargetAt, "fixture", 100, "fixture", 7_200_000, 1, reviewTargetAt, reviewTargetAt);
 
+db.prepare(`INSERT INTO audiobook_books
+  (id,folder_key,title,series_title,chapter_count,source_provenance,enrichment_status,created_at,updated_at)
+  VALUES (20,'fixture-audiobook','Fixture Audiobook','Fixture Series',2,'fixture','enriched',?,?)`).run(isoMinutesAgo(5), isoMinutesAgo(5));
 db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,leaf_count,source_provenance,refreshed_at)
   VALUES ('show-regression','show','Regression Show',1800000,'2','TV Shows','[]',3,'fixture',?)`).run(isoMinutesAgo(5));
+db.prepare(`INSERT INTO content_catalog
+  (rating_key,media_type,title,duration,library_id,library_title,genres_json,leaf_count,source_provenance,refreshed_at)
+  VALUES ('classic-regression','show','Classic Regression',1800000,'3','Classic TV','[]',2,'fixture',?)`).run(isoMinutesAgo(5));
+db.prepare(`INSERT INTO content_catalog
+  (rating_key,media_type,title,duration,library_id,library_title,genres_json,leaf_count,source_provenance,refreshed_at)
+  VALUES ('anime-regression','show','Anime Regression',1800000,'4','Anime','[]',2,'fixture',?)`).run(isoMinutesAgo(5));
+for (const [ratingKey, title, libraryTitle, showKey, showTitle, seasonKey] of [
+  ["episode-regression-1", "Episode 1: Confirmed Episode", "TV Shows", "show-regression", "Regression Show", "season-regression"],
+  ["episode-regression-2", "Episode 2: Different Episode", "TV Shows", "show-regression", "Regression Show", "season-regression"],
+  ["episode-regression-3", "Episode 3: Hidden Episode", "TV Shows", "show-regression", "Regression Show", "season-regression"],
+  ["classic-regression-1", "Episode 1: Analog Start", "Classic TV", "classic-regression", "Classic Regression", "classic-season-1"],
+  ["classic-regression-2", "Episode 2: Broadcast Finish", "Classic TV", "classic-regression", "Classic Regression", "classic-season-1"],
+  ["anime-regression-1", "Episode 1: Pilot Light", "Anime", "anime-regression", "Anime Regression", "anime-season-1"],
+  ["anime-regression-2", "Episode 2: Unwatched Future", "Anime", "anime-regression", "Anime Regression", "anime-season-1"]
+]) {
+  db.prepare(`INSERT INTO content_catalog
+    (rating_key,media_type,title,duration,library_title,grandparent_rating_key,grandparent_title,parent_rating_key,parent_title,source_provenance,refreshed_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(ratingKey, "episode", title, 1_800_000, libraryTitle, showKey, showTitle, seasonKey, "Season 1", "fixture", isoMinutesAgo(5));
+}
+db.prepare(`INSERT INTO content_catalog
+  (rating_key,media_type,title,duration,library_id,library_title,genres_json,audiobook_id,source_provenance,refreshed_at)
+  VALUES ('audio-regression-1','track','Chapter 1: Open',1200000,'5','Audiobooks','[]',20,'fixture',?)`).run(isoMinutesAgo(5));
+db.prepare(`INSERT INTO content_catalog
+  (rating_key,media_type,title,duration,library_id,library_title,genres_json,audiobook_id,source_provenance,refreshed_at)
+  VALUES ('audio-regression-2','track','Chapter 2: Later',1200000,'5','Audiobooks','[]',20,'fixture',?)`).run(isoMinutesAgo(5));
 db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,source_provenance,refreshed_at)
   VALUES ('movie-regression','movie','Fixture Movie',7200000,'1','Movies','[]','fixture',?)`).run(isoMinutesAgo(5));

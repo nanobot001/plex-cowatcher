@@ -34,6 +34,8 @@ Protect durable dashboard behavior across numbered blocks without freezing visua
 - Library selection survives reload, Back, and Forward navigation.
 - Progress workspace shell separates Recently Active, Continue, and Recently Completed buckets.
 - Progress offset and filter parameters (category, user) are URL-restorable, browser-history preserved, and reset cleanly.
+- Progress hierarchy expansion is lazy and single-card: first paint stays summary-only, one expanded card is URL-restorable, cached re-expansion does not refetch, and unrelated cards are not rendered as expanded.
+- Progress hierarchy rows use stable selectors and accessible labels for TV, Classic TV, Anime, and Audiobook watched, partial, repeated, and unknown states.
 - Unknown totals display explicit unknown stats without falsifying percentages or indicator fills.
 - Movies display progress/repeat evidence without invented TV or Audiobook season/chapter summaries.
 - Desktop and 390px layouts do not create page-level horizontal overflow or page errors in covered journeys.

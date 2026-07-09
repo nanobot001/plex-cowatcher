@@ -101,6 +101,13 @@ This document freezes the dashboard read-model vocabulary and the current first-
 - Ordering: highest play counts first, then title
 - Response shape: bounded progress groups, recently completed cards, and timing metadata
 
+### `GET /api/dashboard/progress/expand/:groupKey`
+- Consumer: progress workspace hierarchy expansion
+- Default window: one requested Progress identity only
+- Max page size: bounded child hierarchy for the requested identity
+- Ordering: season and episode order for episodic media; chapter title order for audiobooks
+- Response shape: read-only TV, Classic TV, Anime, Audiobook, or Movie expansion metadata with per-visible-person watched, partial, repeated, and unknown states plus timing metadata
+
 ### `GET /api/dashboard/continue-watching`
 - Consumer: overview and explorer surfaces
 - Default window: bounded sample of recent activity
