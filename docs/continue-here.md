@@ -6,9 +6,10 @@ Current state:
 - Block 3-2n-4 (Progress Hierarchy UI & Regression) is completed and verified. Progress cards now lazily expand one URL-restorable hierarchy at a time, cache fetched expansion responses, preserve filters/pagination/history state, keep Movies non-expandable, and drill through to the shared detail workspace.
 - The deterministic dashboard fixture now covers TV, Classic TV, Anime, Audiobook, and Movie Progress behavior.
 - Verification passed: `npm run verify:block` (77/77 service tests, 30/30 Playwright E2E tests, dashboard syntax, and tool contracts).
+- Follow-up planning identified that the 3-2n-4 outcome is technically safe but not yet acceptable for audiobook correctness or Progress readability: audiobook Progress needs explicit chapter-total semantics, and expanded Progress needs compact accessible evidence maps instead of chunky text rows.
 
 Next step:
-- Implement **Block 3-2o: Dashboard Accessibility And Regression Gate** (`docs/blocks/block-3-2o-dashboard-accessibility-and-regression-gate.md`).
+- Implement **Block 3-2n-5: Audiobook Progress Contract** (`docs/blocks/block-3-2n-5-audiobook-progress-contract.md`), then **Block 3-2n-6: Progress Evidence Map Polish** (`docs/blocks/block-3-2n-6-progress-evidence-map-polish.md`) before starting 3-2o.
 
 ## 2026-07-06
 
@@ -87,7 +88,8 @@ Do-not-forget checks:
 
 ## Next Recommended Step
 
-- Start with **Block 3-2o: Dashboard Accessibility And Regression Gate**.
+- Start with **Block 3-2n-5: Audiobook Progress Contract**.
+- Then implement **Block 3-2n-6: Progress Evidence Map Polish** before starting 3-2o.
 - Implement only one corrective block at a time and do not begin the next block until the current block's exit gate is recorded as passing.
 - Resume Block 3-3 only after Block 3-2o completes the final dashboard release gate.
 

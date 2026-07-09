@@ -6,7 +6,7 @@ Blocks are numbered, bounded AI-buildable tickets for code, logic, docs, folder 
 
 The project is currently in the Phase 3 refinement set. A live Playwright review found that the completed 3-2f redesign did not meet its intended usability, bounded-rendering, or responsive outcome. The immediate next selected block is:
 
-- `block-3-2o-dashboard-accessibility-and-regression-gate.md`
+- `block-3-2n-5-audiobook-progress-contract.md`
 
 Phase 3 builds on the completed playback-intelligence foundation with domain-specific refinement, richer operator ergonomics, and reporting.
 Blocks 3-2a through 3-2e form one sequential dashboard implementation path:
@@ -39,11 +39,13 @@ Corrective sequence:
 16. `completed/block-3-2n-2-progress-workspace-shell.md`
 17. `completed/block-3-2n-3-progress-lazy-hierarchy-endpoints.md`
 18. `completed/block-3-2n-4-progress-hierarchy-ui-regression.md`
-19. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
+19. `block-3-2n-5-audiobook-progress-contract.md`
+20. `block-3-2n-6-progress-evidence-map-polish.md`
+21. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
 
 Do not implement a later corrective block until the previous block's exit gate is recorded as passing. A later block must not conceal, waive, or silently absorb a failed earlier acceptance criterion.
 
-The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n was reviewed, split, implemented, and verified through Block 3-2n-4. Block 3-2o is the next corrective implementation block.
+The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n was reviewed, split, and implemented through Block 3-2n-4, then extended with two planned acceptance-correction blocks for audiobook progress correctness and readable lazy evidence maps. Block 3-2n-5 is the next corrective implementation block.
 
 ## Umbrella Specifications
 

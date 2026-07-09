@@ -2,7 +2,7 @@
 
 > Status: Planned.
 > Result: Split into implementation sub-blocks.
-> Notes: Use this as the product and drift guardrail for Blocks 3-2n-1 through 3-2n-4; do not implement it directly.
+> Notes: Use this as the product and drift guardrail for Blocks 3-2n-1 through 3-2n-6; do not implement it directly.
 
 ## Goal
 
@@ -18,6 +18,8 @@ Implement the outcome through these ordered sub-blocks:
 2. `block-3-2n-2-progress-workspace-shell.md`
 3. `block-3-2n-3-progress-lazy-hierarchy-endpoints.md`
 4. `block-3-2n-4-progress-hierarchy-ui-regression.md`
+5. `block-3-2n-5-audiobook-progress-contract.md`
+6. `block-3-2n-6-progress-evidence-map-polish.md`
 
 ## Dependencies And Entry Gate
 
@@ -43,7 +45,7 @@ Implement the outcome through these ordered sub-blocks:
 
 ## Out Of Scope
 
-- Recommendations, goals, ratings, collection editing, progress mutation, or recalculating canonical audiobook hierarchy.
+- Recommendations, goals, ratings, collection editing, progress mutation, broad audiobook enrichment, or external metadata backfills.
 - Rendering all titles or all hierarchy nodes on first paint.
 - Implementing any child block directly from this umbrella file.
 
@@ -60,6 +62,8 @@ Implement the outcome through these ordered sub-blocks:
 - 3-2n-2 replaces the visible Progress workspace with bounded groups, filters, and URL-restorable state.
 - 3-2n-3 adds lazy hierarchy expansion endpoints and supporting indexes without broad UI integration.
 - 3-2n-4 wires hierarchy expansion into the browser and locks the Progress regression coverage.
+- 3-2n-5 corrects audiobook Progress semantics so books report honest chapter totals, unknown totals, partials, repeats, and canonical book context.
+- 3-2n-6 polishes the expanded Progress UI into compact lazy evidence maps with accessible dots and readable typography.
 
 ## Likely Files Or Areas Across The Sequence
 
@@ -74,7 +78,7 @@ Implement the outcome through these ordered sub-blocks:
 
 - The child blocks together deliver the original 3-2n goal without moving 3-2o earlier in the sequence.
 - Each child block is independently verifiable with `npm run verify:block`.
-- The final child block proves Progress first paint, payload bounds, DOM bounds, lazy expansion isolation, and drill-through examples for TV, Classic TV, Anime, Audiobook, and Movie.
+- The final child block proves Progress first paint, payload bounds, DOM bounds, lazy expansion isolation, readable evidence maps, and drill-through examples for TV, Classic TV, Anime, Audiobook, and Movie.
 
 ## Verification And Exit Gate
 
