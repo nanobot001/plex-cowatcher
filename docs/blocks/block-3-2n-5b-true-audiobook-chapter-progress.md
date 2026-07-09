@@ -1,8 +1,9 @@
 # Block 3-2n-5b: True Audiobook Chapter Progress
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Follow-up to 3-2n-5a; maps playback evidence onto cached verified chapter boundaries.
+> Status: Implemented on 2026-07-09.
+> Result: Implemented.
+> Verification: `npm run verify:block` - passed.
+> Notes: Progress now maps cached verified audiobook chapter boundaries from the local cache while preserving source-honest Plex track/file fallback behavior.
 
 ## Goal
 

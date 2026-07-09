@@ -448,7 +448,7 @@ test("Progress hierarchy expands lazily, caches responses, and preserves route s
   await expect(page.getByTestId("progress-continue-list")).toBeVisible();
   await expect(page.getByTestId("progress-hierarchy")).toHaveCount(0);
 
-  const cardFor = title => page.getByTestId("progress-card").filter({ hasText: title }).first();
+  const cardFor = title => page.getByTestId("progress-card").filter({ has: page.getByRole("heading", { name: title, exact: true }) }).first();
   const tvCard = cardFor("Regression Show");
   await expect(tvCard).toBeVisible();
   await tvCard.click();
@@ -480,18 +480,30 @@ test("Progress hierarchy expands lazily, caches responses, and preserves route s
 
   const audiobookCard = cardFor("Fixture Audiobook");
   await expect(audiobookCard).toBeVisible();
+  await expect(audiobookCard.locator(".progress-card-source")).toContainText("Plex track/file evidence");
   await audiobookCard.getByTestId("progress-expand-toggle").click();
   await expect(audiobookCard.getByTestId("progress-hierarchy")).toBeVisible();
+  await expect(audiobookCard.getByTestId("progress-hierarchy").getByTestId("progress-source")).toContainText("Plex track/file evidence");
   await expect(audiobookCard.getByTestId("progress-chapter").filter({ hasText: "Chapter 1" }).first()).toBeVisible();
   await expect.poll(() => expansionRequests.length).toBeGreaterThanOrEqual(3);
   await expect(restoredTvCard.getByTestId("progress-hierarchy")).toHaveCount(0);
 
+  const verifiedAudiobookCard = cardFor("Verified Fixture Audiobook");
+  await expect(verifiedAudiobookCard).toBeVisible();
+  await expect(verifiedAudiobookCard.locator(".progress-card-source")).toContainText("Verified audiobook chapters");
+  await verifiedAudiobookCard.getByTestId("progress-expand-toggle").click();
+  await expect(verifiedAudiobookCard.getByTestId("progress-hierarchy")).toBeVisible();
+  await expect(verifiedAudiobookCard.getByTestId("progress-hierarchy").getByTestId("progress-source")).toContainText("Verified audiobook chapters");
+  await expect(verifiedAudiobookCard.getByTestId("progress-chapter").filter({ hasText: "Verified Chapter 1" }).first()).toContainText("watched");
+  await expect(verifiedAudiobookCard.getByTestId("progress-chapter").filter({ hasText: "Verified Chapter 2" }).first()).toContainText("partial");
+  await expect(audiobookCard.getByTestId("progress-hierarchy")).toHaveCount(0);
+
   await page.goBack();
-  const backTvCard = cardFor("Regression Show");
-  await expect(backTvCard.getByTestId("progress-hierarchy")).toBeVisible();
+  const backAudioCard = cardFor("Fixture Audiobook");
+  await expect(backAudioCard.getByTestId("progress-hierarchy")).toBeVisible();
   await page.goForward();
-  const forwardAudioCard = cardFor("Fixture Audiobook");
-  await expect(forwardAudioCard.getByTestId("progress-hierarchy")).toBeVisible();
+  const forwardVerifiedAudioCard = cardFor("Verified Fixture Audiobook");
+  await expect(forwardVerifiedAudioCard.getByTestId("progress-hierarchy")).toBeVisible();
 
   for (const title of ["Classic Regression", "Anime Regression"]) {
     const card = cardFor(title);

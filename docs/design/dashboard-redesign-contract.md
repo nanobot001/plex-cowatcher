@@ -105,8 +105,8 @@ This document freezes the dashboard read-model vocabulary and the current first-
 - Consumer: progress workspace hierarchy expansion
 - Default window: one requested Progress identity only
 - Max page size: bounded child hierarchy for the requested identity
-- Ordering: season and episode order for episodic media; chapter title order for audiobooks
-- Response shape: read-only TV, Classic TV, Anime, Audiobook, or Movie expansion metadata with per-visible-person watched, partial, repeated, and unknown states plus timing metadata
+- Ordering: season and episode order for episodic media; cached chapter index/start-offset order for verified audiobooks; source-honest track/file order for unverified audiobook fallback
+- Response shape: read-only TV, Classic TV, Anime, Audiobook, or Movie expansion metadata with per-visible-person watched, partial, repeated, unknown, and source-uncertain states plus timing metadata
 
 ### `GET /api/dashboard/continue-watching`
 - Consumer: overview and explorer surfaces

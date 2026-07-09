@@ -1082,10 +1082,13 @@ legend { font-size: 0.9rem; font-weight: 600; color: #06B6D4; padding: 0 12px; }
   color: var(--text-muted);
   font-weight: 500;
 }
-.progress-card-details, .progress-card-observed {
+.progress-card-details, .progress-card-observed, .progress-card-source {
   margin: 0 0 2px 0;
   font-size: 0.78rem;
   color: var(--text-muted);
+}
+.progress-card-source {
+  color: var(--accent-audiobook);
 }
 .progress-card-people-row {
   margin-top: 6px;
@@ -2568,6 +2571,11 @@ dialog[open] {
   color: var(--text-muted);
   background: rgba(255,255,255,0.02);
   opacity: 0.5;
+}
+.state-badge.source_uncertain {
+  color: #F59E0B;
+  background: rgba(245,158,11,0.08);
+  border-color: rgba(245,158,11,0.25);
 }
 
 /* Detail Hierarchy Tree Styles */

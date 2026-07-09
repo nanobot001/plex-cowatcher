@@ -2867,10 +2867,99 @@ test("audiobook chapter import verifies dry-run, apply database caching, and has
     const progressItem = progress.recentlyActive.items.find(x => x.title === "The Hobbit");
     assert.ok(progressItem);
     assert.equal(progressItem.hasVerifiedChapters, true);
+    assert.equal(progressItem.progressUnit, "chapter");
+    assert.equal(progressItem.progressSource, "audiobook_tool");
+    assert.equal(progressItem.progressSourceVerified, true);
+    assert.equal(progressItem.totalKnown, true);
+    assert.equal(progressItem.totalItems, 2);
 
     const expansion = dashboard.getProgressExpansion("audiobook:Audiobooks:10");
     assert.ok(expansion);
     assert.equal(expansion.hasVerifiedChapters, true);
+    assert.equal(expansion.progressUnit, "chapter");
+    assert.equal(expansion.totalKnown, true);
+  });
+});
+
+test("verified audiobook chapter progress maps offsets, book completion, repeats, and source-uncertain fallback", async () => {
+  await withTestDb(async (db) => {
+    for (const [id, username, alias] of [
+      [1, "Tony", "Tony Alias"],
+      [2, "Alex", "Ace"],
+      [3, "Justin", "Justin"]
+    ]) {
+      db.prepare(`
+        INSERT INTO users (id, plex_username, display_name, dashboard_alias, enabled, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, '2026-07-06T00:00:00Z', '2026-07-06T00:00:00Z')
+      `).run(id, username, username, alias);
+    }
+
+    db.prepare(`
+      INSERT INTO audiobook_books (id, folder_key, title, series_title, chapter_count, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES (30, 'single-file-folder', 'Single File Book', 'Verified Series', 1, 'fixture', 'enriched', '2026-07-06T00:00:00Z', '2026-07-06T00:00:00Z')
+    `).run();
+    db.prepare(`
+      INSERT INTO audiobook_chapter_sources (audiobook_id, source_type, source_status, confidence, refreshed_at)
+      VALUES (30, 'audiobook_tool', 'active', 0.92, '2026-07-06T12:00:00Z')
+    `).run();
+    for (const [index, title, start, end] of [
+      [1, "Verified Chapter 1", 0, 60000],
+      [2, "Verified Chapter 2", 60000, 120000],
+      [3, "Verified Chapter 3", 120000, 180000]
+    ]) {
+      db.prepare(`
+        INSERT INTO audiobook_chapters (audiobook_id, chapter_index, title, start_offset_ms, end_offset_ms, created_at, updated_at)
+        VALUES (30, ?, ?, ?, ?, '2026-07-06T12:00:00Z', '2026-07-06T12:00:00Z')
+      `).run(index, title, start, end);
+    }
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, duration, library_title, audiobook_id, source_provenance, refreshed_at)
+      VALUES ('single-file-book', 'track', 'Single File Book', 180000, 'Audiobooks', 30, 'fixture', '2026-07-06T12:00:00Z')
+    `).run();
+
+    const insertObservation = db.prepare(`
+      INSERT INTO playback_observations
+        (user_id, rating_key, media_type, library_name, title, watched_at, watched_at_provenance, percent_complete, percent_complete_provenance, view_offset, duration, completed, created_at, updated_at)
+      VALUES (?, 'single-file-book', 'track', 'Audiobooks', 'Single File Book', ?, 'fixture', ?, 'fixture', ?, 180000, ?, ?, ?)
+    `);
+    insertObservation.run(1, '2026-07-06T10:00:00Z', 50, 90000, 0, '2026-07-06T10:00:00Z', '2026-07-06T10:00:00Z');
+    insertObservation.run(1, '2026-07-06T10:30:00Z', 15, 30000, 0, '2026-07-06T10:30:00Z', '2026-07-06T10:30:00Z');
+    insertObservation.run(2, '2026-07-06T11:00:00Z', null, null, 1, '2026-07-06T11:00:00Z', '2026-07-06T11:00:00Z');
+    insertObservation.run(3, '2026-07-06T12:00:00Z', null, 9999999, 0, '2026-07-06T12:00:00Z', '2026-07-06T12:00:00Z');
+
+    const { DashboardService } = await import("../dist/service/dashboardService.js");
+    const dashboard = new DashboardService(db);
+
+    const tonyProgress = dashboard.getProgress({ user: "Tony" }).recentlyActive.items.find(x => x.title === "Single File Book");
+    assert.ok(tonyProgress);
+    assert.equal(tonyProgress.progressUnit, "chapter");
+    assert.equal(tonyProgress.progressSource, "audiobook_tool");
+    assert.equal(tonyProgress.totalKnown, true);
+    assert.equal(tonyProgress.totalItems, 3);
+    assert.equal(tonyProgress.distinctCompleted, 1);
+    assert.equal(tonyProgress.distinctItems, 2);
+    assert.equal(tonyProgress.people[0].distinctCompleted, 1);
+    assert.equal(tonyProgress.people[0].partials, 1);
+
+    const expansion = dashboard.getProgressExpansion("audiobook:Audiobooks:30");
+    assert.ok(expansion);
+    assert.equal(expansion.progressUnit, "chapter");
+    assert.equal(expansion.progressSourceVerified, true);
+    assert.equal(expansion.totalItems, 3);
+    assert.equal(expansion.distinctCompleted, 3);
+    assert.equal(expansion.hierarchy.type, "audiobook");
+
+    const [chapter1, chapter2, chapter3] = expansion.hierarchy.chapters;
+    assert.equal(chapter1.chapterIndex, 1);
+    assert.equal(chapter1.watchedStates["Tony Alias"], "repeated");
+    assert.equal(chapter1.stateSources["Tony Alias"], "verified_offset");
+    assert.equal(chapter2.watchedStates["Tony Alias"], "partial");
+    assert.equal(chapter2.partialPositions["Tony Alias"], 50);
+    assert.equal(chapter3.watchedStates["Tony Alias"], "unknown");
+    assert.equal(chapter3.watchedStates["Ace"], "watched");
+    assert.equal(chapter3.stateSources["Ace"], "book_completion");
+    assert.equal(chapter1.watchedStates["Justin"], "source_uncertain");
+    assert.equal(chapter1.stateSources["Justin"], "source_uncertain");
   });
 });
 

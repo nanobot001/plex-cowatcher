@@ -42,6 +42,8 @@ export type DashboardCategory = "movie" | "tv" | "classic_tv" | "anime" | "audio
 
 export type ProgressUnit = "episode" | "movie" | "track" | "chapter" | "book" | "unknown";
 export type ProgressSource = "plex" | "audiobook_tool" | "unknown";
+export type ProgressNodeState = "watched" | "partial" | "repeated" | "unknown" | "source_uncertain";
+export type ProgressNodeStateSource = "verified_offset" | "book_completion" | "track_file" | "source_uncertain" | "none";
 
 export interface DashboardFilters {
   dateFrom?: string;
@@ -132,7 +134,7 @@ export interface DashboardActivityItem {
   id: number; userId: number; username: string; displayName: string; ratingKey: string;
   title: string; showTitle?: string; mediaType: string; category: DashboardCategory;
   categoryLabel: string; categoryDerived: boolean; libraryName?: string; watchedAt: string;
-  duration?: number; percentComplete?: number; completed: boolean; artworkUrl: string;
+  duration?: number; viewOffset?: number; percentComplete?: number; completed: boolean; artworkUrl: string;
   grandparentRatingKey?: string; parentRatingKey?: string; audiobookId?: number; audiobookTitle?: string;
   parentTitle?: string; grandparentTitle?: string;
   seasonNumber?: number; episodeNumber?: number;
@@ -229,7 +231,7 @@ export interface ProgressEpisodeNode {
   title: string;
   episodeNumber: number | null;
   duration: number;
-  watchedStates: Record<string, "watched" | "partial" | "repeated" | "unknown">;
+  watchedStates: Record<string, ProgressNodeState>;
 }
 
 export interface ProgressSeasonNode {
@@ -241,8 +243,18 @@ export interface ProgressSeasonNode {
 export interface ProgressChapterNode {
   ratingKey: string;
   title: string;
+  chapterIndex?: number;
+  startOffsetMs?: number;
+  endOffsetMs?: number;
   duration: number;
-  watchedStates: Record<string, "watched" | "partial" | "repeated" | "unknown">;
+  watchedStates: Record<string, ProgressNodeState>;
+  stateSources?: Record<string, ProgressNodeStateSource>;
+  partialPositions?: Record<string, number>;
+  sourceType?: ProgressSource;
+  sourceStatus?: string;
+  sourceConfidence?: number;
+  sourceRefreshedAt?: string;
+  nodeKind?: "chapter" | "track";
 }
 
 export interface ProgressHierarchyExpansion {

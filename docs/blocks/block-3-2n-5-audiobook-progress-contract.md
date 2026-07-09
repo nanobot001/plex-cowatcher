@@ -1,8 +1,9 @@
 # Block 3-2n-5: Audiobook Progress Source Honesty
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Fifth child of the 3-2n Progress sequence; corrects the current unsafe assumption that Plex audiobook track rows are verified chapters.
+> Status: Implemented on 2026-07-09.
+> Result: Implemented.
+> Verification: `npm run verify:block` - passed.
+> Notes: Audiobook Progress exposes source/unit vocabulary and keeps Plex track/file evidence separate from verified chapters.
 
 ## Goal
 

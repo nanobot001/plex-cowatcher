@@ -1463,6 +1463,7 @@ async function renderProgress() {
     // Stats
     const totalLabel = x.totalKnown ? x.totalItems : "unknown";
     const observedStr = x.observedMinutes > 0 ? fmtHourValue(x.observedMinutes) : "0m";
+    const sourceLine = x.category === "audiobook" ? progressSourceCopy(x) : "";
 
     // People Badges
     const peopleBadges = (x.people || []).map(p => `
@@ -1504,6 +1505,7 @@ async function renderProgress() {
             <p class="progress-card-details">
               ${x.distinctItems} distinct &middot; ${x.plays} play${x.plays > 1 ? "s" : ""} ${x.plays - x.distinctItems > 0 ? `(${x.plays - x.distinctItems} repeat${x.plays - x.distinctItems > 1 ? "s" : ""})` : ""}
             </p>
+            ${sourceLine ? `<p class="progress-card-source" data-testid="progress-source">${esc(sourceLine)}</p>` : ""}
             <p class="progress-card-observed">Observed: ${observedStr}</p>
             <div class="progress-card-people-row">${peopleBadges}</div>
             ${expansionButton ? `<div class="progress-card-actions">${expansionButton}</div>` : ""}
@@ -1615,15 +1617,34 @@ function resetProgressExpansionSlots(preferredCard = null) {
 }
 
 function progressStateText(stateValue) {
-  return ({ watched: "watched", partial: "partial", repeated: "repeated", unknown: "unknown" })[stateValue] || "unknown";
+  return ({ watched: "watched", partial: "partial", repeated: "repeated", unknown: "unknown", source_uncertain: "source uncertain" })[stateValue] || "unknown";
 }
 
-function progressStateBadges(watchedStates, itemTitle) {
+function progressStateSourceText(sourceValue) {
+  return ({
+    verified_offset: "verified offset",
+    book_completion: "book completion",
+    track_file: "track/file evidence",
+    source_uncertain: "source uncertain",
+    none: "no evidence"
+  })[sourceValue] || "unknown source";
+}
+
+function progressSourceCopy(x) {
+  if (x.progressSource === "audiobook_tool" && x.progressSourceVerified) return "Verified audiobook chapters";
+  if (x.progressUnit === "track") return "Plex track/file evidence";
+  if (x.progressUnit === "book") return "Book-level evidence";
+  return "Progress source unknown";
+}
+
+function progressStateBadges(watchedStates, itemTitle, stateSources = {}, partialPositions = {}) {
   const entries = Object.entries(watchedStates || {}).sort(([a], [b]) => a.localeCompare(b));
   if (!entries.length) return '<span class="text-muted">No visible person state</span>';
   return entries.map(([person, stateValue]) => {
-    const label = `${itemTitle}: ${person} ${progressStateText(stateValue)}`;
-    return `<span class="state-badge ${esc(stateValue)}" data-testid="progress-state" aria-label="${esc(label)}" title="${esc(label)}">${esc(person)} <span>${esc(progressStateText(stateValue))}</span></span>`;
+    const sourceText = progressStateSourceText(stateSources[person]);
+    const partialText = partialPositions[person] != null ? `, ${partialPositions[person]}% through this item` : "";
+    const label = `${itemTitle}: ${person} ${progressStateText(stateValue)} from ${sourceText}${partialText}`;
+    return `<span class="state-badge ${esc(stateValue)}" data-testid="progress-state" data-state-source="${esc(stateSources[person] || "none")}" aria-label="${esc(label)}" title="${esc(label)}">${esc(person)} <span>${esc(progressStateText(stateValue))}</span></span>`;
   }).join("");
 }
 
@@ -1653,6 +1674,7 @@ function renderProgressHierarchy(expansion) {
   if (expansion.hierarchy.type === "audiobook") {
     const parentInfo = [expansion.hierarchy.parentSeries, expansion.hierarchy.subseries, expansion.hierarchy.series].filter(Boolean).join(" / ");
     const chapters = expansion.hierarchy.chapters || [];
+    const sourceCopy = progressSourceCopy(expansion);
     return `
       <section class="progress-hierarchy" data-testid="progress-hierarchy" aria-label="${esc(expansion.title)} audiobook hierarchy">
         <div class="progress-hierarchy-heading">
@@ -1660,15 +1682,16 @@ function renderProgressHierarchy(expansion) {
             <strong>${esc(expansion.hierarchy.bookTitle || expansion.title)}</strong>
             ${parentInfo ? `<span>${esc(parentInfo)}</span>` : ""}
           </div>
-          <small>${esc(chapters.length)} ${esc(expansion.progressUnitLabel || "items")} loaded &middot; ${esc(expansion.timingMs)} ms</small>
+          <small data-testid="progress-source">${esc(sourceCopy)} &middot; ${esc(chapters.length)} ${esc(expansion.progressUnitLabel || "items")} loaded &middot; ${esc(expansion.timingMs)} ms</small>
         </div>
         <div class="progress-chapter-list">
           ${chapters.map(ch => {
             const item = progressDetailItem(expansion, ch, "chapter");
+            const nodeLabel = ch.nodeKind === "track" ? `${ch.title} track/file detail` : `${ch.title} chapter detail`;
             return `
-              <button type="button" class="progress-node progress-chapter" data-testid="progress-chapter" data-item="${encodeURIComponent(JSON.stringify(item))}" aria-label="${esc(ch.title)} detail">
+              <button type="button" class="progress-node progress-chapter" data-testid="progress-chapter" data-item="${encodeURIComponent(JSON.stringify(item))}" aria-label="${esc(nodeLabel)}">
                 <span class="progress-node-title">${esc(ch.title)}</span>
-                <span class="progress-node-states">${progressStateBadges(ch.watchedStates, ch.title)}</span>
+                <span class="progress-node-states">${progressStateBadges(ch.watchedStates, ch.title, ch.stateSources, ch.partialPositions)}</span>
               </button>
             `;
           }).join("")}

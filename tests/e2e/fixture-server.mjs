@@ -61,6 +61,12 @@ const movieWatchedAt = isoMinutesAgo(150);
 insertObservation.run(userIds.Tony, "movie-regression", null, null, "movie", "Movies", "Fixture Movie", null, null, null, movieWatchedAt, "fixture", 100, "fixture", 7_200_000, 1, movieWatchedAt, movieWatchedAt);
 const audiobookWatchedAt = isoMinutesAgo(52);
 insertObservation.run(userIds.Tony, "audio-regression-1", null, null, "track", "Audiobooks", "Chapter 1: Open", "Fixture Audiobook", null, null, audiobookWatchedAt, "fixture", 65, "fixture", 0, 0, audiobookWatchedAt, audiobookWatchedAt);
+const verifiedAudiobookWatchedAt = isoMinutesAgo(50);
+db.prepare(`INSERT INTO playback_observations
+  (user_id,rating_key,media_type,library_name,title,show_title,watched_at,watched_at_provenance,percent_complete,percent_complete_provenance,view_offset,duration,completed,created_at,updated_at)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+  userIds.Tony, "verified-audio-file", "track", "Audiobooks", "Verified Single File", "Verified Fixture Audiobook", verifiedAudiobookWatchedAt, "fixture", 50, "fixture", 90000, 180000, 0, verifiedAudiobookWatchedAt, verifiedAudiobookWatchedAt
+);
 const reviewSourceAt = isoMinutesAgo(210);
 const reviewTargetAt = isoMinutesAgo(205);
 insertObservation.run(userIds.Tony, "review-movie", null, null, "movie", "Movies", "Review Movie", null, null, null, reviewSourceAt, "fixture", 100, "fixture", 7_200_000, 1, reviewSourceAt, reviewSourceAt);
@@ -69,6 +75,21 @@ insertObservation.run(userIds.Alex, "review-movie", null, null, "movie", "Movies
 db.prepare(`INSERT INTO audiobook_books
   (id,folder_key,title,series_title,chapter_count,source_provenance,enrichment_status,created_at,updated_at)
   VALUES (20,'fixture-audiobook','Fixture Audiobook','Fixture Series',2,'fixture','enriched',?,?)`).run(isoMinutesAgo(5), isoMinutesAgo(5));
+db.prepare(`INSERT INTO audiobook_books
+  (id,folder_key,title,series_title,chapter_count,source_provenance,enrichment_status,created_at,updated_at)
+  VALUES (21,'verified-fixture-audiobook','Verified Fixture Audiobook','Fixture Series',3,'fixture','enriched',?,?)`).run(isoMinutesAgo(5), isoMinutesAgo(5));
+db.prepare(`INSERT INTO audiobook_chapter_sources
+  (audiobook_id,source_type,source_status,confidence,refreshed_at)
+  VALUES (21,'audiobook_tool','active',0.96,?)`).run(isoMinutesAgo(5));
+for (const [chapterIndex, title, startOffset, endOffset] of [
+  [1, "Verified Chapter 1", 0, 60000],
+  [2, "Verified Chapter 2", 60000, 120000],
+  [3, "Verified Chapter 3", 120000, 180000]
+]) {
+  db.prepare(`INSERT INTO audiobook_chapters
+    (audiobook_id,chapter_index,title,start_offset_ms,end_offset_ms,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?)`).run(21, chapterIndex, title, startOffset, endOffset, isoMinutesAgo(5), isoMinutesAgo(5));
+}
 db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,leaf_count,source_provenance,refreshed_at)
   VALUES ('show-regression','show','Regression Show',1800000,'2','TV Shows','[]',3,'fixture',?)`).run(isoMinutesAgo(5));
@@ -97,6 +118,9 @@ db.prepare(`INSERT INTO content_catalog
 db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,audiobook_id,source_provenance,refreshed_at)
   VALUES ('audio-regression-2','track','Chapter 2: Later',1200000,'5','Audiobooks','[]',20,'fixture',?)`).run(isoMinutesAgo(5));
+db.prepare(`INSERT INTO content_catalog
+  (rating_key,media_type,title,duration,library_id,library_title,genres_json,audiobook_id,source_provenance,refreshed_at)
+  VALUES ('verified-audio-file','track','Verified Single File',180000,'5','Audiobooks','[]',21,'fixture',?)`).run(isoMinutesAgo(5));
 db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,source_provenance,refreshed_at)
   VALUES ('movie-regression','movie','Fixture Movie',7200000,'1','Movies','[]','fixture',?)`).run(isoMinutesAgo(5));
