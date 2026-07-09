@@ -5,10 +5,13 @@
 Current state:
 - Block 3-2n-5 (Audiobook Progress Source Honesty) is completed and verified. The dashboard endpoints and UI now explicitly expose progress unit, label, and source metadata, and set `totalKnown = false` for unverified audiobooks to avoid rendering incorrect percentages.
 - Block 3-2n-5a (Audiobook Chapter Import and Cache) is completed and verified. We created SQLite schemas for chapter sources and boundaries, implemented the CLI import command with dry-run support, and updated dashboard endpoints to expose verified chapter availability.
-- Verification passed: `npm run verify:block` (78/78 service tests, 30/30 Playwright E2E tests, dashboard syntax, and tool contracts).
+- Block 3-2n-5b (True Audiobook Chapter Progress) is completed and verified. Progress now maps playback offsets and book-completion evidence onto cached verified audiobook chapter boundaries, while unverified audiobooks stay on source-honest Plex track/file fallback copy.
+- We identified a real audiobook automation gap: the current service runtime only processes qualifying webhook items opportunistically and does not reliably perform whole-library audiobook discovery unless the scan CLI is called externally. Planned follow-up block `block-3-2n-5c-reliable-audiobook-discovery-automation.md` now captures the fix.
+- We also split the second missing step into `block-3-2n-5d-automatic-audiobook-chapter-proof-handoff.md`: once discovery is reliable, unresolved audiobooks should automatically trigger the separate `audiobook` project once, cache verified chapters locally, and let future Plex listening offsets reuse that cache.
+- Verification passed: `npm run verify:block` (79/79 service tests, 30/30 Playwright E2E tests, dashboard syntax, and tool contracts).
 
 Next step:
-- Implement **Block 3-2n-5b: True Audiobook Chapter Progress** (`docs/blocks/block-3-2n-5b-true-audiobook-chapter-progress.md`), then **Block 3-2n-6: Progress Evidence Map Polish** (`docs/blocks/block-3-2n-6-progress-evidence-map-polish.md`) before starting 3-2o.
+- Implement **Block 3-2n-6: Progress Evidence Map Polish** (`docs/blocks/block-3-2n-6-progress-evidence-map-polish.md`) before starting 3-2o.
 
 ## 2026-07-08
 

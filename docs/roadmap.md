@@ -156,9 +156,11 @@ The corrective sequence is mandatory and ordered:
 18. **3-2n-4 - Progress Hierarchy UI And Regression:** Implemented and verified; Progress lazily expands one URL-restorable hierarchy card at a time, reuses the shared detail workspace, and locks Progress interaction, DOM, payload, and viewport coverage.
 19. **3-2n-5 - Audiobook Progress Source Honesty:** Implemented. Stop treating Plex track/file rows as verified chapters, expose progress source fields, and trigger lightweight audiobook metadata caching on watch ingestion.
 20. **3-2n-5a - Audiobook Chapter Import And Cache:** Implemented. Add an explicit sanitized import/cache path for verified chapter boundaries produced by the separate `audiobook` tool.
-21. **3-2n-5b - True Audiobook Chapter Progress:** Map playback offsets and completion evidence onto cached verified chapter boundaries while preserving honest fallback behavior.
-22. **3-2n-6 - Progress Evidence Map Polish:** Restore readable lazy evidence maps with accessible dots, compact legends, smoother expansion, and polished Progress typography without returning to all-dot first paint.
-23. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
+21. **3-2n-5b - True Audiobook Chapter Progress:** Implemented. Map playback offsets and completion evidence onto cached verified chapter boundaries while preserving honest fallback behavior.
+22. **3-2n-5c - Reliable Audiobook Discovery Automation:** Make audiobook discovery dependable in the normal service runtime, not only through manual CLI calls or opportunistic webhook items.
+23. **3-2n-5d - Automatic Audiobook Chapter Proof Handoff:** Automatically trigger the separate `audiobook` project one time per unresolved audiobook and cache verified chapter boundaries for future Progress mapping.
+24. **3-2n-6 - Progress Evidence Map Polish:** Restore readable lazy evidence maps with accessible dots, compact legends, smoother expansion, and polished Progress typography without returning to all-dot first paint.
+25. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
 
 Each block, including every 3-2m sub-block, must pass its own exit gate before the next begins. Block 3-3 is paused until 3-2o completes.
 
@@ -169,6 +171,18 @@ Automate and schedule the delivery of daily or weekly household watch reports to
 ### Block 3-4: Hierarchical Audiobook Series Modeling
 
 Extend the audiobook catalog so top-level series and subseries can be represented separately, backfilled safely, and surfaced through existing tool-friendly service layers without breaking current audiobook workflows.
+
+### Block 3-5: Proactive Audiobook Scanner & Webhook Trigger
+
+Implemented on 2026-06-28. Added the full-library audiobook scanner service, CLI entrypoint, and webhook item-ingestion path.
+
+### Block 3-2n-5c: Reliable Audiobook Discovery Automation
+
+Make whole-library audiobook discovery dependable in the normal service runtime, not only through manual CLI calls or opportunistic webhook items. Add a service-local bounded scan cadence/cooldown under PM2, keep CLI and webhook paths on the same scan logic, and emit a durable post-discovery signal for later verified-chapter automation with the separate `audiobook` project.
+
+### Block 3-2n-5d: Automatic Audiobook Chapter Proof Handoff
+
+Once reliable discovery exists, automatically trigger the separate `audiobook` project one time per unresolved audiobook, import sanitized verified chapter boundaries into CoWatcher’s local cache, and reuse that cache for future audiobook Progress mapping instead of requiring manual chapter import.
 
 ### Deferred Beyond The Phase 3 MVP
 
