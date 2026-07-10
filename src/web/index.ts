@@ -51,6 +51,10 @@ export function registerWebRoutes(router: Router): void {
           <button class="dialog-close" formmethod="dialog">&times;</button>
           <div id="detail-content"></div>
         </dialog>
+        <dialog id="progress-dialog">
+          <button class="dialog-close" formmethod="dialog">&times;</button>
+          <div id="progress-content"></div>
+        </dialog>
       </div>
       <script src="/static/dashboard.js?v=3-2m-3"></script>
     `));

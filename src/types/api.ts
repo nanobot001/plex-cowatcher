@@ -45,6 +45,15 @@ export type ProgressSource = "plex" | "audiobook_tool" | "unknown";
 export type ProgressNodeState = "watched" | "partial" | "repeated" | "unknown" | "source_uncertain";
 export type ProgressNodeStateSource = "verified_offset" | "book_completion" | "track_file" | "source_uncertain" | "none";
 
+export interface ProgressWatcherEvidence {
+  displayName: string;
+  state: ProgressNodeState;
+  latestObservedAt: string | null;
+  watchCount: number;
+  stateSource?: ProgressNodeStateSource;
+  partialPosition?: number;
+}
+
 export interface DashboardFilters {
   dateFrom?: string;
   dateTo?: string;
@@ -232,6 +241,7 @@ export interface ProgressEpisodeNode {
   episodeNumber: number | null;
   duration: number;
   watchedStates: Record<string, ProgressNodeState>;
+  watcherEvidence: ProgressWatcherEvidence[];
 }
 
 export interface ProgressSeasonNode {
@@ -248,6 +258,7 @@ export interface ProgressChapterNode {
   endOffsetMs?: number;
   duration: number;
   watchedStates: Record<string, ProgressNodeState>;
+  watcherEvidence: ProgressWatcherEvidence[];
   stateSources?: Record<string, ProgressNodeStateSource>;
   partialPositions?: Record<string, number>;
   sourceType?: ProgressSource;

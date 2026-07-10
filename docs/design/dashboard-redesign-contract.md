@@ -145,6 +145,7 @@ This document freezes the dashboard read-model vocabulary and the current first-
 ## Contract Notes
 
 - Unknown data stays unknown.
+- Expanded Progress cards render a compact, lazy evidence map: episodic media groups rows by season; audiobooks show verified chapter rows when cached boundaries exist and source-qualified track/file or book-level evidence otherwise. Each row presents a completed watcher count, up to four watcher dots, and an on-demand roster with latest evidence dates; partial and uncertain evidence remains separate from completion. Recently Completed follows the main Progress sections at full width.
 - People reads are side-effect free: attributed contributions exist only in the read model and never create playback observations, watch events, adjudications, prompts, or Plex mutations.
 - People inclusive totals equal directly observed contributions plus confirmed attributed contributions that have no matching direct observation. Inference, No, Not sure, Clear, failed/stale state, and hidden users do not add personal activity.
 - Possible-duplicate identity warnings are presentational only. User IDs remain authoritative and aliases or normalized labels are never join keys.

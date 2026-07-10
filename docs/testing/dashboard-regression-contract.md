@@ -35,7 +35,8 @@ Protect durable dashboard behavior across numbered blocks without freezing visua
 - Progress workspace shell separates Recently Active, Continue, and Recently Completed buckets.
 - Progress offset and filter parameters (category, user) are URL-restorable, browser-history preserved, and reset cleanly.
 - Progress hierarchy expansion is lazy and single-card: first paint stays summary-only, one expanded card is URL-restorable, cached re-expansion does not refetch, and unrelated cards are not rendered as expanded.
-- Progress hierarchy rows use stable selectors and accessible labels for TV, Classic TV, Anime, and Audiobook watched, partial, repeated, unknown, and source-uncertain states.
+- Progress watcher coverage uses stable hierarchy, season/chapter/track, watcher summary, watcher dot, overflow control, and roster selectors. Completed counts use only watched/repeated evidence over visible household members; partial, source-uncertain, and unknown evidence remains distinct. Dots and roster controls are keyboard- and touch-accessible without toggling the expanded card.
+- Recently Completed is a visible full-width Progress section below Continue Watching and Recently Active.
 - Audiobook Progress fixtures must include both verified cached chapters and unverified Plex track/file fallback evidence; browser copy may say chapters only for verified cached boundaries.
 - Unknown totals display explicit unknown stats without falsifying percentages or indicator fills.
 - Movies display progress/repeat evidence without invented TV or Audiobook season/chapter summaries.

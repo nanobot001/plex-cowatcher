@@ -415,7 +415,7 @@ test("Progress shell renders bounded sections with correct cards and no page err
   // Assert TV Show cards display correct details and progress bar
   const tvCard = page.getByTestId("progress-continue-list").getByTestId("progress-card").filter({ hasText: "Regression Show" }).first();
   await expect(tvCard).toBeVisible();
-  await expect(tvCard.getByTestId("progress-bar")).toBeVisible();
+  await expect(tvCard.getByTestId("progress-dots")).toBeVisible();
   await expect(tvCard).toContainText("S1 (2 eps)");
 
   // Assert Hidden user is excluded
@@ -452,82 +452,80 @@ test("Progress hierarchy expands lazily, caches responses, and preserves route s
   const tvCard = cardFor("Regression Show");
   await expect(tvCard).toBeVisible();
   await tvCard.click();
-  await expect(tvCard.getByTestId("progress-hierarchy")).toBeVisible();
+  
+  const progressDialog = page.locator("#progress-dialog");
+  await expect(progressDialog).toBeVisible();
   await expect(page.locator("#detail-dialog")).not.toBeVisible();
-  await expect(tvCard.getByTestId("progress-season").first()).toContainText("Season 1");
-  await expect(tvCard.getByTestId("progress-episode").filter({ hasText: "Confirmed Episode" }).first()).toBeVisible();
+  await expect(progressDialog.getByTestId("progress-season").first()).toContainText("Season 1");
+  await expect(progressDialog.getByTestId("progress-episode").filter({ hasText: "Confirmed Episode" }).first()).toBeVisible();
   await expect.poll(() => expansionRequests.length).toBe(1);
   const expandedTvUrl = page.url();
-  expect(expandedTvUrl).toContain("expandedProgress=");
+  expect(expandedTvUrl).toContain("progressDetail=");
 
-  await tvCard.getByTestId("progress-expand-toggle").click();
-  await expect(page.getByTestId("progress-hierarchy")).toHaveCount(0);
+  await progressDialog.locator(".dialog-close").click();
+  await expect(progressDialog).not.toBeVisible();
   expect(expansionRequests.length).toBe(1);
 
   const regressionCards = page.getByTestId("progress-card").filter({ hasText: "Regression Show" });
   const duplicateTvCard = regressionCards.nth(Math.min(1, await regressionCards.count() - 1));
   await duplicateTvCard.click();
-  await expect(duplicateTvCard.getByTestId("progress-hierarchy")).toBeVisible();
-  if (await regressionCards.count() > 1) {
-    await expect(tvCard.getByTestId("progress-hierarchy")).toHaveCount(0);
-  }
+  await expect(progressDialog).toBeVisible();
+  await expect(progressDialog.getByTestId("progress-hierarchy")).toBeVisible();
   expect(expansionRequests.length).toBe(1);
 
   await page.reload();
-  const restoredTvCard = cardFor("Regression Show");
-  await expect(restoredTvCard.getByTestId("progress-hierarchy")).toBeVisible();
-  await expect(restoredTvCard.getByTestId("progress-episode").filter({ hasText: "Confirmed Episode" }).first()).toBeVisible();
+  await expect(progressDialog).toBeVisible();
+  await expect(progressDialog.getByTestId("progress-episode").filter({ hasText: "Confirmed Episode" }).first()).toBeVisible();
+  await progressDialog.locator(".dialog-close").click();
 
   const audiobookCard = cardFor("Fixture Audiobook");
   await expect(audiobookCard).toBeVisible();
   await expect(audiobookCard.locator(".progress-card-source")).toContainText("Plex track/file evidence");
-  await audiobookCard.getByTestId("progress-expand-toggle").click();
-  await expect(audiobookCard.getByTestId("progress-hierarchy")).toBeVisible();
-  await expect(audiobookCard.getByTestId("progress-hierarchy").getByTestId("progress-source")).toContainText("Plex track/file evidence");
-  await expect(audiobookCard.getByTestId("progress-chapter").filter({ hasText: "Chapter 1" }).first()).toBeVisible();
+  await audiobookCard.click();
+  await expect(progressDialog).toBeVisible();
+  await expect(progressDialog.getByTestId("progress-chapter").filter({ hasText: "Chapter 1" }).first()).toBeVisible();
   await expect.poll(() => expansionRequests.length).toBeGreaterThanOrEqual(3);
-  await expect(restoredTvCard.getByTestId("progress-hierarchy")).toHaveCount(0);
+  await progressDialog.locator(".dialog-close").click();
 
   const verifiedAudiobookCard = cardFor("Verified Fixture Audiobook");
   await expect(verifiedAudiobookCard).toBeVisible();
   await expect(verifiedAudiobookCard.locator(".progress-card-source")).toContainText("Verified audiobook chapters");
-  await verifiedAudiobookCard.getByTestId("progress-expand-toggle").click();
-  await expect(verifiedAudiobookCard.getByTestId("progress-hierarchy")).toBeVisible();
-  await expect(verifiedAudiobookCard.getByTestId("progress-hierarchy").getByTestId("progress-source")).toContainText("Verified audiobook chapters");
-  await expect(verifiedAudiobookCard.getByTestId("progress-chapter").filter({ hasText: "Verified Chapter 1" }).first()).toContainText("watched");
-  await expect(verifiedAudiobookCard.getByTestId("progress-chapter").filter({ hasText: "Verified Chapter 2" }).first()).toContainText("partial");
-  await expect(audiobookCard.getByTestId("progress-hierarchy")).toHaveCount(0);
+  await verifiedAudiobookCard.click();
+  await expect(progressDialog).toBeVisible();
+  await expect(progressDialog.getByTestId("progress-chapter").filter({ hasText: "Verified Chapter 1" }).first()).toContainText("watched");
+  await expect(progressDialog.getByTestId("progress-chapter").filter({ hasText: "Verified Chapter 2" }).first()).toContainText("partial");
 
-  await page.goBack();
-  const backAudioCard = cardFor("Fixture Audiobook");
-  await expect(backAudioCard.getByTestId("progress-hierarchy")).toBeVisible();
-  await page.goForward();
-  const forwardVerifiedAudioCard = cardFor("Verified Fixture Audiobook");
-  await expect(forwardVerifiedAudioCard.getByTestId("progress-hierarchy")).toBeVisible();
+  await page.goBack(); // Should go back to Fixture Audiobook
+  await expect(progressDialog).toBeVisible();
+  await expect(progressDialog.getByTestId("progress-chapter").filter({ hasText: "Chapter 1" }).first()).toBeVisible();
+  
+  await page.goForward(); // Should go to Verified Fixture Audiobook
+  await expect(progressDialog).toBeVisible();
+  await expect(progressDialog.getByTestId("progress-chapter").filter({ hasText: "Verified Chapter 1" }).first()).toBeVisible();
+  await progressDialog.locator(".dialog-close").click();
 
   for (const title of ["Classic Regression", "Anime Regression"]) {
     const card = cardFor(title);
     await expect(card).toBeVisible();
-    await card.getByTestId("progress-expand-toggle").click();
-    await expect(card.getByTestId("progress-hierarchy")).toBeVisible();
-    await expect(card.getByTestId("progress-episode").first()).toBeVisible();
+    await card.click();
+    await expect(progressDialog).toBeVisible();
+    await expect(progressDialog.getByTestId("progress-episode").first()).toBeVisible();
+    await progressDialog.locator(".dialog-close").click();
   }
 
   const movieCard = cardFor("Fixture Movie");
   await expect(movieCard).toBeVisible();
-  await expect(movieCard.getByTestId("progress-expand-toggle")).toHaveCount(0);
   await movieCard.click();
   await expect(page.locator("#detail-dialog")).toBeVisible();
+  await expect(page.locator("#progress-dialog")).not.toBeVisible();
   await expect(page.getByTestId("detail-people")).toContainText("Tony");
   await page.locator("#detail-dialog .dialog-close").click();
 
   const keyboardCard = cardFor("Anime Regression");
-  await keyboardCard.getByTestId("progress-expand-toggle").focus();
-  await page.keyboard.press("Enter");
-  await expect(keyboardCard.getByTestId("progress-hierarchy")).toHaveCount(0);
   await keyboardCard.focus();
   await page.keyboard.press("Enter");
-  await expect(keyboardCard.getByTestId("progress-hierarchy")).toBeVisible();
+  await expect(progressDialog).toBeVisible();
+  await expect(progressDialog.getByTestId("progress-hierarchy")).toBeVisible();
 
   await expectNoVisualOverflow(page);
   expect(pageErrors).toEqual([]);

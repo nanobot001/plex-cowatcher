@@ -1,8 +1,9 @@
 # Block 3-2n-6: Progress Evidence Map Polish
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Sixth child of the 3-2n Progress sequence; turns the corrected lazy hierarchy data into a smooth, compact, readable Progress experience.
+> Status: Implemented on 2026-07-09.
+> Result: Implemented.
+> Verification: `npm run verify:block` - passed (79/79 service tests, 30/30 deterministic Playwright journeys, dashboard syntax, and tool contracts).
+> Notes: Expanded Progress hierarchies now use compact, accessible evidence dots with a state legend while preserving lazy single-card expansion and source-honest audiobook evidence.
 
 ## Goal
 
