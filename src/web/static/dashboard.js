@@ -1,8 +1,9 @@
 const layouts = new Set(["overview","timeline","explorer","people","progress"]);
-const state = { layout: "overview", filters: {}, offset: 0, totals: null, users: null, libraries: null, explorer: { section: "", sort: "recent", offset: 0, selected: "" }, timeline: { date: "", offset: 0 }, people: { period: "30d", dateFrom: "", dateTo: "", orderMode: "default", activeOrder: [], secondaryOrder: [] }, progress: { recentlyActiveOffset: 0, continueOffset: 0, recentlyCompletedOffset: 0, expandedProgress: "" } };
+const state = { layout: "overview", filters: {}, offset: 0, totals: null, users: null, libraries: null, explorer: { section: "", sort: "recent", offset: 0, selected: "" }, timeline: { date: "", offset: 0 }, people: { period: "30d", dateFrom: "", dateTo: "", orderMode: "default", activeOrder: [], secondaryOrder: [] }, progress: { recentlyActiveOffset: 0, continueOffset: 0, recentlyCompletedOffset: 0, selected: "" } };
 const content = document.querySelector("#dashboard-content");
 const form = document.querySelector("#dashboard-filters");
 const dialog = document.querySelector("#detail-dialog");
+const progressDialog = document.querySelector("#progress-dialog");
 let explorerRenderVersion=0;
 let peopleRenderVersion=0;
 const progressExpansionCache = new Map();
@@ -174,7 +175,7 @@ const routeQuery=()=>{
     if(state.progress.recentlyActiveOffset)p.set("recentlyActiveOffset",String(state.progress.recentlyActiveOffset));
     if(state.progress.continueOffset)p.set("continueOffset",String(state.progress.continueOffset));
     if(state.progress.recentlyCompletedOffset)p.set("recentlyCompletedOffset",String(state.progress.recentlyCompletedOffset));
-    if(state.progress.expandedProgress)p.set("expandedProgress",state.progress.expandedProgress);
+    if(state.progress.selected)p.set("progressDetail",state.progress.selected);
   }
   if(state.explorer.selected)p.set("selected",state.explorer.selected);
   return p;
@@ -371,7 +372,7 @@ function restoreLocationState(){
     state.progress.recentlyActiveOffset=Math.max(0,Number(params.get("recentlyActiveOffset"))||0);
     state.progress.continueOffset=Math.max(0,Number(params.get("continueOffset"))||0);
     state.progress.recentlyCompletedOffset=Math.max(0,Number(params.get("recentlyCompletedOffset"))||0);
-    state.progress.expandedProgress=params.get("expandedProgress")||"";
+    state.progress.selected=params.get("progressDetail")||"";
   }
 }
 const toneClass=status=>({failed:"is-danger",error:"is-danger",missing:"is-warning",review:"is-neutral",pending:"is-info",prompted:"is-info"})[status]||"is-neutral";
@@ -1430,35 +1431,46 @@ async function renderProgress() {
     const isTv = x.category === "tv" || x.category === "classic_tv" || x.category === "anime";
     const isAudiobook = x.category === "audiobook";
     const canExpand = progressExpandable(x.category);
-    const isExpanded = state.progress.expandedProgress === x.groupKey;
-    const expansionButton = canExpand
-      ? `<button type="button" class="text-button progress-expand-toggle" data-testid="progress-expand-toggle" data-progress-expand="${esc(x.groupKey)}" aria-expanded="${isExpanded}" aria-label="${isExpanded ? "Hide" : "Show"} hierarchy for ${esc(x.title)}">${isExpanded ? "Hide hierarchy" : "Show hierarchy"}</button>`
-      : "";
+    const isExpanded = state.progress.selected === x.groupKey;
+    
 
     // Progress Bar or Unknown Total
-    let barHtml = "";
+    
+    const expansionButton = ""; // Removed in favor of whole card click opening modal
+
+    // Progress Dots
+    let dotHtml = "";
+    const dots = [];
+    let overflow = 0;
+    
+    // We cap at 24 dots.
+    const maxDots = 24;
+    
     if (x.totalKnown && x.totalItems) {
-      const pct = Math.min(100, Math.round((x.distinctCompleted / x.totalItems) * 100));
-      const label = x.category === "movie" ? "Completed" : `${x.distinctCompleted} of ${x.totalItems} completed (${pct}%)`;
-      barHtml = `
-        <div class="progress-card-bar-wrapper">
-          <div class="progress-card-bar" data-testid="progress-bar" title="${esc(label)}">
-            <i style="width: ${pct}%"></i>
-          </div>
-          <span class="progress-card-bar-label">${esc(label)}</span>
-        </div>
-      `;
+      const totalToShow = Math.min(x.totalItems, maxDots);
+      overflow = Math.max(0, x.totalItems - maxDots);
+      for (let i = 0; i < totalToShow; i++) {
+        dots.push(`<div class="progress-evidence-dot ${i < x.distinctCompleted ? 'watched' : 'unknown'}"></div>`);
+      }
     } else {
-      const label = `Total unknown · ${x.distinctCompleted} completed`;
-      barHtml = `
-        <div class="progress-card-bar-wrapper">
-          <div class="progress-card-bar bar-unknown" data-testid="progress-bar" title="${esc(label)}">
-            <i style="width: 100%"></i>
-          </div>
-          <span class="progress-card-bar-label">${esc(label)}</span>
-        </div>
-      `;
+      const totalToShow = Math.min(x.distinctCompleted, maxDots);
+      overflow = Math.max(0, x.distinctCompleted - maxDots);
+      for (let i = 0; i < totalToShow; i++) {
+        dots.push(`<div class="progress-evidence-dot watched"></div>`);
+      }
+      if (overflow === 0) {
+        // Just show that there's an unknown end
+        dots.push(`<div class="progress-evidence-dot unknown" style="border-style: dashed; opacity: 0.5;"></div>`);
+      }
     }
+    
+    dotHtml = `
+      <div class="progress-card-dot-cluster" data-testid="progress-dots">
+        ${dots.join("")}
+        ${overflow > 0 ? `<div class="progress-dot-overflow">+${overflow}</div>` : ""}
+      </div>
+    `;
+    let barHtml = dotHtml;
 
     // Stats
     const totalLabel = x.totalKnown ? x.totalItems : "unknown";
@@ -1489,7 +1501,7 @@ async function renderProgress() {
     }
 
     const cardInteractionAttrs = canExpand
-      ? `data-progress-card="${esc(x.groupKey)}" tabindex="0" aria-expanded="${isExpanded}" aria-label="${esc(x.title)} progress hierarchy"`
+      ? `data-progress-card="${esc(x.groupKey)}" tabindex="0" aria-expanded="${isExpanded}" aria-label="${esc(x.title)} progress hierarchy" data-item="${encodeURIComponent(JSON.stringify(x))}"`
       : `data-item="${encodeURIComponent(JSON.stringify(x))}"`;
 
     return `
@@ -1512,7 +1524,7 @@ async function renderProgress() {
           </div>
         </div>
         ${barHtml}
-        <div class="progress-hierarchy-slot" data-progress-expansion-slot hidden></div>
+        
       </article>
     `;
   };
@@ -1541,8 +1553,8 @@ async function renderProgress() {
     : `<p class="text-muted" data-testid="progress-empty-recentlyCompleted">Nothing completed recently.</p>`;
 
   content.innerHTML = `
-    <section class="dashboard-grid">
-      <div class="dashboard-panel panel-wide">
+    <section class="progress-workspace">
+      <div class="dashboard-panel">
         <div class="progress-section">
           <div class="panel-title">
             <h3>Continue Watching & Listening</h3>
@@ -1553,8 +1565,10 @@ async function renderProgress() {
           </div>
           ${progressPager(d.continue, "continue")}
         </div>
+      </div>
 
-        <div class="progress-section" style="margin-top: 40px;">
+      <div class="dashboard-panel">
+        <div class="progress-section">
           <div class="panel-title">
             <h3>Recently Active</h3>
             <span>Latest activity across all series</span>
@@ -1565,19 +1579,23 @@ async function renderProgress() {
           ${progressPager(d.recentlyActive, "recentlyActive")}
         </div>
       </div>
-      <aside>
-        <div class="dashboard-panel">
-          <h3>Recently Completed</h3>
+
+      <div class="dashboard-panel">
+        <div class="progress-section">
+          <div class="panel-title">
+            <h3>Recently Completed</h3>
+            <span>Finished items</span>
+          </div>
           <div class="recent-completed-list" data-testid="progress-completed-list">
             ${completedHtml}
           </div>
           ${progressPager(d.recentlyCompleted, "recentlyCompleted")}
         </div>
-      </aside>
+      </div>
     </section>
   `;
 
-  await syncProgressExpansionFromState();
+  await syncProgressDetailFromURL();
 }
 
 function getProgressCardByKey(groupKey) {
@@ -1594,7 +1612,7 @@ function updateProgressRoute(push) {
 function resetProgressExpansionSlots(preferredCard = null) {
   let expandedCardSeen = false;
   content.querySelectorAll("[data-testid='progress-card']").forEach(card => {
-    const matchesExpanded = card.dataset.groupKey === state.progress.expandedProgress;
+    const matchesExpanded = card.dataset.groupKey === state.progress.selected;
     const expanded = matchesExpanded && !expandedCardSeen && (!preferredCard || card === preferredCard);
     if (expanded) expandedCardSeen = true;
     card.classList.toggle("is-expanded", expanded);
@@ -1637,15 +1655,24 @@ function progressSourceCopy(x) {
   return "Progress source unknown";
 }
 
-function progressStateBadges(watchedStates, itemTitle, stateSources = {}, partialPositions = {}) {
-  const entries = Object.entries(watchedStates || {}).sort(([a], [b]) => a.localeCompare(b));
-  if (!entries.length) return '<span class="text-muted">No visible person state</span>';
-  return entries.map(([person, stateValue]) => {
-    const sourceText = progressStateSourceText(stateSources[person]);
+function progressStateBadges(watchedStates, itemTitle, stateSources = {}, partialPositions = {}, watcherEvidence = []) {
+  const entries = Object.entries(watchedStates || {})
+    .filter(([_, stateValue]) => stateValue !== 'unknown')
+    .sort(([a], [b]) => a.localeCompare(b));
+  if (!entries.length) return '<span class="text-muted" style="font-size:0.75rem;">Unwatched</span>';
+  let html = '<div class="progress-dots" data-testid="progress-watcher-summary">';
+  for (const [person, stateValue] of entries) {
+    const evidence = watcherEvidence.find(e => e.displayName === person);
+    const source = stateSources[person] || (evidence ? evidence.stateSource : null) || 'track_file';
+    const sourceText = progressStateSourceText(source);
     const partialText = partialPositions[person] != null ? `, ${partialPositions[person]}% through this item` : "";
-    const label = `${itemTitle}: ${person} ${progressStateText(stateValue)} from ${sourceText}${partialText}`;
-    return `<span class="state-badge ${esc(stateValue)}" data-testid="progress-state" data-state-source="${esc(stateSources[person] || "none")}" aria-label="${esc(label)}" title="${esc(label)}">${esc(person)} <span>${esc(progressStateText(stateValue))}</span></span>`;
-  }).join("");
+    const dateText = (evidence && evidence.latestObservedAt) ? ` on ${new Date(evidence.latestObservedAt).toLocaleDateString()}` : "";
+    const label = `${itemTitle}: ${person} ${progressStateText(stateValue)} from ${sourceText}${partialText}${dateText}`;
+    const dotClass = stateValue === 'watched' ? 'watched' : (stateValue === 'partial' ? 'partial' : '');
+    html += `<span class="progress-dot ${dotClass}" data-testid="progress-state" data-state-source="${esc(source || "none")}" aria-label="${esc(label)}" title="${esc(label)}"><span class="sr-only">${esc(person)} ${esc(stateValue)}</span></span>`;
+  }
+  html += '</div>';
+  return html;
 }
 
 function progressDetailItem(expansion, node, kind) {
@@ -1691,7 +1718,7 @@ function renderProgressHierarchy(expansion) {
             return `
               <button type="button" class="progress-node progress-chapter" data-testid="progress-chapter" data-item="${encodeURIComponent(JSON.stringify(item))}" aria-label="${esc(nodeLabel)}">
                 <span class="progress-node-title">${esc(ch.title)}</span>
-                <span class="progress-node-states">${progressStateBadges(ch.watchedStates, ch.title, ch.stateSources, ch.partialPositions)}</span>
+                <span class="progress-node-states">${progressStateBadges(ch.watchedStates, ch.title, ch.stateSources, ch.partialPositions, ch.watcherEvidence)}</span>
               </button>
             `;
           }).join("")}
@@ -1713,7 +1740,7 @@ function renderProgressHierarchy(expansion) {
         <div class="progress-season-list">
           ${seasons.map(season => `
             <section class="progress-season" data-testid="progress-season" aria-label="${esc(season.seasonName)}">
-              <header>
+              <header onclick="this.parentElement.classList.toggle('collapsed')">
                 <strong>${esc(season.seasonName)}</strong>
                 <span>${esc((season.episodes || []).length)} episode${(season.episodes || []).length === 1 ? "" : "s"}</span>
               </header>
@@ -1724,7 +1751,7 @@ function renderProgressHierarchy(expansion) {
                   return `
                     <button type="button" class="progress-node progress-episode" data-testid="progress-episode" data-item="${encodeURIComponent(JSON.stringify(item))}" aria-label="${esc(episodeLabel)} detail">
                       <span class="progress-node-title">${esc(episodeLabel)}</span>
-                      <span class="progress-node-states">${progressStateBadges(ep.watchedStates, ep.title)}</span>
+                      <span class="progress-node-states">${progressStateBadges(ep.watchedStates, ep.title, undefined, undefined, ep.watcherEvidence)}</span>
                     </button>
                   `;
                 }).join("")}
@@ -1738,31 +1765,98 @@ function renderProgressHierarchy(expansion) {
   return '<div class="panel-state compact error">Unsupported hierarchy response.</div>';
 }
 
-async function syncProgressExpansionFromState(preferredCard = null) {
-  resetProgressExpansionSlots(preferredCard);
-  const groupKey = state.progress.expandedProgress;
-  if (!groupKey) return;
-  const card = preferredCard?.dataset?.groupKey === groupKey ? preferredCard : getProgressCardByKey(groupKey);
-  if (!card) return;
-  const slot = card.querySelector("[data-progress-expansion-slot]");
-  if (!slot) return;
-  slot.hidden = false;
-  if (progressExpansionCache.has(groupKey)) {
-    slot.innerHTML = renderProgressHierarchy(progressExpansionCache.get(groupKey));
+let activeProgressDetailFetchAbortController = null;
+
+async function syncProgressDetailFromURL() {
+  if (activeProgressDetailFetchAbortController) {
+    activeProgressDetailFetchAbortController.abort();
+    activeProgressDetailFetchAbortController = null;
+  }
+
+  if (!state.progress.selected) {
+    if (progressDialog && progressDialog.hasAttribute("open")) {
+      progressDialog.close();
+    }
     return;
   }
-  slot.innerHTML = '<div class="panel-state compact" data-testid="progress-hierarchy-loading">Loading hierarchy...</div>';
-  try {
-    const expansion = await fetchJson("/api/dashboard/progress/expand/" + encodeURIComponent(groupKey));
-    progressExpansionCache.set(groupKey, expansion);
-    if (state.progress.expandedProgress === groupKey && document.contains(slot)) {
-      slot.innerHTML = renderProgressHierarchy(expansion);
+
+  const groupKey = state.progress.selected;
+  if (!groupKey) {
+    if (progressDialog && progressDialog.hasAttribute("open")) {
+      progressDialog.close();
     }
-  } catch (error) {
-    if (state.progress.expandedProgress === groupKey && document.contains(slot)) {
-      slot.innerHTML = '<div class="panel-state compact error" data-testid="progress-hierarchy-error">Hierarchy could not load.</div>';
+    return;
+  }
+
+  if (progressDialog && !progressDialog.hasAttribute("open")) {
+    progressDialog.showModal();
+  }
+
+  // Optimistic rendering from active card
+  const cardElement = document.querySelector(`[data-progress-card="${groupKey}"]`);
+  let optimisticItem = null;
+  if (cardElement) {
+    const rawData = cardElement.dataset.item; 
+    if (rawData) {
+      try { optimisticItem = JSON.parse(decodeURIComponent(rawData)); } catch(e) {}
     }
   }
+
+  const contentEl = progressDialog.querySelector("#progress-content");
+  if (contentEl) {
+    contentEl.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted);">Loading progress...</div>';
+  }
+
+  activeProgressDetailFetchAbortController = new AbortController();
+  const signal = activeProgressDetailFetchAbortController.signal;
+
+  try {
+    let hierarchy = progressExpansionCache.get(groupKey);
+    if (!hierarchy) {
+      hierarchy = await fetchJson("/api/dashboard/progress/expand/" + encodeURIComponent(groupKey));
+      if (hierarchy) progressExpansionCache.set(groupKey, hierarchy);
+    }
+    if (signal.aborted) return;
+    
+    if (contentEl && hierarchy) {
+      contentEl.innerHTML = `
+        <div class="progress-dialog-layout detail-layout">
+          <div class="detail-poster-column">
+            <div class="detail-poster-wrapper">
+              ${optimisticItem ? art(optimisticItem) : ''}
+            </div>
+          </div>
+          <div class="detail-scroll-container">
+            <div class="detail-info-wrapper">
+              <div>
+                <p class="eyebrow">${esc(hierarchy.categoryLabel || optimisticItem?.categoryLabel || '')} Progress</p>
+                <h2 style="margin-bottom: 12px;">${esc(hierarchy.showTitle || hierarchy.title || optimisticItem?.showTitle || optimisticItem?.title || '')}</h2>
+              </div>
+              <div class="detail-scroll-content">
+                ${renderProgressHierarchy(hierarchy)}
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+  } catch (err) {
+    if (err.name !== "AbortError" && contentEl) {
+      contentEl.innerHTML = `<div style="padding:40px;color:red;">Error loading details</div>`;
+    }
+  }
+}
+
+async function openProgressDetail(card) {
+  const groupKey = card.dataset.progressCard || card.dataset.progressExpand;
+  if (!groupKey) return;
+  state.progress.selected = groupKey;
+  save();
+  const targetHash = "#" + state.layout + "?" + routeQuery();
+  if (location.hash !== targetHash) {
+    history.replaceState({}, "", targetHash);
+  }
+  await syncProgressDetailFromURL();
 }
 
 function progressPager(bucket, stateKey) {
@@ -2032,7 +2126,7 @@ form.addEventListener("change",()=>{
   if((state.filters.category||"")!==previousCategory)state.explorer.section=state.filters.category||"";
   state.explorer.offset=0;
   state.explorer.selected="";
-  state.progress={recentlyActiveOffset:0,continueOffset:0,recentlyCompletedOffset:0,expandedProgress:""};
+  state.progress={recentlyActiveOffset:0,continueOffset:0,recentlyCompletedOffset:0,selected:""};
   save();
   render();
   loadGlobals();
@@ -2042,7 +2136,7 @@ form.addEventListener("reset",()=>setTimeout(()=>{
   state.filters={};
   state.offset=0;
   state.explorer={section:"",sort:"recent",offset:0,selected:""};
-  state.progress={recentlyActiveOffset:0,continueOffset:0,recentlyCompletedOffset:0,expandedProgress:""};
+  state.progress={recentlyActiveOffset:0,continueOffset:0,recentlyCompletedOffset:0,selected:""};
   save();
   render();
   loadGlobals();
@@ -2112,25 +2206,11 @@ content.addEventListener("click",async e=>{
     state.explorer.selected=item.groupKey;
     return render();
   }
-  const progressExpand=e.target.closest("[data-progress-expand]");
-  if(progressExpand){
-    e.preventDefault();
-    e.stopPropagation();
-    const groupKey=progressExpand.dataset.progressExpand;
-    state.progress.expandedProgress=state.progress.expandedProgress===groupKey?"":groupKey;
-    updateProgressRoute(true);
-    await syncProgressExpansionFromState();
-    return;
-  }
   const progressCard=e.target.closest("[data-progress-card]");
   const progressDetailItem=e.target.closest(".progress-node[data-item]");
   if(progressCard && !progressDetailItem){
     e.preventDefault();
-    const groupKey=progressCard.dataset.progressCard;
-    const collapseCurrent=state.progress.expandedProgress===groupKey&&progressCard.classList.contains("is-expanded");
-    state.progress.expandedProgress=collapseCurrent?"":groupKey;
-    updateProgressRoute(true);
-    await syncProgressExpansionFromState(state.progress.expandedProgress ? progressCard : null);
+    openProgressDetail(progressCard);
     return;
   }
   const item=e.target.closest("[data-item]");
@@ -2298,18 +2378,14 @@ content.addEventListener("keydown",e=>{
     render();
     return;
   }
+  if((e.key==="Enter"||e.key===" ")&&e.target.matches("[data-progress-card]")){
+    e.preventDefault();
+    openProgressDetail(e.target);
+    return;
+  }
   if((e.key==="Enter"||e.key===" ")&&e.target.matches("[data-item]")){
     e.preventDefault();
     openDetail(JSON.parse(decodeURIComponent(e.target.dataset.item)));
-    return;
-  }
-  if((e.key==="Enter"||e.key===" ")&&e.target.matches("[data-progress-card]")){
-    e.preventDefault();
-    const groupKey=e.target.dataset.progressCard;
-    const collapseCurrent=state.progress.expandedProgress===groupKey&&e.target.classList.contains("is-expanded");
-    state.progress.expandedProgress=collapseCurrent?"":groupKey;
-    updateProgressRoute(true);
-    syncProgressExpansionFromState(state.progress.expandedProgress ? e.target : null);
     return;
   }
   const heatmapContainer = e.target.closest("[data-person-heatmap]");
@@ -2391,6 +2467,11 @@ content.addEventListener("mouseleave", e => {
 
 dialog.querySelector(".dialog-close").addEventListener("click",()=>dialog.close());
 dialog.addEventListener("click",e=>{if(e.target===dialog)dialog.close();});
+
+if (progressDialog) {
+  progressDialog.querySelector(".dialog-close").addEventListener("click", () => progressDialog.close());
+  progressDialog.addEventListener("click", e => { if (e.target === progressDialog) progressDialog.close(); });
+}
 dialog.addEventListener("close",()=>{
   if(state.explorer.selected){
     const closedKey = state.explorer.selected;
@@ -2421,4 +2502,3 @@ syncFormToState();
 
 loadGlobals();
 render();
-

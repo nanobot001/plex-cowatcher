@@ -77,6 +77,7 @@ type AudiobookChapterProgressSnapshot = {
     endOffsetMs?: number;
     duration: number;
     watchedStates: Record<string, ProgressNodeState>;
+    watcherEvidence: Array<{ displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number; stateSource?: ProgressNodeStateSource; partialPosition?: number }>;
     stateSources: Record<string, ProgressNodeStateSource>;
     partialPositions: Record<string, number>;
     sourceType?: "audiobook_tool";
@@ -2084,6 +2085,21 @@ export class DashboardService {
     return timed.value ? { ...timed.value, timingMs: timed.timingMs } : null;
   }
 
+  private progressWatcherEvidence(
+    displayName: string,
+    state: ProgressNodeState,
+    plays: DashboardActivityItem[],
+    stateSource?: ProgressNodeStateSource,
+    partialPosition?: number
+  ) {
+    const latestObservedAt = plays.reduce<string | null>((latest, play) => !latest || play.watchedAt > latest ? play.watchedAt : latest, null);
+    return { displayName, state, latestObservedAt, watchCount: plays.length, stateSource, partialPosition };
+  }
+
+  private visibleDashboardPeople(): Array<{ displayName: string }> {
+    return this.db.prepare(`SELECT COALESCE(NULLIF(dashboard_alias,''), plex_username) displayName FROM users WHERE COALESCE(dashboard_shown, enabled)=1 ORDER BY displayName COLLATE NOCASE`).all() as Array<{ displayName: string }>;
+  }
+
   private buildTvHierarchy(
     showKey: string,
     showTitle: string,
@@ -2117,6 +2133,7 @@ export class DashboardService {
 
       const epPlays = episodePlays.get(ep.rating_key) || [];
       const watchedStates: { [displayName: string]: "watched" | "partial" | "repeated" | "unknown" } = {};
+      const watcherEvidence: Array<{ displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number }> = [];
 
       for (const person of people) {
         const userPlays = epPlays.filter(p => {
@@ -2130,6 +2147,7 @@ export class DashboardService {
         } else {
           watchedStates[person.displayName] = "repeated";
         }
+        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, watchedStates[person.displayName], userPlays));
       }
 
       const seasonName = ep.parent_title || "Season 1";
@@ -2150,7 +2168,8 @@ export class DashboardService {
         title: ep.title,
         episodeNumber,
         duration: epPlays[0]?.duration || 0,
-        watchedStates
+        watchedStates,
+        watcherEvidence
       });
     }
 
@@ -2218,6 +2237,7 @@ export class DashboardService {
       const watchedStates: Record<string, ProgressNodeState> = {};
       const stateSources: Record<string, ProgressNodeStateSource> = {};
       const partialPositions: Record<string, number> = {};
+      const watcherEvidence: Array<{ displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number; stateSource?: ProgressNodeStateSource; partialPosition?: number }> = [];
 
       for (const person of people) {
         const userPlays = plays.filter((play) => {
@@ -2270,6 +2290,7 @@ export class DashboardService {
         if (state === "partial" && mappedPartials.length > 0) {
           partialPositions[person.displayName] = Math.max(...mappedPartials);
         }
+        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, state, userPlays, stateSource, partialPositions[person.displayName]));
 
         if (state === "watched" || state === "repeated" || state === "partial") {
           touchedChapters.add(chapter.chapter_index);
@@ -2293,6 +2314,7 @@ export class DashboardService {
         endOffsetMs: chapter.end_offset_ms,
         duration: chapter.end_offset_ms - chapter.start_offset_ms,
         watchedStates,
+        watcherEvidence,
         stateSources,
         partialPositions,
         sourceType: "audiobook_tool" as const,
@@ -2358,6 +2380,7 @@ export class DashboardService {
       const chPlays = chapterPlays.get(ch.rating_key) || [];
       const watchedStates: Record<string, ProgressNodeState> = {};
       const stateSources: Record<string, ProgressNodeStateSource> = {};
+      const watcherEvidence: Array<{ displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number; stateSource?: ProgressNodeStateSource }> = [];
 
       for (const person of people) {
         const userPlays = chPlays.filter(p => {
@@ -2372,6 +2395,7 @@ export class DashboardService {
         }
         watchedStates[person.displayName] = state;
         stateSources[person.displayName] = state === "unknown" ? "none" : "track_file";
+        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, state, userPlays, stateSources[person.displayName]));
 
         if (state === "watched" || state === "repeated" || state === "partial") touchedTracks.add(ch.rating_key);
         if (state === "watched" || state === "repeated") completedTracks.add(ch.rating_key);
@@ -2388,6 +2412,7 @@ export class DashboardService {
         title: ch.title,
         duration: ch.duration || chPlays[0]?.duration || 0,
         watchedStates,
+        watcherEvidence,
         stateSources,
         partialPositions: {},
         nodeKind: "track" as const
@@ -2420,14 +2445,7 @@ export class DashboardService {
         if (!catalog) return null;
 
         const plays = this.getActivity({ grandparentRatingKey, limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
-        const peopleByName = new Map<string, { displayName: string }>();
-        for (const play of plays) {
-          const names = play.displayNames?.length ? play.displayNames : [play.displayName];
-          for (const displayName of names) {
-            peopleByName.set(displayName, { displayName });
-          }
-        }
-        const people = [...peopleByName.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
+        const people = this.visibleDashboardPeople();
 
         const hierarchy = this.buildTvHierarchy(grandparentRatingKey, catalog.title, plays, people);
 
@@ -2473,14 +2491,7 @@ export class DashboardService {
         if (!audiobook) return null;
 
         const plays = this.getActivity({ audiobookId, limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
-        const peopleByName = new Map<string, { displayName: string }>();
-        for (const play of plays) {
-          const names = play.displayNames?.length ? play.displayNames : [play.displayName];
-          for (const displayName of names) {
-            peopleByName.set(displayName, { displayName });
-          }
-        }
-        const people = [...peopleByName.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
+        const people = this.visibleDashboardPeople();
 
         const audiobookProgress = this.buildAudiobookHierarchy(audiobook, plays, people);
         const hierarchy = {
