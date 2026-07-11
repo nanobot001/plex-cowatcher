@@ -21,17 +21,19 @@ try {
     const cardCount = await cards.count();
     const badgeCount = await cards.getByTestId("viewer-badge").count();
     if (cardCount !== badgeCount) failures.push(`${viewport.width}px recent cards/badges differ: ${cardCount}/${badgeCount}`);
+    const duplicateParticipantLines = await cards.getByTestId("watched-by").count();
+    if (duplicateParticipantLines !== 0) failures.push(`${viewport.width}px Overview cards still render duplicate participant lines`);
 
     for (let index = 0; index < cardCount; index += 1) {
       const card = cards.nth(index);
-      const label = await card.getByTestId("watched-by").getAttribute("aria-label");
+      const label = await card.getByTestId("viewer-badge").getAttribute("aria-label");
       const badgeTitle = await card.getByTestId("viewer-badge").getAttribute("title");
-      if (label !== badgeTitle) failures.push(`${viewport.width}px card ${index + 1} badge and Watched by differ`);
+      if (label !== badgeTitle) failures.push(`${viewport.width}px card ${index + 1} badge accessible label and title differ`);
     }
 
     for (let index = 0; index < cardCount; index += 1) {
       const card = cards.nth(index);
-      const label = await card.getByTestId("watched-by").getAttribute("aria-label");
+      const label = await card.getByTestId("viewer-badge").getAttribute("aria-label");
       if (!label?.includes(",")) continue;
       await card.click();
       const cleanLabel = label.replace(/^(Watched by|Together|Likely together) /, "");

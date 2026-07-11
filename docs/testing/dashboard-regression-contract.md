@@ -14,6 +14,8 @@ Protect durable dashboard behavior across numbered blocks without freezing visua
 ## Frozen Invariants
 
 - Visible participant names agree across the API-backed card badge, accessible `Watched by` label, and opened detail `People` value.
+- Overview recent-playback cards are session cards: the same canonical item within the shared two-hour inactivity boundary is one card, with a start–end range when times differ; different items, two-hour gaps, and later replays after completion remain separate.
+- Overview session cards expose participant naming once through the accessible poster badge; they do not render a duplicate visible `Watched by` line.
 - Explicit confirmed participants can appear without duplicate playback observations.
 - Canonical Library aggregation includes visible participants across title children while hidden users never appear or contribute.
 - Aliases sort deterministically and active person filters narrow the participant set.

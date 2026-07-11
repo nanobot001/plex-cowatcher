@@ -2709,41 +2709,94 @@ export class DashboardService {
   }
 
   private buildRecentPlaybackCards(items: DashboardActivityItem[], limit: number): DashboardActivityItem[] {
-    const groups = new Map<string, Array<DashboardActivityItem>>();
-    const result: DashboardActivityItem[] = [];
+    const sessionGapMs = 2 * 60 * 60 * 1000;
+    type SessionGroup = {
+      canonicalKey: string;
+      items: DashboardActivityItem[];
+      startMs: number;
+      endMs: number;
+      completedUsers: Set<number>;
+      eventIds: Set<string>;
+    };
+    const groupsByCanonical = new Map<string, SessionGroup[]>();
+    const groupsByEvent = new Map<string, SessionGroup>();
+    const groups: SessionGroup[] = [];
+    const ordered = [...items].sort((a, b) => a.watchedAt.localeCompare(b.watchedAt) || a.id - b.id);
 
-    for (const item of items) {
-      const eventId = item.evidence?.cowatchEventId as string | null;
-      if (eventId) {
-        if (!groups.has(eventId)) {
-          groups.set(eventId, []);
-        }
-        groups.get(eventId)!.push(item);
-      } else {
-        result.push(item);
+    const canonicalKey = (item: DashboardActivityItem) => `${item.category}:${item.ratingKey}`;
+    const eventId = (item: DashboardActivityItem) => {
+      const value = item.evidence?.cowatchEventId;
+      return value == null || value === "" ? null : String(value);
+    };
+    const addToGroup = (group: SessionGroup, item: DashboardActivityItem) => {
+      const watchedMs = new Date(item.watchedAt).getTime();
+      group.items.push(item);
+      group.startMs = Math.min(group.startMs, watchedMs);
+      group.endMs = Math.max(group.endMs, watchedMs);
+      if (item.completed) group.completedUsers.add(item.userId);
+      const stableEventId = eventId(item);
+      if (stableEventId) {
+        group.eventIds.add(stableEventId);
+        groupsByEvent.set(`${group.canonicalKey}:${stableEventId}`, group);
       }
+    };
+
+    for (const item of ordered) {
+      const key = canonicalKey(item);
+      const stableEventId = eventId(item);
+      let group = stableEventId ? groupsByEvent.get(`${key}:${stableEventId}`) : undefined;
+      if (!group && stableEventId) {
+        const candidates = groupsByCanonical.get(key) ?? [];
+        const candidate = candidates[candidates.length - 1];
+        const watchedMs = new Date(item.watchedAt).getTime();
+        const withinGap = candidate && watchedMs - candidate.endMs < sessionGapMs;
+        const replayAfterCompletion = candidate && candidate.completedUsers.has(item.userId);
+        if (withinGap && !replayAfterCompletion && candidate.eventIds.size === 0) group = candidate;
+      }
+      if (!group && !stableEventId) {
+        const candidates = groupsByCanonical.get(key) ?? [];
+        const watchedMs = new Date(item.watchedAt).getTime();
+        const candidate = candidates[candidates.length - 1];
+        const withinGap = candidate && watchedMs - candidate.endMs < sessionGapMs;
+        const replayAfterCompletion = candidate && candidate.completedUsers.has(item.userId);
+        if (withinGap && !replayAfterCompletion) group = candidate;
+      }
+      if (!group) {
+        const watchedMs = new Date(item.watchedAt).getTime();
+        group = { canonicalKey: key, items: [], startMs: watchedMs, endMs: watchedMs, completedUsers: new Set<number>(), eventIds: new Set<string>() };
+        groups.push(group);
+        const candidates = groupsByCanonical.get(key) ?? [];
+        candidates.push(group);
+        groupsByCanonical.set(key, candidates);
+      }
+      addToGroup(group, item);
     }
 
-    for (const [eventId, groupItems] of groups.entries()) {
-      groupItems.sort((a, b) => b.watchedAt.localeCompare(a.watchedAt));
+    const result = groups.map((group) => {
+      const groupItems = [...group.items].sort((a, b) => b.watchedAt.localeCompare(a.watchedAt) || b.id - a.id);
       const primary = groupItems[0];
       const displayNames = [...new Set(groupItems.flatMap(it => it.displayNames ?? [it.displayName]))]
+        .filter(Boolean)
         .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
       const confirmedUserIds = [...new Set(groupItems.flatMap(it => it.confirmedUserIds ?? []))];
-      const relationship = groupItems.some(it => it.evidence?.relationship === "together") ? "together" : "likely_together";
-
-      const groupedItem: DashboardActivityItem = {
+      const relationship = groupItems.some(it => it.evidence?.relationship === "together")
+        ? "together"
+        : groupItems.some(it => it.evidence?.relationship === "likely_together")
+          ? "likely_together"
+          : "watched_by";
+      const sessionStartAt = new Date(group.startMs).toISOString();
+      const sessionEndAt = new Date(group.endMs).toISOString();
+      return {
         ...primary,
+        watchedAt: sessionEndAt,
+        sessionStartAt,
+        sessionEndAt,
         displayNames,
         displayName: displayNames.join(" + "),
         confirmedUserIds,
-        evidence: {
-          ...primary.evidence,
-          relationship
-        }
-      };
-      result.push(groupedItem);
-    }
+        evidence: { ...primary.evidence, relationship, sessionStartAt, sessionEndAt }
+      } satisfies DashboardActivityItem;
+    });
 
     return result.sort((a, b) => b.watchedAt.localeCompare(a.watchedAt)).slice(0, limit);
   }

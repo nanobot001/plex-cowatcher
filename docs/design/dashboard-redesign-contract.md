@@ -36,6 +36,7 @@ This document freezes the dashboard read-model vocabulary and the current first-
 - Max page size: summary sample cap
 - Ordering: most recent activity first for the base feed; category and title summaries are deterministic
 - Response shape: overview totals, bounded activity feed, bounded top-title summaries, users, libraries, continue-watching cards, category stats, heatmaps, and timing metadata
+- Overview recent-playback cards are read-model sessions, not raw playback rows: observations for the same canonical item merge within the existing two-hour inactivity boundary (stable event/session IDs are preferred), while different items, two-hour gaps, and later replays after completion remain separate. A session exposes its start/end timestamps and one accessible participant expression through the poster badge; the browser fallback uses the same grouping rule.
 
 ### `GET /api/dashboard/timeline`
 - Consumer: timeline view

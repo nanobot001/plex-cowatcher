@@ -1664,6 +1664,12 @@ test("dashboard overview groups near-simultaneous co-watch cards by shared title
     const secondAt = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
     insert.run(users[0].id, "cowatch-1", "movie", "Movies", "Moonrise", null, firstAt, 100, 7200, 1, firstAt, firstAt);
     insert.run(users[1].id, "cowatch-1", "movie", "Movies", "Moonrise", null, secondAt, 100, 7200, 1, secondAt, secondAt);
+    const event = db.prepare(`INSERT INTO watch_events
+      (source_user_id,rating_key,media_type,library_name,title,watched_at,prompt_status,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?)`).run(users[0].id, "cowatch-1", "movie", "Movies", "Moonrise", firstAt, "resolved", firstAt, firstAt);
+    db.prepare(`INSERT INTO cowatch_confirmations
+      (watch_event_id,target_user_id,confirmation_method,status,plex_sync_status,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?)`).run(Number(event.lastInsertRowid), users[1].id, "fixture", "confirmed", "marked_watched", firstAt, firstAt);
     const overview = new DashboardService(db).getOverview({});
 
     assert.equal(overview.recentPlayback.length, 1);
@@ -1671,6 +1677,38 @@ test("dashboard overview groups near-simultaneous co-watch cards by shared title
     assert.match(overview.recentPlayback[0].displayName, /Tony/);
     assert.match(overview.recentPlayback[0].displayName, /Viewer/);
     assert.deepEqual(overview.recentPlayback[0].displayNames, ["Tony", "Viewer"]);
+  });
+});
+
+test("dashboard overview groups one item session while separating replay, gap, and different-item cards", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const tony = db.prepare("SELECT id FROM users WHERE plex_username = 'Tony'").get();
+    const now = Date.now();
+    const insert = db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+    const add = (ratingKey, minutesAgo, percent, completed = 0) => {
+      const watchedAt = new Date(now - minutesAgo * 60 * 1000).toISOString();
+      insert.run(tony.id, ratingKey, "movie", "Movies", ratingKey, watchedAt, percent, 7_200_000, completed, watchedAt, watchedAt);
+    };
+
+    add("pause-resume", 90, 35);
+    add("pause-resume", 30, 55);
+    add("different-item", 20, 100, 1);
+    add("replay-after-completion", 110, 100, 1);
+    add("replay-after-completion", 10, 100, 1);
+    add("gap-split", 190, 100, 1);
+    add("gap-split", 20, 100, 1);
+
+    const recent = new DashboardService(db).getOverview({}).recentPlayback;
+    const pause = recent.filter((item) => item.ratingKey === "pause-resume");
+    assert.equal(pause.length, 1);
+    assert.equal(pause[0].sessionStartAt, new Date(now - 90 * 60 * 1000).toISOString());
+    assert.equal(pause[0].sessionEndAt, new Date(now - 30 * 60 * 1000).toISOString());
+    assert.equal(recent.filter((item) => item.ratingKey === "different-item").length, 1);
+    assert.equal(recent.filter((item) => item.ratingKey === "replay-after-completion").length, 2);
+    assert.equal(recent.filter((item) => item.ratingKey === "gap-split").length, 2);
   });
 });
 
@@ -2315,6 +2353,7 @@ test("dashboard cards and detail include explicit confirmed participants without
     const recent = service.getOverview({}).recentPlayback.find((item) => item.ratingKey === "confirmed-episode");
     assert.ok(recent);
     assert.deepEqual(recent.displayNames, ["Just J", "Tony"]);
+    assert.equal(recent.evidence.relationship, "together");
     assert.deepEqual(service.getDetail("confirmed-episode").people.map((person) => person.displayName), ["Just J", "Tony"]);
 
     db.prepare("UPDATE users SET dashboard_shown = 0 WHERE plex_username = 'Viewer'").run();
@@ -2325,11 +2364,14 @@ test("dashboard cards and detail include explicit confirmed participants without
   });
 });
 
-test("dashboard poster cards retain visual viewer badges and accessible watched-by text", () => {
+test("dashboard poster cards retain one accessible viewer badge without duplicate overview copy", () => {
   const dashboardSource = fs.readFileSync(path.resolve("src/web/static/dashboard.js"), "utf8");
   assert.match(dashboardSource, /const libraryArt=x=>[^;]+viewerBadge\(x\)/);
   assert.match(dashboardSource, /const card=x=>[^;]+\$\{libraryArt\(x\)\}[^;]+\$\{watchedBy\(x\)\}/);
-  assert.match(dashboardSource, /aria-hidden="true" title="\$\{esc\(`Watched by/);
+  assert.match(dashboardSource, /const badgeAttrs = `aria-label=/);
+  assert.match(dashboardSource, /const sessionTimeLabel = item =>/);
+  assert.match(dashboardSource, /\$\{libraryArt\(cw\)\}[\s\S]*\$\{sessionTimeLabel\(cw\)\}/);
+  assert.doesNotMatch(dashboardSource, /\$\{libraryArt\(cw\)\}[\s\S]*\$\{watchedBy\(cw\)\}/);
 });
 
 test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed prompt actions", async () => {

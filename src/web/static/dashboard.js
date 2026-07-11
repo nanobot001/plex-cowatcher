@@ -65,9 +65,7 @@ const viewerBadge=x=>{
     labelPrefix = "Likely together";
   }
 
-  const badgeAttrs = labelPrefix === "Watched by"
-    ? `aria-hidden="true" title="${esc(`Watched by ${names.join(", ")}`)}"`
-    : `aria-hidden="true" title="${esc(`${labelPrefix} ${names.join(", ")}`)}"`;
+  const badgeAttrs = `aria-label="${esc(`${labelPrefix} ${names.join(", ")}`)}" title="${esc(`${labelPrefix} ${names.join(", ")}`)}"`;
   if (names.length === 1) return `<span class="media-badge" data-testid="viewer-badge" ${badgeAttrs}>${esc(names[0])}</span>`;
   const visibleNames = names.slice(0, 2);
   const remaining = names.length - visibleNames.length;
@@ -83,52 +81,93 @@ const viewerBadge=x=>{
 
   return `<span class="media-badge ${multiClass}" data-testid="viewer-badge" ${badgeAttrs}>${badgeLabel}${more}</span>`;
 };
+const recentSessionGapMs = 2 * 60 * 60 * 1000;
 const groupRecentCards = items => {
-  const groups = new Map();
-  const result = [];
-  for (const item of Array.isArray(items) ? items : []) {
-    if (!item) continue;
-    const eventId = item.evidence && item.evidence.cowatchEventId;
-    if (eventId) {
-      if (!groups.has(eventId)) {
-        groups.set(eventId, []);
-      }
-      groups.get(eventId).push(item);
-    } else {
-      result.push({
-        ...item,
-        displayNames: Array.isArray(item.displayNames) && item.displayNames.length
-          ? [...item.displayNames]
-          : item.displayName
-            ? [item.displayName]
-            : []
-      });
+  const groupsByCanonical = new Map();
+  const groupsByEvent = new Map();
+  const groups = [];
+  const ordered = (Array.isArray(items) ? items : [])
+    .filter(Boolean)
+    .sort((a, b) => new Date(a.watchedAt) - new Date(b.watchedAt) || Number(a.id || 0) - Number(b.id || 0));
+  const canonicalKey = item => `${item.category || "unknown"}:${item.ratingKey || item.groupKey || item.title || "unknown"}`;
+  const eventId = item => {
+    const value = item.evidence && item.evidence.cowatchEventId;
+    return value == null || value === "" ? null : String(value);
+  };
+  const addToGroup = (group, item) => {
+    const watchedMs = new Date(item.watchedAt).getTime();
+    const sessionStartMs = new Date(item.sessionStartAt || item.watchedAt).getTime();
+    const sessionEndMs = new Date(item.sessionEndAt || item.watchedAt).getTime();
+    group.items.push(item);
+    group.startMs = Math.min(group.startMs, sessionStartMs, watchedMs);
+    group.endMs = Math.max(group.endMs, sessionEndMs, watchedMs);
+    if (item.completed) group.completedUsers.add(Number(item.userId));
+    const stableEventId = eventId(item);
+    if (stableEventId) {
+      group.eventIds.add(stableEventId);
+      groupsByEvent.set(`${group.canonicalKey}:${stableEventId}`, group);
     }
+  };
+  for (const item of ordered) {
+    const key = canonicalKey(item);
+    const stableEventId = eventId(item);
+    let group = stableEventId ? groupsByEvent.get(`${key}:${stableEventId}`) : null;
+    if (!group && stableEventId) {
+      const candidates = groupsByCanonical.get(key) || [];
+      const candidate = candidates[candidates.length - 1];
+      const watchedMs = new Date(item.watchedAt).getTime();
+      const withinGap = candidate && watchedMs - candidate.endMs < recentSessionGapMs;
+      const replayAfterCompletion = candidate && candidate.completedUsers.has(Number(item.userId));
+      if (withinGap && !replayAfterCompletion && candidate.eventIds.size === 0) group = candidate;
+    }
+    if (!group && !stableEventId) {
+      const candidates = groupsByCanonical.get(key) || [];
+      const watchedMs = new Date(item.watchedAt).getTime();
+      const candidate = candidates[candidates.length - 1];
+      const withinGap = candidate && watchedMs - candidate.endMs < recentSessionGapMs;
+      const replayAfterCompletion = candidate && candidate.completedUsers.has(Number(item.userId));
+      if (withinGap && !replayAfterCompletion) group = candidate;
+    }
+    if (!group) {
+      const watchedMs = new Date(item.watchedAt).getTime();
+      group = { canonicalKey: key, items: [], startMs: watchedMs, endMs: watchedMs, completedUsers: new Set(), eventIds: new Set() };
+      groups.push(group);
+      const candidates = groupsByCanonical.get(key) || [];
+      candidates.push(group);
+      groupsByCanonical.set(key, candidates);
+    }
+    addToGroup(group, item);
   }
-  for (const [eventId, groupItems] of groups.entries()) {
-    groupItems.sort((a, b) => new Date(b.watchedAt) - new Date(a.watchedAt));
+  return groups.map(group => {
+    const groupItems = [...group.items].sort((a, b) => new Date(b.watchedAt) - new Date(a.watchedAt) || Number(b.id || 0) - Number(a.id || 0));
     const primary = groupItems[0];
-    const displayNames = [...new Set(groupItems.flatMap(it => 
-      Array.isArray(it.displayNames) && it.displayNames.length
-        ? it.displayNames
-        : it.displayName
-          ? [it.displayName]
-          : []
-    ))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-    
-    const relationship = groupItems.some(it => it.evidence && it.evidence.relationship === "together") ? "together" : "likely_together";
-    
-    result.push({
+    const displayNames = [...new Set(groupItems.flatMap(it => Array.isArray(it.displayNames) && it.displayNames.length ? it.displayNames : it.displayName ? [it.displayName] : []))]
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+    const confirmedUserIds = [...new Set(groupItems.flatMap(it => Array.isArray(it.confirmedUserIds) ? it.confirmedUserIds : []))];
+    const relationship = groupItems.some(it => it.evidence && it.evidence.relationship === "together")
+      ? "together"
+      : groupItems.some(it => it.evidence && it.evidence.relationship === "likely_together")
+        ? "likely_together"
+        : "watched_by";
+    const sessionStartAt = new Date(group.startMs).toISOString();
+    const sessionEndAt = new Date(group.endMs).toISOString();
+    return {
       ...primary,
+      watchedAt: sessionEndAt,
+      sessionStartAt,
+      sessionEndAt,
       displayNames,
       displayName: displayNames.join(" + "),
-      evidence: {
-        ...primary.evidence,
-        relationship
-      }
-    });
-  }
-  return result.sort((a, b) => new Date(b.watchedAt) - new Date(a.watchedAt));
+      confirmedUserIds,
+      evidence: { ...primary.evidence, relationship, sessionStartAt, sessionEndAt }
+    };
+  }).sort((a, b) => new Date(b.watchedAt) - new Date(a.watchedAt));
+};
+const sessionTimeLabel = item => {
+  const start = item.sessionStartAt || item.watchedAt;
+  const end = item.sessionEndAt || item.watchedAt;
+  return start && end && start !== end ? `${fmtDate(start)} – ${fmtDate(end)}` : fmtDate(end || start);
 };
 const activityRow=x=>'<article class="activity-row" tabindex="0" data-select-key="'+esc(x.groupKey || x.ratingKey)+'" data-item="'+encodeURIComponent(JSON.stringify(x))+'">'+art(x)+'<div class="activity-copy"><div class="activity-heading"><strong>'+mediaTitle(x)+'</strong><span>'+esc(x.categoryLabel)+'</span></div>'+(x.category==="audiobook"&&x.showTitle?'<p>By '+esc(x.showTitle)+'</p>':x.showTitle&&x.showTitle!==x.displayTitle?'<p>'+esc(x.title)+'</p>':'')+'<p>'+esc(x.displayName)+' &middot; '+fmtDate(x.watchedAt)+' &middot; '+fmtDuration(x.duration)+'</p>'+evidence(x)+'</div><div class="progress-ring">'+esc(x.percentComplete??"--")+'%</div></article>';
 const empty=label=>'<div class="panel-state"><h3>No '+esc(label)+' here yet</h3><p>Try broadening the filters. Missing evidence stays unknown.</p></div>';
@@ -880,8 +919,7 @@ async function renderOverview() {
           ${libraryArt(cw)}
           <div class="cw-bar"><i style="width:${esc(cw.percentComplete ?? 0)}%"></i></div>
           <p>${esc(cw.displayTitle || cw.title || '')}</p>
-          ${watchedBy(cw)}
-          <span class="cw-meta">${fmtDate(cw.watchedAt)}</span>
+          <span class="cw-meta">${sessionTimeLabel(cw)}</span>
         </article>
       `).join("")}</div>`
     : '<div class="panel-state compact"><p>No recent playback to show right now.</p></div>';
