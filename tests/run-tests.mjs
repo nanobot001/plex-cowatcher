@@ -1590,6 +1590,9 @@ test("dashboard category model distinguishes the supported media families", () =
   assert.equal(deriveDashboardCategory("track", "").category, "other");
   assert.equal(deriveDashboardCategory("audiobook", "").category, "audiobook");
   assert.equal(deriveDashboardCategory("episode", "TV Shows").category, "tv");
+  assert.equal(deriveDashboardCategory("track", "Audiobooks").derived, false);
+  assert.equal(deriveDashboardCategory("episode", "Anime").derived, false);
+  assert.equal(deriveDashboardCategory("episode", "Classic TV").derived, false);
 });
 
 test("dashboard service returns bounded mixed-media data and honest progress", () => {
@@ -1709,6 +1712,53 @@ test("dashboard overview groups one item session while separating replay, gap, a
     assert.equal(recent.filter((item) => item.ratingKey === "different-item").length, 1);
     assert.equal(recent.filter((item) => item.ratingKey === "replay-after-completion").length, 2);
     assert.equal(recent.filter((item) => item.ratingKey === "gap-split").length, 2);
+  });
+});
+
+test("dashboard overview merges audiobook sessions across Plex rating-key churn", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const tony = db.prepare("SELECT id FROM users WHERE plex_username = 'Tony'").get();
+    const now = Date.now();
+    const oldAt = new Date(now - 90 * 60 * 1000).toISOString();
+    const currentAt = new Date(now - 30 * 60 * 1000).toISOString();
+
+    db.prepare(`INSERT INTO audiobook_books
+      (folder_key,title,authors_json,narrators_json,source_provenance,enrichment_status,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?)`).run(
+      "warbreaker-folder",
+      "2015 - Cosmere Warbreaker (Alyssa Bresnahan)",
+      JSON.stringify(["Brandon Sanderson"]),
+      JSON.stringify([]),
+      "folder_path",
+      "pending",
+      oldAt,
+      oldAt
+    );
+    const book = db.prepare("SELECT id FROM audiobook_books WHERE folder_key = 'warbreaker-folder'").get();
+    db.prepare(`INSERT INTO content_catalog
+      (rating_key,media_type,title,library_title,audiobook_id,source_provenance,refreshed_at)
+      VALUES (?,?,?,?,?,?,?)`).run(
+      "old-book-track",
+      "audiobook",
+      "Cosmere Warbreaker (Alyssa Bresnahan) (2015)",
+      "Audiobooks",
+      book.id,
+      "fixture",
+      oldAt
+    );
+
+    const insert = db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+    insert.run(tony.id, "old-book-track", "audiobook", "Audiobooks", "Cosmere Warbreaker (Alyssa Bresnahan) (2015)", "Brandon Sanderson", oldAt, 20, 1200000, 0, oldAt, oldAt);
+    insert.run(tony.id, "current-book-track", "audiobook", "Audiobooks", "Cosmere Warbreaker (Alyssa Bresnahan) (2015)", "Brandon Sanderson", currentAt, 30, 1200000, 0, currentAt, currentAt);
+
+    const recent = new DashboardService(db).getOverview({}).recentPlayback;
+    assert.equal(recent.length, 1);
+    assert.equal(recent[0].displayTitle, "Warbreaker");
+    assert.equal(recent[0].sessionStartAt, oldAt);
+    assert.equal(recent[0].sessionEndAt, currentAt);
   });
 });
 
@@ -2160,6 +2210,107 @@ test("dashboard audiobook titles prefer the book title and artwork routes return
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
+  });
+});
+
+test("audiobook artwork falls back to a newer reconciled Plex sibling", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const user = db.prepare("SELECT id FROM users ORDER BY id LIMIT 1").get();
+    const nowIso = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO audiobook_books
+        (folder_key, title, authors_json, narrators_json, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      "warbreaker-artwork-fallback",
+      "Cosmere Warbreaker (Alyssa Bresnahan) (2015)",
+      JSON.stringify(["Brandon Sanderson"]),
+      JSON.stringify(["Alyssa Bresnahan"]),
+      "folder_path",
+      "pending",
+      nowIso,
+      nowIso
+    );
+    const book = db.prepare("SELECT id FROM audiobook_books WHERE folder_key = ?").get("warbreaker-artwork-fallback");
+    db.prepare(`
+      INSERT INTO content_catalog
+        (rating_key, media_type, title, audiobook_id, source_provenance, refreshed_at)
+      VALUES (?, 'audiobook', ?, ?, ?, ?)
+    `).run("old-book-track", "Cosmere Warbreaker (Alyssa Bresnahan) (2015)", book.id, "plex", nowIso);
+    db.prepare(`
+      INSERT INTO playback_observations
+        (user_id, rating_key, parent_rating_key, media_type, library_name, title, watched_at, completed, created_at, updated_at)
+      VALUES (?, ?, ?, 'track', 'Audiobooks', ?, ?, 0, ?, ?)
+    `).run(user.id, "current-book-track", "current-book-parent", "Cosmere Warbreaker (Alyssa Bresnahan) (2015)", nowIso, nowIso, nowIso);
+
+    const unavailableKeys = new Set([String(book.id), "old-book-track"]);
+    class ArtworkFallbackMockPlexAdapter extends MockPlexAdapter {
+      async getRichMetadataByRatingKey(ratingKey, plexGuid) {
+        if (unavailableKeys.has(ratingKey)) {
+          return { ratingKey, mediaType: "track", title: "Warbreaker", genres: [] };
+        }
+        return super.getRichMetadataByRatingKey(ratingKey, plexGuid);
+      }
+    }
+
+    const { createApp } = await import("../dist/server/app.js");
+    const app = createApp(db, new ArtworkFallbackMockPlexAdapter(), { skipStartupUserSync: true });
+    const server = await new Promise((resolve) => {
+      const s = app.listen(0, "127.0.0.1", () => resolve(s));
+    });
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const artwork = await fetch(`${base}/api/artwork/audiobook:${book.id}`);
+      assert.equal(artwork.status, 200);
+      assert.match(artwork.headers.get("content-type"), /image\/svg\+xml/);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
+test("ingestion automatically refreshes missing metadata and retries stale fallbacks", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const user = db.prepare("SELECT id FROM users WHERE plex_username = 'Tony'").get();
+    const watchedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    db.prepare(`
+      INSERT INTO playback_observations
+        (user_id, rating_key, media_type, library_name, title, watched_at, completed, created_at, updated_at)
+      VALUES (?, 'automatic-metadata-item', 'movie', 'Movies', 'Automatic Fixture Movie', ?, 0, ?, ?)
+    `).run(user.id, watchedAt, watchedAt, watchedAt);
+
+    let calls = 0;
+    let available = false;
+    const plex = {
+      getRichMetadataByRatingKey: async (ratingKey) => {
+        calls++;
+        if (!available) throw new Error("Plex temporarily unavailable");
+        return { ratingKey, mediaType: "movie", title: "Recovered Fixture Movie", duration: 7200000, librarySectionID: "1", librarySectionTitle: "Movies", genres: [] };
+      }
+    };
+    const metadata = new MetadataService(db, plex);
+    const tautulli = {
+      getRecentHistory: async ({ user: username }) => username === "Tony" ? [{ user: username, ratingKey: "automatic-metadata-item", mediaType: "movie", title: "Automatic Fixture Movie", watchedAt, percentComplete: 0 }] : []
+    };
+    const ingestion = new IngestionService(db, tautulli, metadata);
+
+    await ingestion.pollRecentHistory();
+    assert.equal(calls, 1);
+    assert.equal(db.prepare("SELECT source_provenance FROM content_catalog WHERE rating_key = 'automatic-metadata-item'").get().source_provenance, "fallback");
+
+    await ingestion.pollRecentHistory();
+    assert.equal(calls, 1, "a fresh fallback should not be retried on every poll");
+
+    available = true;
+    const stale = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+    db.prepare("UPDATE content_catalog SET refreshed_at = ? WHERE rating_key = 'automatic-metadata-item'").run(stale);
+    await ingestion.pollRecentHistory();
+    assert.equal(calls, 2);
+    const repaired = db.prepare("SELECT title, source_provenance FROM content_catalog WHERE rating_key = 'automatic-metadata-item'").get();
+    assert.equal(repaired.title, "Recovered Fixture Movie");
+    assert.equal(repaired.source_provenance, "plex");
   });
 });
 

@@ -67,6 +67,8 @@ const otherSessionAt = isoMinutesAgo(235);
 insertObservation.run(userIds.Tony, "session-other", null, null, "movie", "Movies", "Session Other Item", null, null, null, otherSessionAt, "fixture", 100, "fixture", 0, 1, otherSessionAt, otherSessionAt);
 const audiobookWatchedAt = isoMinutesAgo(52);
 insertObservation.run(userIds.Tony, "audio-regression-1", null, null, "track", "Audiobooks", "Chapter 1: Open", "Fixture Audiobook", null, null, audiobookWatchedAt, "fixture", 65, "fixture", 0, 0, audiobookWatchedAt, audiobookWatchedAt);
+const rekeyedAudiobookCurrentAt = isoMinutesAgo(34);
+insertObservation.run(userIds.Tony, "rekeyed-audio-current", null, null, "track", "Audiobooks", "Fixture Audiobook (Narrator Name) (2015)", "Fixture Audiobook", null, null, rekeyedAudiobookCurrentAt, "fixture", 75, "fixture", 0, 0, rekeyedAudiobookCurrentAt, rekeyedAudiobookCurrentAt);
 const verifiedAudiobookWatchedAt = isoMinutesAgo(50);
 db.prepare(`INSERT INTO playback_observations
   (user_id,rating_key,media_type,library_name,title,show_title,watched_at,watched_at_provenance,percent_complete,percent_complete_provenance,view_offset,duration,completed,created_at,updated_at)
@@ -124,6 +126,9 @@ db.prepare(`INSERT INTO content_catalog
 db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,audiobook_id,source_provenance,refreshed_at)
   VALUES ('audio-regression-2','track','Chapter 2: Later',1200000,'5','Audiobooks','[]',20,'fixture',?)`).run(isoMinutesAgo(5));
+db.prepare(`INSERT INTO content_catalog
+  (rating_key,media_type,title,duration,library_id,library_title,genres_json,audiobook_id,source_provenance,refreshed_at)
+  VALUES ('rekeyed-audio-current','track','Fixture Audiobook (Narrator Name) (2015)',1200000,'5','Audiobooks','[]',20,'fixture',?)`).run(isoMinutesAgo(5));
 db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,audiobook_id,source_provenance,refreshed_at)
   VALUES ('verified-audio-file','track','Verified Single File',180000,'5','Audiobooks','[]',21,'fixture',?)`).run(isoMinutesAgo(5));

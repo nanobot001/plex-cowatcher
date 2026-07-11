@@ -157,10 +157,12 @@ The corrective sequence is mandatory and ordered:
 19. **3-2n-5 - Audiobook Progress Source Honesty:** Implemented. Stop treating Plex track/file rows as verified chapters, expose progress source fields, and trigger lightweight audiobook metadata caching on watch ingestion.
 20. **3-2n-5a - Audiobook Chapter Import And Cache:** Implemented. Add an explicit sanitized import/cache path for verified chapter boundaries produced by the separate `audiobook` tool.
 21. **3-2n-5b - True Audiobook Chapter Progress:** Implemented. Map playback offsets and completion evidence onto cached verified chapter boundaries while preserving honest fallback behavior.
-22. **3-2n-5c - Reliable Audiobook Discovery Automation:** Make audiobook discovery dependable in the normal service runtime, not only through manual CLI calls or opportunistic webhook items.
-23. **3-2n-5d - Automatic Audiobook Chapter Proof Handoff:** Automatically trigger the separate `audiobook` project one time per unresolved audiobook and cache verified chapter boundaries for future Progress mapping.
-24. **3-2n-6 - Progress Evidence Map Polish:** Restore readable lazy evidence maps with accessible dots, compact legends, smoother expansion, and polished Progress typography without returning to all-dot first paint.
-25. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
+22. **3-2n-6 - Progress Evidence Map Polish:** Implemented 2026-07-09. Restore readable lazy evidence maps with accessible dots, compact legends, smoother expansion, and polished Progress typography without returning to all-dot first paint.
+23. **3-2n-6a - Progress Watcher Coverage And Workspace Width:** Implemented 2026-07-09. Add visible completion coverage, on-demand watcher evidence, and a full-width Recently Completed workspace.
+24. **3-2n-6b - Overview Session Feed De-duplication:** Implemented 2026-07-11. Group canonical-item playback into stable viewing sessions while preserving co-watch and participant evidence.
+25. **3-2n-5c - Reliable Audiobook Discovery Automation:** Make audiobook discovery dependable in the normal service runtime, not only through manual CLI calls or opportunistic webhook items.
+26. **3-2n-5d - Automatic Audiobook Chapter Proof Handoff:** Automatically trigger the separate `audiobook` project one time per unresolved audiobook and cache verified chapter boundaries for future Progress mapping.
+27. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
 
 Each block, including every 3-2m sub-block, must pass its own exit gate before the next begins. Block 3-3 is paused until 3-2o completes.
 

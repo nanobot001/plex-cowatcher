@@ -128,7 +128,7 @@ export interface DashboardCowatchReviewCandidate {
 }
 
 export interface DashboardOperationItem {
-  kind: "unresolved_prompt" | "discord_delivery_failed" | "plex_sync_failed" | "missing_metadata" | "uncertain_classification" | "cowatch_review_prompt";
+  kind: "unresolved_prompt" | "discord_delivery_failed" | "plex_sync_failed" | "cowatch_review_prompt";
   watchEventId?: number;
   title: string;
   detail: string;

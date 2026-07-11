@@ -1,5 +1,14 @@
 # Continue Here
 
+## 2026-07-11
+
+Current state:
+- Blocks 3-2n-6 (Progress Evidence Map Polish), 3-2n-6a (Progress Watcher Coverage and Workspace Width), and 3-2n-6b (Overview Session Feed De-duplication) are implemented and verified. The latest 6b verification passed both `npm run verify:block` and `npm run verify:live-dashboard`.
+- The remaining 3-2n audiobook automation work is 3-2n-5c (Reliable Audiobook Discovery Automation), followed by 3-2n-5d (Automatic Audiobook Chapter Proof Handoff).
+
+Next step:
+- Implement **Block 3-2n-5c: Reliable Audiobook Discovery Automation** (`docs/blocks/block-3-2n-5c-reliable-audiobook-discovery-automation.md`), then 3-2n-5d and 3-2o.
+
 ## 2026-07-09
 
 Current state:

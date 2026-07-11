@@ -15,6 +15,7 @@ import { CowatchingIntelligenceService } from "../service/cowatchingIntelligence
 import { DashboardService } from "../service/dashboardService.js";
 import { DashboardPreferenceService } from "../service/dashboardPreferenceService.js";
 import { CowatchAdjudicationService, type CowatchDecision } from "../service/cowatchAdjudicationService.js";
+import { MetadataService } from "../service/metadataService.js";
 import { appConfig } from "../utils/config.js";
 import { parseDays } from "../utils/time.js";
 
@@ -562,6 +563,23 @@ export function buildRouter(
     if (!artworkKey.startsWith("audiobook:")) return null;
     const raw = artworkKey.slice("audiobook:".length);
     if (/^\d+$/.test(raw)) {
+      // A reconciled audiobook can have playback observations from a newer
+      // Plex rating key than the catalog row used to identify the book. Prefer
+      // that observed sibling for artwork so stale catalog keys do not produce
+      // a placeholder when the current Plex item still has a cover.
+      const observedArtworkKey = db.prepare(`
+        SELECT COALESCE(po.parent_rating_key, po.rating_key) AS rating_key
+        FROM playback_observations po
+        JOIN content_catalog linked ON linked.audiobook_id = ?
+        WHERE lower(po.media_type) IN ('audiobook', 'track')
+          AND po.title IS NOT NULL
+          AND lower(po.title) = lower(linked.title)
+          AND COALESCE(po.parent_rating_key, po.rating_key) IS NOT NULL
+        ORDER BY po.watched_at DESC, po.id DESC
+        LIMIT 1
+      `).get(Number(raw)) as { rating_key: string } | undefined;
+      if (observedArtworkKey?.rating_key) return observedArtworkKey.rating_key;
+
       const catalogByAudiobookId = db.prepare(`
         SELECT rating_key
         FROM content_catalog
