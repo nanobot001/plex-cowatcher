@@ -54,6 +54,13 @@ export class IngestionService {
       }
     }
 
+    if (this.metadata) {
+      const repair = await this.metadata.repairMissingMetadata();
+      if (repair.attempted > 0) {
+        this.audit.record("metadata_auto_repair", "ingestionService", repair.failed > 0 ? "partial" : "ok", repair);
+      }
+    }
+
     return { inserted, skipped, errors };
   }
 

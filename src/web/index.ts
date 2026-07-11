@@ -56,7 +56,7 @@ export function registerWebRoutes(router: Router): void {
           <div id="progress-content"></div>
         </dialog>
       </div>
-      <script src="/static/dashboard.js?v=3-2m-3"></script>
+      <script src="/static/dashboard.js?v=3-2m-4"></script>
     `));
   });
 

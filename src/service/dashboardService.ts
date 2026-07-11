@@ -147,15 +147,35 @@ function normalizeAudiobookDisplayTitle(value?: string | null): string {
   const hadTrailingYear = /\s*\((\d{4})\)\s*$/.test(title);
   title = title.replace(/\s*\((\d{4})\)\s*$/, "");
   if (hadTrailingYear) {
-    title = title.replace(/\s*\(([^()]+)\)\s*$/, "");
+    const trailingLabel = title.match(/\s*\(([^()]+)\)\s*$/)?.[1]?.trim() ?? "";
+    const isEditionDescriptor = /^(?:unabridged|abridged|dramatized|full cast|radio play|sound effects)$/i.test(trailingLabel);
+    if (!isEditionDescriptor) title = title.replace(/\s*\(([^()]+)\)\s*$/, "");
   }
   title = title.replace(/^Cosmere\s+/i, "");
   return title.trim();
 }
 
-function resolveDashboardDisplayTitle(item: Pick<DashboardActivityItem, "category" | "showTitle" | "title" | "audiobookTitle" | "parentTitle">): string {
+function resolveDashboardDisplayTitle(item: Pick<DashboardActivityItem, "category" | "showTitle" | "title" | "audiobookId" | "audiobookTitle" | "parentTitle">): string {
   if (item.category === "audiobook") {
-    return normalizeAudiobookDisplayTitle(item.audiobookTitle ?? item.parentTitle ?? item.title) || item.showTitle?.trim() || "";
+    const rawTitle = item.title?.trim() || "";
+    const author = item.showTitle?.trim() || "";
+    const canonicalTitle = item.audiobookTitle ?? item.parentTitle;
+    const normalizedIdentity = (value: string) => normalizeAudiobookDisplayTitle(value)
+      .replace(/\s*\([^()]*\)\s*/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLocaleLowerCase();
+    const rawIdentity = normalizedIdentity(rawTitle);
+    const canonicalIdentity = normalizedIdentity(canonicalTitle ?? "");
+    const rawLooksLikeCanonicalBook = Boolean(rawIdentity && canonicalIdentity && (
+      rawIdentity.includes(canonicalIdentity) || canonicalIdentity.includes(rawIdentity)
+    ));
+    const preferredTitle = canonicalTitle && !rawLooksLikeCanonicalBook
+      ? canonicalTitle
+      : rawTitle || canonicalTitle;
+    return normalizeAudiobookDisplayTitle(preferredTitle)
+      || normalizeAudiobookDisplayTitle(item.audiobookTitle ?? item.parentTitle ?? rawTitle)
+      || author;
   }
   if (item.category === "tv" || item.category === "classic_tv" || item.category === "anime") {
     return item.showTitle?.trim() || item.title.trim() || "";
@@ -293,9 +313,9 @@ function normalizePersonIdentity(value?: string | null): string {
 export function deriveDashboardCategory(mediaType: string, libraryName?: string): { category: DashboardDerivedCategory; label: string; derived: boolean } {
   const library = (libraryName ?? "").toLowerCase();
   const type = mediaType.toLowerCase();
-  if (type === "audiobook" || library.includes("audiobook")) return { category: "audiobook", label: "Audiobooks", derived: type !== "audiobook" };
-  if (library.includes("anime")) return { category: "anime", label: "Anime", derived: true };
-  if (library.includes("classic")) return { category: "classic_tv", label: "Classic TV", derived: true };
+  if (type === "audiobook" || library.includes("audiobook")) return { category: "audiobook", label: "Audiobooks", derived: false };
+  if (library.includes("anime")) return { category: "anime", label: "Anime", derived: false };
+  if (library.includes("classic")) return { category: "classic_tv", label: "Classic TV", derived: false };
   if (type === "movie") {
     if (!library || library === "movies") return { category: "movie", label: library ? "Movies" : "Movies (library unknown)", derived: !library };
     return { category: "other", label: libraryName ?? mediaType, derived: true };
@@ -597,7 +617,7 @@ export class DashboardService {
           recentlyCompleted: comparableWindowLabel,
           categoryMix: comparableWindowLabel,
           householdActivity: comparableWindowLabel,
-          needsAttention: "Open operational issues"
+          needsAttention: "Only actions that need you"
         }
       };
     });
@@ -740,53 +760,6 @@ export class DashboardService {
         ratingKey: row.rating_key,
         user: row.plex_username ?? null,
         route: row.plex_username ? { layout: "people", filters: { user: row.plex_username } } : { layout: "people", filters: {} }
-      });
-    }
-
-    const metadataGaps = this.db.prepare(`
-      SELECT
-        po.rating_key,
-        po.title,
-        po.show_title,
-        po.watched_at,
-        u.plex_username,
-        COALESCE(NULLIF(u.dashboard_alias, ''), u.plex_username) AS display_name,
-        po.media_type,
-        po.library_name
-      FROM playback_observations po
-      JOIN users u ON u.id = po.user_id
-      LEFT JOIN content_catalog cat ON cat.rating_key = po.rating_key
-      WHERE COALESCE(u.dashboard_shown, u.enabled) = 1
-        AND cat.rating_key IS NULL
-      ORDER BY po.watched_at DESC
-      LIMIT 6
-    `).all() as any[];
-    for (const row of metadataGaps) {
-      const derived = deriveDashboardCategory(row.media_type, row.library_name);
-      if (!isHouseholdCategory(derived.category)) continue;
-      items.push({
-        kind: "missing_metadata",
-        title: row.show_title || row.title,
-        detail: `${row.display_name} has visible playback missing catalog metadata`,
-        status: "missing",
-        watchedAt: row.watched_at,
-        ratingKey: row.rating_key,
-        user: row.plex_username,
-        route: { layout: "timeline", filters: { user: row.plex_username } }
-      });
-    }
-
-    const uncertainRows = this.getActivity({ limit: 120, offset: 0 }).items.filter((item) => item.categoryDerived);
-    for (const item of uncertainRows.slice(0, 6)) {
-      items.push({
-        kind: "uncertain_classification",
-        title: item.displayTitle ?? item.title,
-        detail: `${item.displayName} is shown through a derived ${item.categoryLabel} classification`,
-        status: "review",
-        watchedAt: item.watchedAt,
-        ratingKey: item.ratingKey,
-        user: item.username,
-        route: { layout: "timeline", filters: { user: item.username, category: item.category } }
       });
     }
 
@@ -2723,7 +2696,14 @@ export class DashboardService {
     const groups: SessionGroup[] = [];
     const ordered = [...items].sort((a, b) => a.watchedAt.localeCompare(b.watchedAt) || a.id - b.id);
 
-    const canonicalKey = (item: DashboardActivityItem) => `${item.category}:${item.ratingKey}`;
+    const canonicalKey = (item: DashboardActivityItem) => {
+      if (item.category === "audiobook") {
+        const title = resolveDashboardDisplayTitle(item).toLocaleLowerCase();
+        const author = (item.showTitle ?? "").trim().toLocaleLowerCase();
+        return `audiobook:${item.libraryName ?? ""}:${author}:${title}`;
+      }
+      return `${item.category}:${item.ratingKey}`;
+    };
     const eventId = (item: DashboardActivityItem) => {
       const value = item.evidence?.cowatchEventId;
       return value == null || value === "" ? null : String(value);

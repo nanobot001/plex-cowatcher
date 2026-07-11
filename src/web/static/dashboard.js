@@ -419,13 +419,11 @@ const deltaText=value=>value==null?"":`${value>0?"+":value<0?"-":""}${fmtHourVal
 const progressText=value=>value==null?"Progress unknown":`${value}% finished`;
 const progressExpandable=category=>category==="tv"||category==="classic_tv"||category==="anime"||category==="audiobook";
 const attentionHeading=item=>({
-  unresolved_prompt:"Waiting on a co-watch answer",
-  discord_delivery_failed:"Prompt delivery failed",
-  plex_sync_failed:"Watch state sync failed",
-  missing_metadata:"Title needs matching metadata",
-  uncertain_classification:"Category needs review",
-  cowatch_review_prompt:"Discord co-watch review"
-})[item?.kind]||"Needs review";
+  unresolved_prompt:"Waiting for a co-watch answer",
+  discord_delivery_failed:"Could not send the co-watch question",
+  plex_sync_failed:"Plex watch status needs updating",
+  cowatch_review_prompt:"Review shared viewing"
+})[item?.kind]||"Needs attention";
 const attentionDetail=item=>{
   const who = item?.user ? String(item.user) : "Someone";
   const title = item?.title ? String(item.title) : "This title";
@@ -436,20 +434,14 @@ const attentionDetail=item=>{
       return `The co-watch prompt for ${title} did not reach ${who}.`;
     case "plex_sync_failed":
       return `We could not sync watched state for ${title} to ${who}.`;
-    case "missing_metadata":
-      return `${title} is visible in playback history, but it is not matched in the catalog yet.`;
-    case "uncertain_classification":
-      return `${title} is showing up under a guessed category and should be checked.`;
     default:
       return item?.detail || "Needs review.";
   }
 };
 const attentionStatusLabel=item=>{
   if (item?.kind === "unresolved_prompt") return "Waiting";
-  if (item?.kind === "discord_delivery_failed") return "Resend";
-  if (item?.kind === "plex_sync_failed") return "Sync failed";
-  if (item?.kind === "missing_metadata") return "Match title";
-  if (item?.kind === "uncertain_classification") return "Review";
+  if (item?.kind === "discord_delivery_failed") return "Try again";
+  if (item?.kind === "plex_sync_failed") return "Open context";
   return String(item?.status || "Open").replace(/_/g, " ");
 };
 const sidebarOverview = ()=>document.querySelector("#sidebar-overview-sections");
@@ -968,7 +960,7 @@ async function renderOverview() {
           <span class="overview-attention-status">${esc(attentionStatusLabel(item))}</span>
         </button>
       `).join("")}</div>`
-    : '<div class="panel-state compact"><p>Nothing needs fixing right now.</p></div>';
+    : '<div class="panel-state compact"><p>No action needed.</p></div>';
 
   setSidebarOverview(`
     <div class="sidebar-section sidebar-overview-stack">
@@ -1033,7 +1025,7 @@ async function renderOverview() {
           ${completedHtml}
         </div>
         <div class="dashboard-panel">
-          <div class="panel-title"><h3>Needs Fixing</h3><span>${esc(d.windows?.needsAttention || 'Things blocking clean watch history')}</span></div>
+          <div class="panel-title"><h3>Needs Your Attention</h3><span>${esc(d.windows?.needsAttention || 'Only actions that need you')}</span></div>
           ${attentionHtml}
         </div>
       </section>

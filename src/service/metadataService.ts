@@ -4,6 +4,9 @@ import type { PlexRichMetadata } from "../types/index.js";
 import { nowIso } from "../utils/time.js";
 import { AudiobookCatalogService, prepareAudiobookMetadata } from "./audiobookService.js";
 
+export const METADATA_RETRY_COOLDOWN_MS = 15 * 60 * 1000;
+export const METADATA_REPAIR_BATCH_SIZE = 20;
+
 export interface CatalogEntry {
   ratingKey: string;
   guid: string | null;
@@ -28,6 +31,7 @@ export interface CatalogEntry {
 
 export class MetadataService {
   private readonly audiobooks: AudiobookCatalogService;
+  private readonly refreshes = new Map<string, Promise<CatalogEntry | null>>();
   constructor(
     private readonly db: Db,
     private readonly plex: PlexAdapter
@@ -37,7 +41,7 @@ export class MetadataService {
 
   async getMetadata(ratingKey: string, plexGuid?: string): Promise<CatalogEntry | null> {
     const cached = this.getCached(ratingKey);
-    if (cached) {
+    if (cached && !this.shouldRetry(cached)) {
       return cached;
     }
     return this.refreshMetadata(ratingKey, plexGuid);
@@ -50,6 +54,62 @@ export class MetadataService {
   }
 
   async refreshMetadata(ratingKey: string, plexGuid?: string): Promise<CatalogEntry | null> {
+    const inFlight = this.refreshes.get(ratingKey);
+    if (inFlight) return inFlight;
+
+    const refresh = this.refreshMetadataUnshared(ratingKey, plexGuid);
+    this.refreshes.set(ratingKey, refresh);
+    try {
+      return await refresh;
+    } finally {
+      if (this.refreshes.get(ratingKey) === refresh) this.refreshes.delete(ratingKey);
+    }
+  }
+
+  async repairMissingMetadata(limit = METADATA_REPAIR_BATCH_SIZE): Promise<{ attempted: number; refreshed: number; failed: number }> {
+    const batchSize = Math.max(1, Math.min(METADATA_REPAIR_BATCH_SIZE, Math.trunc(limit)));
+    const candidates = this.db.prepare(`
+      SELECT
+        CASE
+          WHEN lower(po.media_type) IN ('audiobook', 'track') THEN COALESCE(po.grandparent_rating_key, po.parent_rating_key, po.rating_key)
+          WHEN lower(po.media_type) = 'episode' THEN COALESCE(po.grandparent_rating_key, po.rating_key)
+          ELSE po.rating_key
+        END AS catalog_key,
+        MAX(po.plex_guid) AS plex_guid,
+        MAX(po.watched_at) AS watched_at
+      FROM playback_observations po
+      JOIN users u ON u.id = po.user_id
+      LEFT JOIN content_catalog cat ON cat.rating_key = CASE
+        WHEN lower(po.media_type) IN ('audiobook', 'track') THEN COALESCE(po.grandparent_rating_key, po.parent_rating_key, po.rating_key)
+        WHEN lower(po.media_type) = 'episode' THEN COALESCE(po.grandparent_rating_key, po.rating_key)
+        ELSE po.rating_key
+      END
+      WHERE COALESCE(u.dashboard_shown, u.enabled) = 1
+        AND lower(po.media_type) IN ('movie', 'episode', 'audiobook', 'track')
+        AND (cat.rating_key IS NULL OR cat.source_provenance = 'fallback' OR cat.media_type = 'unknown')
+      GROUP BY catalog_key
+      ORDER BY watched_at DESC
+      LIMIT ?
+    `).all(batchSize * 5) as Array<{ catalog_key: string | null; plex_guid: string | null; watched_at: string }>;
+
+    let attempted = 0;
+    let refreshed = 0;
+    let failed = 0;
+    for (const candidate of candidates) {
+      if (!candidate.catalog_key) continue;
+      const cached = this.getCached(candidate.catalog_key);
+      if (cached && !this.shouldRetry(cached)) continue;
+
+      attempted++;
+      const entry = await this.refreshMetadata(candidate.catalog_key, candidate.plex_guid ?? undefined);
+      if (entry && !this.isFallback(entry)) refreshed++;
+      else failed++;
+      if (attempted >= batchSize) break;
+    }
+    return { attempted, refreshed, failed };
+  }
+
+  private async refreshMetadataUnshared(ratingKey: string, plexGuid?: string): Promise<CatalogEntry | null> {
     try {
       const plexMeta = await this.plex.getRichMetadataByRatingKey(ratingKey, plexGuid);
       const entry = this.savePlexMetadata(plexMeta);
@@ -84,6 +144,16 @@ export class MetadataService {
       this.saveCatalogEntry(fallbackEntry);
       return fallbackEntry;
     }
+  }
+
+  private shouldRetry(entry: CatalogEntry): boolean {
+    if (!this.isFallback(entry)) return false;
+    const refreshedAt = Date.parse(entry.refreshedAt);
+    return !Number.isFinite(refreshedAt) || Date.now() - refreshedAt >= METADATA_RETRY_COOLDOWN_MS;
+  }
+
+  private isFallback(entry: CatalogEntry): boolean {
+    return entry.sourceProvenance === "fallback" || entry.mediaType === "unknown";
   }
 
   private async ensureShowMetadata(showRatingKey: string, showGuid?: string | null): Promise<void> {

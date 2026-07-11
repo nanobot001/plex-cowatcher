@@ -44,7 +44,8 @@ async function main(): Promise<void> {
     case "ingest":
       {
         const { IngestionService } = await import("../service/ingestionService.js");
-        const ingestion = new IngestionService(db, tautulli);
+        const { MetadataService } = await import("../service/metadataService.js");
+        const ingestion = new IngestionService(db, tautulli, new MetadataService(db, plex));
         const result = await ingestion.pollRecentHistory(arg("length") ? Number(arg("length")) : 100);
         print({ ok: true, ...result });
       }

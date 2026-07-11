@@ -70,6 +70,30 @@ test("overview recent cards represent sessions and keep one participant expressi
   expect(pageErrors).toEqual([]);
 });
 
+test("overview merges audiobook sessions when Plex changes the item key", async ({ page }) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.goto("/");
+
+  const rekeyedCards = page.getByTestId("recent-playback-card").filter({ has: page.getByText("Fixture Audiobook", { exact: true }) });
+  await expect(rekeyedCards).toHaveCount(1);
+  await expect(rekeyedCards.locator(".cw-meta")).toContainText("–");
+  await expect(rekeyedCards).toContainText("Fixture Audiobook");
+  expect(pageErrors).toEqual([]);
+});
+
+test("overview hides metadata gaps because ingestion repairs them automatically", async ({ page }) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.goto("/");
+
+  await expect(page.locator('.overview-attention-row[data-action="refresh-metadata"]')).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText("Plex item needs details");
+  await expect(page.locator("body")).not.toContainText("Check this Plex library");
+  await expect(page.locator("body")).not.toContainText("Refresh from Plex");
+  expect(pageErrors).toEqual([]);
+});
+
 test("library aggregation respects aliases, hidden users, filters, and compact badges", async ({ page }) => {
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -354,7 +378,7 @@ test("people pairings and operations use real names and survive partial failure"
   await expect(pairing).toBeVisible();
   await expect(pairing).toContainText("Together 1");
   await expect(pairing).toContainText("Time unknown");
-  await expect(page.getByTestId("operations-panel")).toContainText("Waiting on a co-watch answer");
+  await expect(page.getByTestId("operations-panel")).toContainText("Waiting for a co-watch answer");
   await expect(page.getByTestId("operations-panel").getByRole("button", { name: "Dismiss" })).toBeVisible();
   await expectNoVisualOverflow(page);
 
