@@ -1,8 +1,9 @@
 # Block 3-2n-6b: Overview Session Feed De-duplication
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Corrective follow-up to Blocks 3-2n-6 and 3-2n-6a; restores session-based Overview cards without weakening co-watch evidence semantics.
+> Status: Implemented on 2026-07-11.
+> Result: Implemented.
+> Verification: `npm run verify:block` and `npm run verify:live-dashboard` - passed.
+> Notes: Overview now groups canonical-item playback into two-hour sessions, preserves stable co-watch relationships and participant evidence, renders one accessible poster badge with session time ranges, and keeps browser fallback grouping aligned with the server read model.
 
 ## Goal
 

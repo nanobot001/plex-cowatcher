@@ -1,7 +1,7 @@
 import { test, expect } from "playwright/test";
 
 const watchedByNames = async (card) => {
-  const label = await card.getByTestId("watched-by").getAttribute("aria-label");
+  const label = await card.getByTestId("viewer-badge").getAttribute("aria-label");
   return String(label || "")
     .replace(/^(Watched by|Together|Likely together) /, "");
 };
@@ -40,7 +40,8 @@ test("participant evidence stays consistent from recent card to detail", async (
   const card = page.getByTestId("recent-playback-card").filter({ hasText: "Regression Show" }).first();
   await expect(card).toBeVisible();
   await expect(card.getByTestId("viewer-badge")).toHaveAttribute("title", "Together Justin, Tony");
-  await expect(card.getByTestId("watched-by")).toHaveAttribute("aria-label", "Together Justin, Tony");
+  await expect(card.getByTestId("viewer-badge")).toHaveAttribute("aria-label", "Together Justin, Tony");
+  await expect(card.getByTestId("watched-by")).toHaveCount(0);
   await expectBadgeRowsDoNotOverlap(card.getByTestId("viewer-badge"));
 
   const cardNames = await watchedByNames(card);
@@ -51,6 +52,21 @@ test("participant evidence stays consistent from recent card to detail", async (
     await expect(detailPeople).toContainText(name);
   }
   await expectNoVisualOverflow(page);
+  expect(pageErrors).toEqual([]);
+});
+
+test("overview recent cards represent sessions and keep one participant expression", async ({ page }) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.goto("/");
+
+  const sessionCards = page.getByTestId("recent-playback-card").filter({ hasText: "Session Regression" });
+  await expect(sessionCards).toHaveCount(1);
+  const sessionCard = sessionCards.first();
+  await expect(sessionCard.locator(".cw-meta")).toContainText("–");
+  await expect(sessionCard.getByTestId("viewer-badge")).toHaveAttribute("aria-label", "Watched by Tony");
+  await expect(sessionCard.getByTestId("watched-by")).toHaveCount(0);
+  await expect(page.getByTestId("recent-playback-card").filter({ hasText: "Session Other Item" })).toHaveCount(1);
   expect(pageErrors).toEqual([]);
 });
 

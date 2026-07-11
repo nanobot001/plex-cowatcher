@@ -143,6 +143,7 @@ export interface DashboardActivityItem {
   id: number; userId: number; username: string; displayName: string; ratingKey: string;
   title: string; showTitle?: string; mediaType: string; category: DashboardCategory;
   categoryLabel: string; categoryDerived: boolean; libraryName?: string; watchedAt: string;
+  sessionStartAt?: string; sessionEndAt?: string;
   duration?: number; viewOffset?: number; percentComplete?: number; completed: boolean; artworkUrl: string;
   grandparentRatingKey?: string; parentRatingKey?: string; audiobookId?: number; audiobookTitle?: string;
   parentTitle?: string; grandparentTitle?: string;

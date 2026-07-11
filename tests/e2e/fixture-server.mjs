@@ -59,6 +59,12 @@ addEpisodic({ user: "Tony", ratingKey: "anime-regression-1", grandparentRatingKe
 
 const movieWatchedAt = isoMinutesAgo(150);
 insertObservation.run(userIds.Tony, "movie-regression", null, null, "movie", "Movies", "Fixture Movie", null, null, null, movieWatchedAt, "fixture", 100, "fixture", 7_200_000, 1, movieWatchedAt, movieWatchedAt);
+const sessionStartAt = isoMinutesAgo(280);
+const sessionResumeAt = isoMinutesAgo(240);
+insertObservation.run(userIds.Tony, "session-regression", null, null, "movie", "Movies", "Session Regression", null, null, null, sessionStartAt, "fixture", 35, "fixture", 0, 0, sessionStartAt, sessionStartAt);
+insertObservation.run(userIds.Tony, "session-regression", null, null, "movie", "Movies", "Session Regression", null, null, null, sessionResumeAt, "fixture", 65, "fixture", 0, 0, sessionResumeAt, sessionResumeAt);
+const otherSessionAt = isoMinutesAgo(235);
+insertObservation.run(userIds.Tony, "session-other", null, null, "movie", "Movies", "Session Other Item", null, null, null, otherSessionAt, "fixture", 100, "fixture", 0, 1, otherSessionAt, otherSessionAt);
 const audiobookWatchedAt = isoMinutesAgo(52);
 insertObservation.run(userIds.Tony, "audio-regression-1", null, null, "track", "Audiobooks", "Chapter 1: Open", "Fixture Audiobook", null, null, audiobookWatchedAt, "fixture", 65, "fixture", 0, 0, audiobookWatchedAt, audiobookWatchedAt);
 const verifiedAudiobookWatchedAt = isoMinutesAgo(50);
