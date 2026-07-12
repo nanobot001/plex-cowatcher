@@ -2825,3 +2825,13 @@ dialog[open] {
 .progress-dot.watched { background: #6ee7b7; border-color: #6ee7b7; }
 .progress-dot.partial { background: #fbbf24; border-color: #fbbf24; }
 .progress-dot.unknown { background: transparent; border-style: dashed; }
+
+/* Audiobook square poster styling */
+.poster-card[data-cat="audiobook"] .poster,
+.cw-card[data-cat="audiobook"] .poster {
+  aspect-ratio: 1/1;
+  object-fit: cover;
+}
+.activity-row[data-cat="audiobook"] .poster {
+  height: 64px;
+}
