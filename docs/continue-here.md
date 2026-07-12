@@ -7,7 +7,7 @@ Current state:
 - Automatic audiobook discovery now runs independently under PM2, reconciles rich Plex metadata, persists restart/cooldown state, and emits one outbox event per stable media revision. A live 960-track scan succeeded, and its immediate rerun was idempotent.
 
 Next step:
-- Implement **Block 3-2n-5d: Automatic Audiobook Chapter Proof Handoff** (`docs/blocks/block-3-2n-5d-automatic-audiobook-chapter-proof-handoff.md`), then 3-2o.
+- Implement **Block 3-2n-5d-1: Revision Manifest And Safe Cache Activation** (`docs/blocks/block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md`), then 5D-2 and 5D-3 before 3-2o. The original 5D file is now an umbrella only.
 
 ## 2026-07-09
 

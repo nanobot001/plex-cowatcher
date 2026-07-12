@@ -161,7 +161,10 @@ The corrective sequence is mandatory and ordered:
 23. **3-2n-6a - Progress Watcher Coverage And Workspace Width:** Implemented 2026-07-09. Add visible completion coverage, on-demand watcher evidence, and a full-width Recently Completed workspace.
 24. **3-2n-6b - Overview Session Feed De-duplication:** Implemented 2026-07-11. Group canonical-item playback into stable viewing sessions while preserving co-watch and participant evidence.
 25. **3-2n-5c - Reliable Audiobook Discovery Automation:** Implemented 2026-07-11. Automatic PM2 discovery now reconciles metadata, survives restart/cooldown and key drift, and emits revision-deduplicated 5D outbox work.
-26. **3-2n-5d - Automatic Audiobook Chapter Proof Handoff:** Automatically trigger the separate `audiobook` project one time per unresolved audiobook and cache verified chapter boundaries for future Progress mapping.
+26. **3-2n-5d - Automatic Audiobook Chapter Proof Handoff:** Planned umbrella, split into three ordered implementation blocks.
+    1. **3-2n-5d-1 - Revision Manifest And Safe Cache Activation:** Preserve the exact private file set behind each revision and make chapter activation revision-safe and backward compatible.
+    2. **3-2n-5d-2 - Trusted External Proof Adapter:** Validate the configured read-only `audiobook` JSON boundary with strict quality, timeout, and privacy controls.
+    3. **3-2n-5d-3 - Durable Proof Worker And Rollout:** Add bounded restart-safe jobs, operations, canary verification, and the staged PM2 rollout.
 27. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
 
 Each block, including every 3-2m sub-block, must pass its own exit gate before the next begins. Block 3-3 is paused until 3-2o completes.
@@ -184,7 +187,7 @@ Implemented on 2026-07-11. Whole-library discovery now runs on a persisted PM2 c
 
 ### Block 3-2n-5d: Automatic Audiobook Chapter Proof Handoff
 
-Once reliable discovery exists, automatically trigger the separate `audiobook` project one time per unresolved audiobook, import sanitized verified chapter boundaries into CoWatcher’s local cache, and reuse that cache for future audiobook Progress mapping instead of requiring manual chapter import.
+Umbrella only. Implement 5D-1, 5D-2, and 5D-3 in order. Together they preserve immutable revision membership, validate the trusted external read-only contract, and process proof jobs at a bounded rate before activating sanitized verified chapter boundaries for future Progress mapping.
 
 ### Deferred Beyond The Phase 3 MVP
 
