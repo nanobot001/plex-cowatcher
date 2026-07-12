@@ -23,6 +23,7 @@ import { AudiobookCatalogService, canonicalizeAudiobookSeriesTitle, isAudiobookM
 import { AudiobookBackfillService } from "../dist/service/audiobookBackfillService.js";
 import { AudiobookScannerService } from "../dist/service/audiobookScannerService.js";
 import { AudiobookDiscoveryService } from "../dist/service/audiobookDiscoveryService.js";
+import { reconcileLegacyDiscoveryOutbox } from "../dist/service/audiobookRevisionService.js";
 import { DashboardService, deriveDashboardCategory } from "../dist/service/dashboardService.js";
 import { DashboardPreferenceService } from "../dist/service/dashboardPreferenceService.js";
 import { CowatchAdjudicationService } from "../dist/service/cowatchAdjudicationService.js";
@@ -1342,6 +1343,7 @@ test("audiobook migration is repeatable and does not denormalize onto observatio
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 7").get().count, 1);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 13").get().count, 1);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 14").get().count, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 15").get().count, 1);
     const catalogColumns = db.prepare("PRAGMA table_info(content_catalog)").all().map((column) => column.name);
     const bookColumns = db.prepare("PRAGMA table_info(audiobook_books)").all().map((column) => column.name);
     const observationColumns = db.prepare("PRAGMA table_info(playback_observations)").all().map((column) => column.name);
@@ -1354,8 +1356,11 @@ test("audiobook migration is repeatable and does not denormalize onto observatio
     assert.equal(bookColumns.includes("hierarchy_provenance"), true);
     assert.equal(bookColumns.includes("identity_status"), true);
     assert.equal(bookColumns.includes("current_media_revision"), true);
+    assert.equal(bookColumns.includes("active_chapter_revision_id"), true);
     assert.ok(db.prepare("SELECT id FROM audiobook_discovery_state WHERE id = 1").get());
     assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audiobook_discovery_outbox'").get());
+    assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audiobook_media_revisions'").get());
+    assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audiobook_chapter_revisions'").get());
     assert.equal(observationColumns.includes("audiobook_id"), false);
     assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
   });
@@ -1573,6 +1578,19 @@ test("audiobook discovery ingests rich list metadata without N+1 Plex reads and 
     assert.equal(first.outboxEnqueued, 1);
     assert.equal(plex.metadataCalls, 0);
     assert.equal(providerCalls, 1);
+    const firstManifest = db.prepare("SELECT * FROM audiobook_media_revisions").get();
+    assert.ok(firstManifest);
+    assert.equal(firstManifest.track_count, 2);
+    assert.equal(firstManifest.file_count, 2);
+    assert.equal(firstManifest.manifest_status, "unsupported_multi_file");
+    const firstItems = db.prepare(`
+      SELECT item_order, stable_identity, duration_ms, private_file_path, path_hash
+      FROM audiobook_media_revision_items ORDER BY item_order
+    `).all();
+    assert.equal(firstItems.length, 2);
+    assert.equal(firstItems.every((item) => item.private_file_path && item.path_hash), true);
+    assert.equal(db.prepare("SELECT manifest_status FROM audiobook_discovery_outbox").get().manifest_status,
+      "unsupported_multi_file");
 
     plex.reverse = true;
     const second = await scanner.scanLibrary("Audiobooks", { trigger: "interval", now: new Date(now.getTime() + 60_000) });
@@ -1580,12 +1598,41 @@ test("audiobook discovery ingests rich list metadata without N+1 Plex reads and 
     assert.equal(second.booksAlreadyKnown, 1);
     assert.equal(second.outboxEnqueued, 0);
     assert.equal(providerCalls, 1, "enrichment cooldown should suppress immediate provider retries");
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audiobook_media_revisions").get().count, 1);
+    assert.deepEqual(db.prepare(`
+      SELECT item_order, stable_identity, duration_ms, private_file_path, path_hash
+      FROM audiobook_media_revision_items ORDER BY item_order
+    `).all(), firstItems, "later scan order must not mutate an immutable manifest");
 
     plex.duration = 1_260_000;
     const changed = await scanner.scanLibrary("Audiobooks", { trigger: "interval", now: new Date(now.getTime() + 120_000) });
     assert.equal(changed.booksChanged, 1);
     assert.equal(changed.outboxEnqueued, 1);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audiobook_discovery_outbox").get().count, 2);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audiobook_media_revisions").get().count, 2);
+  });
+});
+
+test("legacy audiobook discovery outbox rows become safe terminal classifications", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO audiobook_books
+        (id, folder_key, title, source_provenance, enrichment_status, identity_status,
+         current_media_revision, created_at, updated_at)
+      VALUES (90, 'legacy-outbox', 'Legacy Outbox', 'fixture', 'enriched', 'identified',
+        'current-revision', '2026-07-11T00:00:00Z', '2026-07-11T00:00:00Z')
+    `).run();
+    db.prepare(`
+      INSERT INTO audiobook_discovery_outbox
+        (audiobook_id, media_revision, trigger_reason, created_at)
+      VALUES (90, 'older-revision', 'interval', '2026-07-11T00:00:00Z')
+    `).run();
+    reconcileLegacyDiscoveryOutbox(db, "2026-07-12T00:00:00Z");
+    const row = db.prepare("SELECT * FROM audiobook_discovery_outbox WHERE audiobook_id = 90").get();
+    assert.equal(row.manifest_status, "superseded");
+    assert.equal(row.safe_outcome_code, "SUPERSEDED_REVISION");
+    assert.equal(row.consumed_at, "2026-07-12T00:00:00Z");
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audiobook_media_revisions").get().count, 0);
   });
 });
 
@@ -3203,6 +3250,30 @@ test("audiobook chapter import verifies dry-run, apply database caching, and has
     assert.equal(chapters[0].title, "Chapter 1");
     assert.equal(chapters[1].title, "Chapter 2");
     assert.equal(chapters[1].start_offset_ms, 60000);
+    const activeRevision = db.prepare(`
+      SELECT revision.* FROM audiobook_books book
+      JOIN audiobook_chapter_revisions revision ON revision.id = book.active_chapter_revision_id
+      WHERE book.id = 10
+    `).get();
+    assert.ok(activeRevision);
+    assert.match(activeRevision.media_revision, /^legacy:/);
+    assert.equal(db.prepare(`
+      SELECT COUNT(*) AS count FROM audiobook_chapter_revision_items WHERE chapter_revision_id = ?
+    `).get(activeRevision.id).count, 2);
+
+    assert.throws(() => catalog.importChapters({
+      audiobookId: 10,
+      chapters: [
+        { index: 1, title: "Duplicate A", start_offset_ms: 0, end_offset_ms: 30000 },
+        { index: 1, title: "Duplicate B", start_offset_ms: 30000, end_offset_ms: 60000 }
+      ]
+    }, { apply: true }));
+    assert.deepEqual(
+      db.prepare("SELECT title FROM audiobook_chapters WHERE audiobook_id = 10 ORDER BY chapter_index").all()
+        .map((row) => row.title),
+      ["Chapter 1", "Chapter 2"],
+      "failed replacement must preserve the active compatibility cache"
+    );
 
     const { DashboardService } = await import("../dist/service/dashboardService.js");
     const dashboard = new DashboardService(db);
@@ -3237,6 +3308,17 @@ test("audiobook chapter import verifies dry-run, apply database caching, and has
     assert.equal(expansion.hasVerifiedChapters, true);
     assert.equal(expansion.progressUnit, "chapter");
     assert.equal(expansion.totalKnown, true);
+
+    db.prepare("UPDATE audiobook_books SET current_media_revision = 'replacement-media' WHERE id = 10").run();
+    const staleProgress = dashboard.getProgress({ user: "Tony" }).recentlyActive.items.find(x => x.title === "The Hobbit");
+    assert.ok(staleProgress);
+    assert.equal(staleProgress.hasVerifiedChapters, false);
+    assert.equal(staleProgress.progressUnit, "track");
+    assert.equal(staleProgress.progressSource, "plex");
+    const staleExpansion = dashboard.getProgressExpansion("audiobook:Audiobooks:10");
+    assert.ok(staleExpansion);
+    assert.equal(staleExpansion.hasVerifiedChapters, false);
+    assert.equal(staleExpansion.progressUnit, "track");
   });
 });
 

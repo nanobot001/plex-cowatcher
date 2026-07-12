@@ -3,6 +3,7 @@ import type { Db } from "../db/database.js";
 import type { AudiobookBook, PlexRichMetadata, TautulliHistoryRow } from "../types/index.js";
 import { nowIso } from "../utils/time.js";
 import { AuditService } from "./auditService.js";
+import { AudiobookChapterActivationService } from "./audiobookChapterActivationService.js";
 
 export interface AudiobookPathIdentity {
   folderKey: string;
@@ -628,7 +629,14 @@ export class AudiobookCatalogService {
   importChapters(input: any, options: { apply: boolean }): { success: boolean; chaptersCount: number; audiobookId: number; dryRun: boolean; title: string } {
     const audit = new AuditService(this.db);
     const actor = "cli-import";
-    const payload = { input, options };
+    const payload = {
+      audiobookId: input?.audiobookId ?? null,
+      asin: input?.asin ?? null,
+      folderKey: input?.folderKey ?? null,
+      sourceType: input?.sourceType ?? "audiobook_tool",
+      chaptersCount: Array.isArray(input?.chapters) ? input.chapters.length : null,
+      options
+    };
 
     try {
       let audiobook: any = null;
@@ -660,32 +668,18 @@ export class AudiobookCatalogService {
       const now = nowIso();
 
       if (options.apply) {
-        this.db.exec("BEGIN IMMEDIATE");
-        try {
-          this.db.prepare(`
-            INSERT INTO audiobook_chapter_sources (audiobook_id, source_type, source_status, confidence, refreshed_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(audiobook_id, source_type) DO UPDATE SET
-              source_status = excluded.source_status,
-              confidence = excluded.confidence,
-              refreshed_at = excluded.refreshed_at
-          `).run(audiobook.id, sourceType, status, confidence, now);
-
-          this.db.prepare("DELETE FROM audiobook_chapters WHERE audiobook_id = ?").run(audiobook.id);
-
-          const insertStmt = this.db.prepare(`
-            INSERT INTO audiobook_chapters (audiobook_id, chapter_index, title, start_offset_ms, end_offset_ms, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-          `);
-          for (const ch of input.chapters) {
-            insertStmt.run(audiobook.id, ch.index, ch.title, ch.start_offset_ms, ch.end_offset_ms, now, now);
-          }
-
-          this.db.exec("COMMIT");
-        } catch (dbErr: any) {
-          this.db.exec("ROLLBACK");
-          throw dbErr;
-        }
+        new AudiobookChapterActivationService(this.db).activate({
+          audiobookId: audiobook.id,
+          chapters: input.chapters,
+          sourceType,
+          sourceStatus: status,
+          confidence,
+          mediaRevision: typeof input.mediaRevision === "string" ? input.mediaRevision : undefined,
+          contractVersion: typeof input.contractVersion === "number" ? input.contractVersion : undefined,
+          resolverVersion: typeof input.resolverVersion === "string" ? input.resolverVersion : undefined,
+          warnings: Array.isArray(input.warnings) ? input.warnings.map(String) : undefined,
+          activatedAt: now
+        });
 
         audit.record("import-audiobook-chapters", actor, "success", { ...payload, audiobookId: audiobook.id, chaptersCount: input.chapters.length });
       } else {

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { appConfig } from "../utils/config.js";
 import { canonicalizeAudiobookSeriesTitle } from "../service/audiobookService.js";
@@ -37,6 +38,7 @@ export function migrateDatabase(db: Db): void {
   migrateContentCatalogHierarchyIndexes(db);
   migrateAudiobookChapters(db);
   migrateAudiobookDiscovery(db);
+  migrateAudiobookRevisionManifests(db);
 }
 
 function migrateCowatchReviewPrompts(db: Db): void {
@@ -364,6 +366,128 @@ function migrateAudiobookDiscovery(db: Db): void {
         ON content_catalog(guid) WHERE guid IS NOT NULL;
     `);
     db.prepare("INSERT INTO schema_migrations (version, name) VALUES (14, ?)").run("audiobook_discovery_automation");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrateAudiobookRevisionManifests(db: Db): void {
+  const applied = db.prepare("SELECT 1 FROM schema_migrations WHERE version = 15").get();
+  if (applied) return;
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    ensureColumn(db, "audiobook_books", "active_chapter_revision_id", "INTEGER");
+    ensureColumn(db, "audiobook_discovery_outbox", "manifest_status", "TEXT NOT NULL DEFAULT 'pending'");
+    ensureColumn(db, "audiobook_discovery_outbox", "safe_outcome_code", "TEXT");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS audiobook_media_revisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        audiobook_id INTEGER NOT NULL,
+        media_revision TEXT NOT NULL,
+        track_count INTEGER NOT NULL,
+        file_count INTEGER NOT NULL,
+        total_duration_ms INTEGER,
+        manifest_status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(audiobook_id) REFERENCES audiobook_books(id) ON DELETE CASCADE,
+        UNIQUE(audiobook_id, media_revision)
+      );
+      CREATE TABLE IF NOT EXISTS audiobook_media_revision_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        revision_id INTEGER NOT NULL,
+        item_order INTEGER NOT NULL,
+        stable_identity TEXT NOT NULL,
+        duration_ms INTEGER,
+        private_file_path TEXT,
+        path_hash TEXT,
+        FOREIGN KEY(revision_id) REFERENCES audiobook_media_revisions(id) ON DELETE CASCADE,
+        UNIQUE(revision_id, item_order)
+      );
+      CREATE TABLE IF NOT EXISTS audiobook_chapter_revisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        audiobook_id INTEGER NOT NULL,
+        media_revision TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        source_status TEXT NOT NULL,
+        confidence REAL NOT NULL DEFAULT 1.0,
+        chapter_digest TEXT NOT NULL,
+        duration_ms INTEGER,
+        contract_version INTEGER NOT NULL DEFAULT 1,
+        resolver_version TEXT,
+        warnings_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        activated_at TEXT,
+        invalidated_at TEXT,
+        FOREIGN KEY(audiobook_id) REFERENCES audiobook_books(id) ON DELETE CASCADE,
+        UNIQUE(audiobook_id, media_revision, source_type, chapter_digest)
+      );
+      CREATE TABLE IF NOT EXISTS audiobook_chapter_revision_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chapter_revision_id INTEGER NOT NULL,
+        chapter_index INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        start_offset_ms INTEGER NOT NULL,
+        end_offset_ms INTEGER NOT NULL,
+        FOREIGN KEY(chapter_revision_id) REFERENCES audiobook_chapter_revisions(id) ON DELETE CASCADE,
+        UNIQUE(chapter_revision_id, chapter_index)
+      );
+      CREATE INDEX IF NOT EXISTS idx_audiobook_media_revisions_book
+        ON audiobook_media_revisions(audiobook_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_audiobook_chapter_revisions_book
+        ON audiobook_chapter_revisions(audiobook_id, created_at DESC);
+    `);
+
+    const legacySources = db.prepare(`
+      SELECT source.audiobook_id, source.source_type, source.source_status, source.confidence,
+             source.refreshed_at, book.current_media_revision
+      FROM audiobook_chapter_sources source
+      JOIN audiobook_books book ON book.id = source.audiobook_id
+      WHERE source.source_status = 'active'
+    `).all() as Array<any>;
+    for (const source of legacySources) {
+      const chapters = db.prepare(`
+        SELECT chapter_index, title, start_offset_ms, end_offset_ms
+        FROM audiobook_chapters WHERE audiobook_id = ?
+        ORDER BY chapter_index, start_offset_ms
+      `).all(source.audiobook_id) as Array<any>;
+      if (chapters.length === 0) continue;
+      const canonical = JSON.stringify(chapters.map((chapter) => [
+        chapter.chapter_index, chapter.title, chapter.start_offset_ms, chapter.end_offset_ms
+      ]));
+      const digest = createHash("sha256").update(canonical).digest("hex");
+      const mediaRevision = source.current_media_revision ?? `legacy:${digest}`;
+      const durationMs = Math.max(...chapters.map((chapter) => Number(chapter.end_offset_ms)));
+      const inserted = db.prepare(`
+        INSERT OR IGNORE INTO audiobook_chapter_revisions
+          (audiobook_id, media_revision, source_type, source_status, confidence, chapter_digest,
+           duration_ms, created_at, activated_at)
+        VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)
+      `).run(source.audiobook_id, mediaRevision, source.source_type, source.confidence, digest,
+        durationMs, source.refreshed_at, source.refreshed_at);
+      const revision = db.prepare(`
+        SELECT id FROM audiobook_chapter_revisions
+        WHERE audiobook_id = ? AND media_revision = ? AND source_type = ? AND chapter_digest = ?
+      `).get(source.audiobook_id, mediaRevision, source.source_type, digest) as { id: number };
+      if (Number(inserted.changes) > 0) {
+        const insertChapter = db.prepare(`
+          INSERT INTO audiobook_chapter_revision_items
+            (chapter_revision_id, chapter_index, title, start_offset_ms, end_offset_ms)
+          VALUES (?, ?, ?, ?, ?)
+        `);
+        for (const chapter of chapters) {
+          insertChapter.run(revision.id, chapter.chapter_index, chapter.title,
+            chapter.start_offset_ms, chapter.end_offset_ms);
+        }
+      }
+      db.prepare("UPDATE audiobook_books SET active_chapter_revision_id = ? WHERE id = ?")
+        .run(revision.id, source.audiobook_id);
+    }
+
+    db.prepare("INSERT INTO schema_migrations (version, name) VALUES (15, ?)")
+      .run("audiobook_revision_manifests");
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");

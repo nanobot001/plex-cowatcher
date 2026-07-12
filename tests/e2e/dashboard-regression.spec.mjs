@@ -520,6 +520,7 @@ test("Progress hierarchy expands lazily, caches responses, and preserves route s
 
   const audiobookCard = cardFor("Fixture Audiobook");
   await expect(audiobookCard).toBeVisible();
+  // Its cached proof belongs to an older media revision, so the safe track/file fallback is durable UI behavior.
   await expect(audiobookCard.locator(".progress-card-source")).toContainText("Plex track/file evidence");
   await audiobookCard.click();
   await expect(progressDialog).toBeVisible();

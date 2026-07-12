@@ -1705,12 +1705,7 @@ export class DashboardService {
               series: book.series_title || null,
               book: book.title || null
             };
-            const hasSource = this.db.prepare(`
-              SELECT 1 FROM audiobook_chapter_sources 
-              WHERE audiobook_id = ? AND source_status = 'active'
-              LIMIT 1
-            `).get(book.id);
-            hasVerifiedChapters = !!hasSource;
+            hasVerifiedChapters = this.getActiveAudiobookChapterSource(book.id) !== null;
           }
         } else if (first.category === "tv" || first.category === "classic_tv" || first.category === "anime") {
           progressUnit = "episode";
@@ -2175,10 +2170,24 @@ export class DashboardService {
 
   private getActiveAudiobookChapterSource(audiobookId: number): CachedAudiobookSource | null {
     const source = this.db.prepare(`
-      SELECT source_type, source_status, confidence, refreshed_at
-      FROM audiobook_chapter_sources
-      WHERE audiobook_id = ? AND source_status = 'active'
-      ORDER BY confidence DESC, refreshed_at DESC
+      SELECT source.source_type, source.source_status, source.confidence, source.refreshed_at
+      FROM audiobook_books book
+      JOIN audiobook_chapter_sources source ON source.audiobook_id = book.id
+      LEFT JOIN audiobook_chapter_revisions revision ON revision.id = book.active_chapter_revision_id
+      WHERE book.id = ? AND source.source_status = 'active'
+        AND (
+          (
+            book.active_chapter_revision_id IS NOT NULL
+            AND revision.source_status = 'active'
+            AND source.source_type = revision.source_type
+            AND (book.current_media_revision IS NULL OR revision.media_revision = book.current_media_revision)
+          )
+          OR (
+            book.active_chapter_revision_id IS NULL
+            AND book.current_media_revision IS NULL
+          )
+        )
+      ORDER BY source.confidence DESC, source.refreshed_at DESC
       LIMIT 1
     `).get(audiobookId) as CachedAudiobookSource | undefined;
     return source ?? null;
