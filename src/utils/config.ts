@@ -16,6 +16,14 @@ const envSchema = z.object({
   PLEX_BASE_URL: z.string().default("http://127.0.0.1:32400"),
   PLEX_TOKEN: z.string().default(""),
   PLEX_MUTATION_MODE: z.enum(["mock", "live"]).default("mock"),
+  AUDIOBOOK_DISCOVERY_ENABLED: z
+    .preprocess((value) => {
+      if (typeof value === "string") return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+      return value;
+    }, z.boolean())
+    .default(true),
+  AUDIOBOOK_LIBRARY: z.string().default("Audiobooks"),
+  AUDIOBOOK_SCAN_INTERVAL_MINUTES: z.coerce.number().min(15).default(360),
   TAUTULLI_BASE_URL: z.string().default("http://127.0.0.1:8181"),
   TAUTULLI_API_KEY: z.string().default(""),
   DISCORD_BOT_TOKEN: z.string().default(""),

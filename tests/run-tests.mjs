@@ -22,6 +22,7 @@ import { CowatchingIntelligenceService } from "../dist/service/cowatchingIntelli
 import { AudiobookCatalogService, canonicalizeAudiobookSeriesTitle, isAudiobookMedia, parseAudiobookPath, parseAudnexusAsin, prepareAudiobookMetadata, normalizeAudiobookHierarchy } from "../dist/service/audiobookService.js";
 import { AudiobookBackfillService } from "../dist/service/audiobookBackfillService.js";
 import { AudiobookScannerService } from "../dist/service/audiobookScannerService.js";
+import { AudiobookDiscoveryService } from "../dist/service/audiobookDiscoveryService.js";
 import { DashboardService, deriveDashboardCategory } from "../dist/service/dashboardService.js";
 import { DashboardPreferenceService } from "../dist/service/dashboardPreferenceService.js";
 import { CowatchAdjudicationService } from "../dist/service/cowatchAdjudicationService.js";
@@ -1340,15 +1341,21 @@ test("audiobook migration is repeatable and does not denormalize onto observatio
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 5").get().count, 1);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 7").get().count, 1);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 13").get().count, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 14").get().count, 1);
     const catalogColumns = db.prepare("PRAGMA table_info(content_catalog)").all().map((column) => column.name);
     const bookColumns = db.prepare("PRAGMA table_info(audiobook_books)").all().map((column) => column.name);
     const observationColumns = db.prepare("PRAGMA table_info(playback_observations)").all().map((column) => column.name);
     assert.equal(catalogColumns.includes("file_path"), true);
     assert.equal(catalogColumns.includes("audiobook_id"), true);
+    assert.equal(catalogColumns.includes("last_seen_at"), true);
     assert.equal(bookColumns.includes("parent_series_title"), true);
     assert.equal(bookColumns.includes("subseries_title"), true);
     assert.equal(bookColumns.includes("related_work_classification"), true);
     assert.equal(bookColumns.includes("hierarchy_provenance"), true);
+    assert.equal(bookColumns.includes("identity_status"), true);
+    assert.equal(bookColumns.includes("current_media_revision"), true);
+    assert.ok(db.prepare("SELECT id FROM audiobook_discovery_state WHERE id = 1").get());
+    assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audiobook_discovery_outbox'").get());
     assert.equal(observationColumns.includes("audiobook_id"), false);
     assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
   });
@@ -1510,7 +1517,9 @@ test("AudiobookScannerService scans library and indexes tracks", async () => {
     
     // We will pass MockPlexAdapter
     const plex = new MockPlexAdapter();
-    const scanner = new AudiobookScannerService(db, plex);
+    const scanner = new AudiobookScannerService(db, plex, async () =>
+      new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "content-type": "application/json" } })
+    );
     
     const result = await scanner.scanLibrary("Audiobooks");
     assert.equal(result.ok, true);
@@ -1522,6 +1531,162 @@ test("AudiobookScannerService scans library and indexes tracks", async () => {
     assert.ok(book);
     assert.equal(book.parent_series_title, "Discworld");
     assert.equal(book.subseries_title, "Ankh-Morpork City Watch");
+  });
+});
+
+test("audiobook discovery ingests rich list metadata without N+1 Plex reads and deduplicates revisions", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    class CountingPlexAdapter extends MockPlexAdapter {
+      metadataCalls = 0;
+      duration = 1_200_000;
+      reverse = false;
+      async getRichMetadataByRatingKey(ratingKey, plexGuid) {
+        this.metadataCalls++;
+        return super.getRichMetadataByRatingKey(ratingKey, plexGuid);
+      }
+      async listLibraryTracks(libraryKey) {
+        const tracks = await super.listLibraryTracks(libraryKey);
+        const first = { ...tracks[0], guid: "plex://track/stable-1", duration: this.duration };
+        const second = {
+          ...tracks[0],
+          ratingKey: "mock-track-2",
+          title: "Part 2",
+          guid: "plex://track/stable-2",
+          duration: this.duration,
+          filePath: "F:\\Media\\Audio\\Audiobooks\\Terry Pratchett   Narrated by\\2023 - Guards! Guards!\\02.mp3"
+        };
+        return this.reverse ? [second, first] : [first, second];
+      }
+    }
+    const plex = new CountingPlexAdapter();
+    let providerCalls = 0;
+    const fetcher = async () => {
+      providerCalls++;
+      return new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const scanner = new AudiobookScannerService(db, plex, fetcher);
+    const now = new Date("2026-07-11T12:00:00.000Z");
+
+    const first = await scanner.scanLibrary("Audiobooks", { trigger: "manual", now });
+    assert.equal(first.booksNew, 1);
+    assert.equal(first.outboxEnqueued, 1);
+    assert.equal(plex.metadataCalls, 0);
+    assert.equal(providerCalls, 1);
+
+    plex.reverse = true;
+    const second = await scanner.scanLibrary("Audiobooks", { trigger: "interval", now: new Date(now.getTime() + 60_000) });
+    assert.equal(second.booksNew, 0);
+    assert.equal(second.booksAlreadyKnown, 1);
+    assert.equal(second.outboxEnqueued, 0);
+    assert.equal(providerCalls, 1, "enrichment cooldown should suppress immediate provider retries");
+
+    plex.duration = 1_260_000;
+    const changed = await scanner.scanLibrary("Audiobooks", { trigger: "interval", now: new Date(now.getTime() + 120_000) });
+    assert.equal(changed.booksChanged, 1);
+    assert.equal(changed.outboxEnqueued, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audiobook_discovery_outbox").get().count, 2);
+  });
+});
+
+test("audiobook discovery coordinator persists cooldown and restart-safe lease decisions", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const fetcher = async () =>
+      new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    const discovery = new AudiobookDiscoveryService(db, new MockPlexAdapter(), fetcher, 360);
+    const now = new Date("2026-07-11T12:00:00.000Z");
+
+    const first = await discovery.run("startup", { now, force: true });
+    assert.equal(first.status, "succeeded");
+    const cooldown = await discovery.run("startup", { now: new Date(now.getTime() + 60_000) });
+    assert.equal(cooldown.status, "skipped");
+    assert.equal(cooldown.reason, "cooldown");
+
+    db.prepare(`
+      UPDATE audiobook_discovery_state
+      SET lease_owner = 'other-process', lease_expires_at = ?
+      WHERE id = 1
+    `).run(new Date(now.getTime() + 30 * 60_000).toISOString());
+    const held = await discovery.run("manual", { now: new Date(now.getTime() + 120_000) });
+    assert.equal(held.status, "skipped");
+    assert.equal(held.reason, "lease_held");
+
+    db.prepare("UPDATE audiobook_discovery_state SET lease_expires_at = ? WHERE id = 1")
+      .run(new Date(now.getTime() - 60_000).toISOString());
+    const recovered = await discovery.run("manual", { now: new Date(now.getTime() + 180_000) });
+    assert.equal(recovered.status, "succeeded");
+    assert.equal(db.prepare("SELECT lease_owner FROM audiobook_discovery_state WHERE id = 1").get().lease_owner, null);
+  });
+});
+
+test("audiobook identity conflicts preserve separate local editions and never merge by title", async () => {
+  await withTestDb(async (db) => {
+    const metadata = new MetadataService(db, new MockPlexAdapter());
+    const base = {
+      mediaType: "audiobook",
+      title: "Part 1",
+      duration: 1_200_000,
+      librarySectionID: "5",
+      librarySectionTitle: "Audiobooks",
+      genres: [],
+      guid: "audnexus://B000000001"
+    };
+    metadata.ingestRichMetadata({
+      ...base,
+      ratingKey: "edition-a-track",
+      parentGuid: "local://edition-a",
+      parentTitle: "Shared Title",
+      filePath: "F:\\Audiobooks\\Author One\\Shared Title\\01.mp3"
+    });
+    metadata.ingestRichMetadata({
+      ...base,
+      ratingKey: "edition-b-track",
+      parentGuid: "local://edition-b",
+      parentTitle: "Shared Title",
+      filePath: "F:\\Audiobooks\\Author Two\\Shared Title\\01.mp3"
+    });
+
+    const books = db.prepare("SELECT asin, identity_status FROM audiobook_books ORDER BY id").all();
+    assert.equal(books.length, 2);
+    assert.equal(books.filter((book) => book.asin === "B000000001").length, 1);
+    assert.equal(books.every((book) => book.identity_status === "conflict"), true);
+  });
+});
+
+test("audiobook item discovery repairs a stale rating key through its stored Plex GUID", async () => {
+  await withTestDb(async (db) => {
+    class GuidRepairPlexAdapter extends MockPlexAdapter {
+      async getRichMetadataByRatingKey(ratingKey, plexGuid) {
+        assert.equal(ratingKey, "stale-track");
+        assert.equal(plexGuid, "plex://track/stable-guid");
+        return {
+          ratingKey: "active-track",
+          guid: plexGuid,
+          mediaType: "audiobook",
+          title: "Part 1",
+          duration: 1_200_000,
+          librarySectionID: "5",
+          librarySectionTitle: "Audiobooks",
+          parentGuid: "local://stable-book",
+          parentTitle: "Stable Book",
+          genres: [],
+          filePath: "F:\\Audiobooks\\Stable Author\\Stable Book\\01.mp3"
+        };
+      }
+    }
+    const discovery = new AudiobookDiscoveryService(db, new GuidRepairPlexAdapter(), async () =>
+      new Response(JSON.stringify({ items: [] }), { status: 200 })
+    );
+    const result = await discovery.run("webhook-item", {
+      ratingKey: "stale-track",
+      plexGuid: "plex://track/stable-guid",
+      library: "Audiobooks",
+      now: new Date("2026-07-11T12:00:00.000Z")
+    });
+    assert.equal(result.status, "succeeded");
+    assert.ok(db.prepare("SELECT rating_key FROM content_catalog WHERE rating_key = 'active-track'").get());
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audiobook_discovery_outbox").get().count, 0);
   });
 });
 
@@ -1573,6 +1738,7 @@ test("Plex webhook endpoint accepts multipart/form-data and processes tracks in 
       // Verify book is created
       const book = db.prepare("SELECT * FROM audiobook_books WHERE title LIKE '%Guards! Guards%'").get();
       assert.ok(book);
+      assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audiobook_discovery_outbox").get().count, 0);
     } finally {
       await new Promise(resolve => server.close(resolve));
     }

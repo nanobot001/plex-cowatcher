@@ -302,11 +302,11 @@ async function main(): Promise<void> {
       break;
     case "scan-audiobooks":
       {
-        const libraryName = arg("library") ?? "Audiobooks";
-        const { AudiobookScannerService } = await import("../service/audiobookScannerService.js");
-        const scanner = new AudiobookScannerService(db, plex);
+        const libraryName = arg("library") ?? appConfig.AUDIOBOOK_LIBRARY;
+        const { AudiobookDiscoveryService } = await import("../service/audiobookDiscoveryService.js");
+        const discovery = new AudiobookDiscoveryService(db, plex);
         try {
-          const result = await scanner.scanLibrary(libraryName);
+          const result = await discovery.run("manual", { library: libraryName, force: true });
           print(result);
         } catch (error) {
           print({

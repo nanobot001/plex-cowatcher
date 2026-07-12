@@ -17,13 +17,15 @@ export class HealthService {
     const discord = discordReadiness();
     const watcher = watcherReadiness(userConfig.sourceUserCount);
     const plexMutation = plexMutationReadiness();
+    const audiobookDiscovery = audiobookDiscoveryReadiness(this.db);
     const readiness = {
       database,
       plex,
       tautulli,
       discord,
       watcher,
-      plexMutation
+      plexMutation,
+      audiobookDiscovery
     };
 
     return {
@@ -37,10 +39,36 @@ export class HealthService {
       plex,
       tautulli,
       plexMutation,
+      audiobookDiscovery,
       pendingPrompts: pendingPrompts.count,
       failedSyncs: failedSyncs.count
     };
   }
+}
+
+function audiobookDiscoveryReadiness(db: Db): HealthResponse["audiobookDiscovery"] {
+  const state = db.prepare(`
+    SELECT last_attempt_at, last_success_at, next_run_at, current_run_id
+    FROM audiobook_discovery_state WHERE id = 1
+  `).get() as {
+    last_attempt_at: string | null;
+    last_success_at: string | null;
+    next_run_at: string | null;
+    current_run_id: number | null;
+  } | undefined;
+  if (!appConfig.AUDIOBOOK_DISCOVERY_ENABLED) {
+    return { ...ready("disabled", false, "Automatic audiobook discovery is disabled.") };
+  }
+  if (!hasConfiguredSecret(appConfig.PLEX_TOKEN)) {
+    return { ...ready("unconfigured", false, "Automatic audiobook discovery requires Plex configuration.") };
+  }
+  return {
+    ...ready("healthy", true, "Automatic audiobook discovery is configured."),
+    lastAttemptAt: state?.last_attempt_at ?? undefined,
+    lastSuccessAt: state?.last_success_at ?? undefined,
+    nextRunAt: state?.next_run_at ?? undefined,
+    currentRunId: state?.current_run_id ?? undefined
+  };
 }
 
 function ready(status: ReadinessSubsystem["status"], configured: boolean, message: string): ReadinessSubsystem {

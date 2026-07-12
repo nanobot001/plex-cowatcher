@@ -50,6 +50,14 @@ if (isMain) {
   });
   void startWatcherRuntime(app.locals.db);
   void startDiscordRuntime(app.locals.db);
+  void startAudiobookDiscoveryRuntime(app.locals.db);
+}
+
+async function startAudiobookDiscoveryRuntime(db: ReturnType<typeof openMigratedDatabase>): Promise<void> {
+  if (!appConfig.AUDIOBOOK_DISCOVERY_ENABLED || !appConfig.PLEX_TOKEN || appConfig.PLEX_TOKEN === "replace_me") return;
+  const { AudiobookDiscoveryRuntime, AudiobookDiscoveryService } = await import("../service/audiobookDiscoveryService.js");
+  const runtime = new AudiobookDiscoveryRuntime(new AudiobookDiscoveryService(db, createPlexAdapter()));
+  await runtime.start();
 }
 
 async function startDiscordRuntime(db: ReturnType<typeof openMigratedDatabase>): Promise<void> {

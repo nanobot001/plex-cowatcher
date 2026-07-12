@@ -99,6 +99,8 @@ node dist/cli/cli.js audiobook-backfill --mode hierarchy --pretty
 node dist/cli/cli.js scan-audiobooks --library "Audiobooks" --pretty
 ```
 
+Audiobook discovery also runs automatically in the PM2 service when Plex is configured. Control it with `AUDIOBOOK_DISCOVERY_ENABLED`, `AUDIOBOOK_LIBRARY`, and `AUDIOBOOK_SCAN_INTERVAL_MINUTES`; the CLI and Plex webhook reuse the same restart-safe coordinator.
+
 `verify-plex-watched-state` is the guided Block 1-4 check for Plex user listing, metadata lookup, and watched-state lookup. Add `--mark-watched` only with a known safe media item after confirming the target account/token model. The current live mutation path returns `unsupported_mutation` instead of writing watched state because per-target Plex mutation has not been verified for this household setup.
 
 ## PM2

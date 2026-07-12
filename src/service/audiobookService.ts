@@ -290,7 +290,7 @@ export function prepareAudiobookMetadata(metadata: PlexRichMetadata): PreparedAu
 
   const identity = parseAudiobookPath(metadata.filePath);
   return {
-    asin: parseAudnexusAsin(metadata.guid),
+    asin: parseAudnexusAsin(metadata.parentGuid) ?? parseAudnexusAsin(metadata.grandparentGuid) ?? parseAudnexusAsin(metadata.guid),
     identity,
     metadata: {
       ...metadata,
@@ -309,9 +309,10 @@ export class AudiobookCatalogService {
 
   ensureLocalBook(prepared: PreparedAudiobookMetadata): number | null {
     const { identity, asin, metadata } = prepared;
-    if (!identity && !asin) return null;
+    const stableGuid = metadata.parentGuid ?? metadata.grandparentGuid ?? metadata.guid;
+    if (!identity && !asin && !stableGuid) return null;
 
-    const folderKey = identity?.folderKey ?? `asin:${asin}`;
+    const folderKey = identity?.folderKey ?? (asin ? `asin:${asin}` : `plex:${createHash("sha256").update(stableGuid!).digest("hex")}`);
     const title = identity?.bookTitle ?? metadata.parentTitle ?? metadata.title;
     const authors = identity?.author ? [identity.author] : [];
     const seriesTitle = canonicalizeAudiobookSeriesTitle(identity?.seriesTitle ?? metadata.grandparentTitle);
@@ -319,13 +320,38 @@ export class AudiobookCatalogService {
 
     const hierarchy = normalizeAudiobookHierarchy(title, authors[0] ?? "", seriesTitle);
 
-    let existing = null;
-    if (asin) {
-      existing = this.db.prepare("SELECT * FROM audiobook_books WHERE asin = ?").get(asin) as any;
+    const folderExisting = identity
+      ? this.db.prepare("SELECT * FROM audiobook_books WHERE folder_key = ?").get(folderKey) as any
+      : null;
+    const asinExisting = asin
+      ? this.db.prepare("SELECT * FROM audiobook_books WHERE asin = ?").get(asin) as any
+      : null;
+    const guidExisting = stableGuid
+      ? this.db.prepare(`
+          SELECT ab.*
+          FROM content_catalog cat
+          JOIN audiobook_books ab ON ab.id = cat.audiobook_id
+          WHERE cat.guid = ? OR cat.parent_guid = ? OR cat.grandparent_guid = ?
+          ORDER BY cat.refreshed_at DESC
+          LIMIT 1
+        `).get(stableGuid, stableGuid, stableGuid) as any
+      : null;
+    const asinFolderConflict = Boolean(
+      identity && asinExisting && asinExisting.folder_key !== folderKey && guidExisting?.id !== asinExisting.id
+    );
+    const candidates = [folderExisting, asinExisting, guidExisting].filter(Boolean);
+    const candidateIds = new Set<number>(candidates.map((candidate: any) => Number(candidate.id)));
+    const identityConflict = candidateIds.size > 1 || asinFolderConflict;
+    let existing = folderExisting ?? asinExisting ?? guidExisting;
+    if (asinFolderConflict && !folderExisting) existing = guidExisting ?? null;
+    const identityProvenance = identity ? "folder" : asin ? "asin" : "plex_guid";
+
+    if (identityConflict) {
+      for (const candidateId of candidateIds) {
+        this.db.prepare("UPDATE audiobook_books SET identity_status = 'conflict', updated_at = ? WHERE id = ?").run(now, candidateId);
+      }
     }
-    if (!existing) {
-      existing = this.db.prepare("SELECT * FROM audiobook_books WHERE folder_key = ?").get(folderKey) as any;
-    }
+    const asinToPersist = identityConflict && (!existing || existing.id !== asinExisting?.id) ? null : asin;
 
     if (existing) {
       const oldProv = existing.hierarchy_provenance ?? "none";
@@ -362,10 +388,10 @@ export class AudiobookCatalogService {
             subseries_title = ?,
             related_work_classification = ?,
             hierarchy_provenance = ?,
-            updated_at = ?
+            identity_status = ?, identity_provenance = ?, updated_at = ?
           WHERE id = ?
         `).run(
-          asin ?? null,
+          asinToPersist ?? null,
           updatedTitle,
           updatedAuthors,
           updatedSeries,
@@ -374,6 +400,8 @@ export class AudiobookCatalogService {
           hierarchy.subseriesTitle ?? null,
           hierarchy.relatedWorkClassification ?? null,
           hierarchy.hierarchyProvenance,
+          identityConflict ? "conflict" : "identified",
+          identityProvenance,
           now,
           existing.id
         );
@@ -385,14 +413,16 @@ export class AudiobookCatalogService {
             authors_json = ?,
             series_title = ?,
             folder_path_hint = COALESCE(folder_path_hint, ?),
-            updated_at = ?
+            identity_status = ?, identity_provenance = ?, updated_at = ?
           WHERE id = ?
         `).run(
-          asin ?? null,
+          asinToPersist ?? null,
           updatedTitle,
           updatedAuthors,
           updatedSeries,
           identity?.folderPathHint ?? null,
+          identityConflict ? "conflict" : "identified",
+          identityProvenance,
           now,
           existing.id
         );
@@ -404,19 +434,23 @@ export class AudiobookCatalogService {
           folder_key, asin, title, authors_json, narrators_json, series_title,
           genres_json, source_provenance, folder_path_hint, enrichment_status,
           parent_series_title, subseries_title, related_work_classification, hierarchy_provenance,
+          identity_status, identity_provenance,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, '[]', ?, '[]', 'folder_path', ?, 'pending', ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, '[]', ?, '[]', ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         folderKey,
-        asin ?? null,
+        asinToPersist ?? null,
         title,
         JSON.stringify(authors),
         seriesTitle ?? null,
+        identity ? "folder_path" : "plex",
         identity?.folderPathHint ?? null,
         hierarchy.parentSeriesTitle ?? null,
         hierarchy.subseriesTitle ?? null,
         hierarchy.relatedWorkClassification ?? null,
         hierarchy.hierarchyProvenance,
+        identityConflict ? "conflict" : "identified",
+        identityProvenance,
         now,
         now
       );

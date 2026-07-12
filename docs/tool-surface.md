@@ -26,7 +26,7 @@ Here is how the project's implemented commands and API routes map to the standar
 | `project.viewing_sessions` | `node dist/cli/cli.js viewing-sessions` | `GET /api/viewing-sessions` | `public_read` | Groups plays into contiguous household viewing sessions. |
 | `project.cowatching` | `node dist/cli/cli.js cowatching` | `GET /api/cowatching` | `public_read` | Infers co-watching from overlapping evidence plus confirmations. |
 | `project.audiobook_backfill` | `node dist/cli/cli.js audiobook-backfill` | *(none)* | `write_action` | Dry-run by default; optionally links audiobook tracks, enriches canonical book rows, writes resumable cursors, and creates a verified SQLite backup before apply. |
-| `project.audiobook_scan` | `node dist/cli/cli.js scan-audiobooks` | `POST /webhooks/plex` | `write_action` | Proactively scans the Plex Audiobooks library or processes real-time webhook triggers to import and enrich new audiobooks. |
+| `project.audiobook_scan` | `node dist/cli/cli.js scan-audiobooks` | `POST /webhooks/plex` | `write_action` | Runs the shared restart-safe discovery coordinator. Full scans reconcile metadata and publish revision-deduplicated outbox events; webhooks perform fast item awareness. |
 | `project.audiobook_import_chapters` | `node dist/cli/cli.js import-audiobook-chapters` | *(none)* | `write_action` | Dry-run by default; imports verified audiobook chapter boundaries from a JSON file. |
 
 ## Contract Notes
@@ -35,6 +35,7 @@ Here is how the project's implemented commands and API routes map to the standar
 - `project.audiobook_backfill` must not expose private local file paths in CLI output, audit summaries, API responses, or tool-facing logs.
 - `project.audiobook_backfill` is intentionally CLI-only. It is not exposed as a public HTTP mutation route.
 - Write-capable tools must preserve dry-run behavior unless the caller explicitly opts into apply mode and any required confirmations.
+- `project.audiobook_scan` preserves legacy `scanned`, `added`, `enriched`, and `errors` fields while adding track/book/pending/conflict/outbox counts. Outputs never include private paths or raw provider errors.
 
 ## Output Contract
 

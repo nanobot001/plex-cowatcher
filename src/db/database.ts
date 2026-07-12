@@ -36,6 +36,7 @@ export function migrateDatabase(db: Db): void {
   migrateCowatchReviewPrompts(db);
   migrateContentCatalogHierarchyIndexes(db);
   migrateAudiobookChapters(db);
+  migrateAudiobookDiscovery(db);
 }
 
 function migrateCowatchReviewPrompts(db: Db): void {
@@ -298,6 +299,71 @@ function migrateAudiobookChapters(db: Db): void {
       CREATE INDEX IF NOT EXISTS idx_audiobook_chapters_book ON audiobook_chapters(audiobook_id);
     `);
     db.prepare("INSERT INTO schema_migrations (version, name) VALUES (13, ?)").run("audiobook_chapters");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrateAudiobookDiscovery(db: Db): void {
+  const applied = db.prepare("SELECT 1 FROM schema_migrations WHERE version = 14").get();
+  if (applied) return;
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    ensureColumn(db, "content_catalog", "last_seen_at", "TEXT");
+    ensureColumn(db, "content_catalog", "last_seen_scan_id", "INTEGER");
+    ensureColumn(db, "audiobook_books", "identity_status", "TEXT NOT NULL DEFAULT 'pending'");
+    ensureColumn(db, "audiobook_books", "identity_provenance", "TEXT");
+    ensureColumn(db, "audiobook_books", "current_media_revision", "TEXT");
+    ensureColumn(db, "audiobook_books", "media_revision_updated_at", "TEXT");
+    ensureColumn(db, "audiobook_books", "enrichment_last_attempt_at", "TEXT");
+    ensureColumn(db, "audiobook_books", "enrichment_next_attempt_at", "TEXT");
+    ensureColumn(db, "audiobook_books", "enrichment_attempt_count", "INTEGER NOT NULL DEFAULT 0");
+    ensureColumn(db, "audiobook_books", "enrichment_last_error_code", "TEXT");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS audiobook_discovery_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        lease_owner TEXT,
+        lease_expires_at TEXT,
+        heartbeat_at TEXT,
+        last_attempt_at TEXT,
+        last_success_at TEXT,
+        current_run_id INTEGER,
+        next_run_at TEXT
+      );
+      INSERT OR IGNORE INTO audiobook_discovery_state (id) VALUES (1);
+
+      CREATE TABLE IF NOT EXISTS audiobook_discovery_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        trigger_reason TEXT NOT NULL,
+        status TEXT NOT NULL,
+        library_title TEXT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        safe_error_code TEXT,
+        counts_json TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX IF NOT EXISTS idx_audiobook_discovery_runs_started
+        ON audiobook_discovery_runs(started_at DESC, id DESC);
+
+      CREATE TABLE IF NOT EXISTS audiobook_discovery_outbox (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        audiobook_id INTEGER NOT NULL,
+        media_revision TEXT NOT NULL,
+        trigger_reason TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        consumed_at TEXT,
+        FOREIGN KEY(audiobook_id) REFERENCES audiobook_books(id),
+        UNIQUE(audiobook_id, media_revision)
+      );
+      CREATE INDEX IF NOT EXISTS idx_audiobook_discovery_outbox_pending
+        ON audiobook_discovery_outbox(consumed_at, id);
+      CREATE INDEX IF NOT EXISTS idx_content_catalog_guid
+        ON content_catalog(guid) WHERE guid IS NOT NULL;
+    `);
+    db.prepare("INSERT INTO schema_migrations (version, name) VALUES (14, ?)").run("audiobook_discovery_automation");
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");

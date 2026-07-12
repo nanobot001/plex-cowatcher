@@ -160,7 +160,7 @@ The corrective sequence is mandatory and ordered:
 22. **3-2n-6 - Progress Evidence Map Polish:** Implemented 2026-07-09. Restore readable lazy evidence maps with accessible dots, compact legends, smoother expansion, and polished Progress typography without returning to all-dot first paint.
 23. **3-2n-6a - Progress Watcher Coverage And Workspace Width:** Implemented 2026-07-09. Add visible completion coverage, on-demand watcher evidence, and a full-width Recently Completed workspace.
 24. **3-2n-6b - Overview Session Feed De-duplication:** Implemented 2026-07-11. Group canonical-item playback into stable viewing sessions while preserving co-watch and participant evidence.
-25. **3-2n-5c - Reliable Audiobook Discovery Automation:** Make audiobook discovery dependable in the normal service runtime, not only through manual CLI calls or opportunistic webhook items.
+25. **3-2n-5c - Reliable Audiobook Discovery Automation:** Implemented 2026-07-11. Automatic PM2 discovery now reconciles metadata, survives restart/cooldown and key drift, and emits revision-deduplicated 5D outbox work.
 26. **3-2n-5d - Automatic Audiobook Chapter Proof Handoff:** Automatically trigger the separate `audiobook` project one time per unresolved audiobook and cache verified chapter boundaries for future Progress mapping.
 27. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
 
@@ -180,7 +180,7 @@ Implemented on 2026-06-28. Added the full-library audiobook scanner service, CLI
 
 ### Block 3-2n-5c: Reliable Audiobook Discovery Automation
 
-Make whole-library audiobook discovery dependable in the normal service runtime, not only through manual CLI calls or opportunistic webhook items. Add a service-local bounded scan cadence/cooldown under PM2, keep CLI and webhook paths on the same scan logic, and emit a durable post-discovery signal for later verified-chapter automation with the separate `audiobook` project.
+Implemented on 2026-07-11. Whole-library discovery now runs on a persisted PM2 cadence/cooldown, shares one coordinator with CLI and webhook item awareness, reconciles rich Plex metadata without per-track refetches, and emits one durable event per stable audiobook media revision for 5D.
 
 ### Block 3-2n-5d: Automatic Audiobook Chapter Proof Handoff
 

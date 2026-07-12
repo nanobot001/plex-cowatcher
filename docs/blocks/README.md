@@ -6,7 +6,7 @@ Blocks are numbered, bounded AI-buildable tickets for code, logic, docs, folder 
 
 The project is currently in the Phase 3 refinement set. A live Playwright review found that the completed 3-2f redesign did not meet its intended usability, bounded-rendering, or responsive outcome. The immediate next selected block is:
 
-- `block-3-2n-5c-reliable-audiobook-discovery-automation.md`
+- `block-3-2n-5d-automatic-audiobook-chapter-proof-handoff.md`
 
 Phase 3 builds on the completed playback-intelligence foundation with domain-specific refinement, richer operator ergonomics, and reporting.
 Blocks 3-2a through 3-2e form one sequential dashboard implementation path:
@@ -45,13 +45,13 @@ Corrective sequence:
 22. `block-3-2n-6-progress-evidence-map-polish.md` - implemented historical reference.
 23. `block-3-2n-6a-progress-watcher-coverage-and-workspace-width.md` - implemented historical reference.
 24. `block-3-2n-6b-overview-session-feed-deduplication.md` - implemented historical reference.
-25. `block-3-2n-5c-reliable-audiobook-discovery-automation.md`
+25. `block-3-2n-5c-reliable-audiobook-discovery-automation.md` - implemented historical reference.
 26. `block-3-2n-5d-automatic-audiobook-chapter-proof-handoff.md`
 27. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
 
 Do not implement a later corrective block until the previous block's exit gate is recorded as passing. A later block must not conceal, waive, or silently absorb a failed earlier acceptance criterion.
 
-The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n was reviewed, split, and implemented through the 3-2n-6b dashboard follow-up. The remaining work is the two audiobook automation blocks, 3-2n-5c and 3-2n-5d, followed by the 3-2o accessibility and regression gate.
+The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n was reviewed, split, and implemented through 3-2n-5c. The remaining audiobook automation work is 3-2n-5d, followed by the 3-2o accessibility and regression gate.
 
 ## Umbrella Specifications
 
@@ -94,7 +94,7 @@ The full 3-2m sequence is implemented and verified: household profiles, person p
 
 - `completed/block-3-4-hierarchical-audiobook-series-modeling.md`
 - `completed/block-3-5-proactive-audiobook-scanner.md`
-- `block-3-2n-5c-reliable-audiobook-discovery-automation.md`
+- `block-3-2n-5c-reliable-audiobook-discovery-automation.md` - implemented historical reference.
 - `block-3-2n-5d-automatic-audiobook-chapter-proof-handoff.md`
 
 Completed blocks remain as historical references. Verify current behavior from code and current docs, not from older block assumptions.

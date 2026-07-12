@@ -66,6 +66,17 @@ export class MetadataService {
     }
   }
 
+  ingestRichMetadata(plexMeta: PlexRichMetadata, scanId?: number): CatalogEntry {
+    const entry = this.savePlexMetadata(plexMeta);
+    const now = nowIso();
+    this.db.prepare(`
+      UPDATE content_catalog
+      SET last_seen_at = ?, last_seen_scan_id = COALESCE(?, last_seen_scan_id)
+      WHERE rating_key = ?
+    `).run(now, scanId ?? null, entry.ratingKey);
+    return entry;
+  }
+
   async repairMissingMetadata(limit = METADATA_REPAIR_BATCH_SIZE): Promise<{ attempted: number; refreshed: number; failed: number }> {
     const batchSize = Math.max(1, Math.min(METADATA_REPAIR_BATCH_SIZE, Math.trunc(limit)));
     const candidates = this.db.prepare(`
@@ -110,6 +121,7 @@ export class MetadataService {
   }
 
   private async refreshMetadataUnshared(ratingKey: string, plexGuid?: string): Promise<CatalogEntry | null> {
+    const prior = this.getCached(ratingKey);
     try {
       const plexMeta = await this.plex.getRichMetadataByRatingKey(ratingKey, plexGuid);
       const entry = this.savePlexMetadata(plexMeta);
@@ -120,6 +132,7 @@ export class MetadataService {
       
       return entry;
     } catch (error) {
+      if (prior && !this.isFallback(prior)) return prior;
       const now = nowIso();
       const fallbackEntry: CatalogEntry = {
         ratingKey,
