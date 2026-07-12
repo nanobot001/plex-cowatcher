@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { migrateDatabase, openMigratedDatabase } from "../dist/db/database.js";
 import { normalizeTautulliHistoryRow } from "../dist/adapters/tautulliAdapter.js";
 import { countsAsCompleted } from "../dist/watcher/watcher.js";
@@ -24,6 +26,7 @@ import { AudiobookBackfillService } from "../dist/service/audiobookBackfillServi
 import { AudiobookScannerService } from "../dist/service/audiobookScannerService.js";
 import { AudiobookDiscoveryService } from "../dist/service/audiobookDiscoveryService.js";
 import { reconcileLegacyDiscoveryOutbox } from "../dist/service/audiobookRevisionService.js";
+import { AudiobookProofAdapter } from "../dist/service/audiobookProofAdapter.js";
 import { DashboardService, deriveDashboardCategory } from "../dist/service/dashboardService.js";
 import { DashboardPreferenceService } from "../dist/service/dashboardPreferenceService.js";
 import { CowatchAdjudicationService } from "../dist/service/cowatchAdjudicationService.js";
@@ -3402,6 +3405,254 @@ test("verified audiobook chapter progress maps offsets, book completion, repeats
     assert.equal(chapter1.watchedStates["Justin"], "source_uncertain");
     assert.equal(chapter1.stateSources["Justin"], "source_uncertain");
   });
+});
+
+function proofEnvelope(data, extras = {}) {
+  return JSON.stringify({ ok: true, tool: "fixture", data, ...extras });
+}
+
+function proofErrorEnvelope(code, message) {
+  return JSON.stringify({ ok: false, tool: "fixture", error: { code, message } });
+}
+
+function fakeProofProcess(responses, calls) {
+  return (_executable, args, spawnOptions) => {
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.pid = 4321;
+    child.kill = () => true;
+    const command = args[1];
+    calls.push({ command, args: [...args], options: spawnOptions });
+    const response = responses.shift() ?? {};
+    queueMicrotask(() => {
+      if (response.error) {
+        child.emit("error", new Error(response.error));
+        return;
+      }
+      if (response.stdout !== undefined) child.stdout.write(response.stdout);
+      if (response.stderr !== undefined) child.stderr.write(response.stderr);
+      if (!response.hang) child.emit("close", response.exitCode ?? 0);
+    });
+    return child;
+  };
+}
+
+const cleanValidation = {
+  chapter_count: 2,
+  has_chapters: true,
+  overlapping_chapters: 0,
+  short_chapters: 0,
+  duration_gap_s: 0,
+  missing_titles: 0,
+  duplicate_timestamps: 0,
+  duplicate_titles: 0
+};
+
+const validEmbeddedChapters = [
+  { title: "Opening", start_ms: 0, end_ms: 60_000 },
+  { title: "Ending", start_ms: 60_000, end_ms: 120_000 }
+];
+
+const validResolvedChapters = validEmbeddedChapters.map((chapter) => ({
+  ...chapter,
+  source: "audnexus",
+  confidence: "high"
+}));
+
+test("audiobook proof adapter validates embedded chapters and skips resolve", async () => {
+  const calls = [];
+  let activation = null;
+  const adapter = new AudiobookProofAdapter({
+    executablePath: "python.exe",
+    scriptPath: "C:\\trusted\\audiobook\\src\\repairchapters.py",
+    spawnProcess: fakeProofProcess([
+      { stdout: proofEnvelope({ duration_s: 120, chapter_count: 2, chapters: validEmbeddedChapters, tags: { private: "ignored" } }) },
+      { stdout: proofEnvelope(cleanValidation), exitCode: 7 }
+    ], calls),
+    killProcessTree: () => assert.fail("valid process must not be killed")
+  });
+  const result = await adapter.proveAndActivate({
+    privateFilePath: "F:\\Private\\Book.m4b",
+    durationMs: 120_000
+  }, {
+    audiobookId: 10,
+    mediaRevision: "revision-1",
+    activatedAt: "2026-07-12T00:00:00Z"
+  }, (input) => { activation = input; });
+
+  assert.equal(result.status, "activatable");
+  assert.deepEqual(result.commands, ["inspect", "validate"]);
+  assert.equal(result.candidate.sourceType, "embedded");
+  assert.equal(activation.sourceStatus, "active");
+  assert.equal(activation.mediaRevision, "revision-1");
+  assert.deepEqual(calls.map((call) => call.command), ["inspect", "validate"]);
+  assert.equal(calls.every((call) => call.options.shell === false), true);
+  assert.equal(calls.every((call) => call.options.cwd === "C:\\trusted\\audiobook\\src"), true);
+  assert.equal(JSON.stringify(result).includes("F:\\Private"), false);
+  assert.equal(JSON.stringify(result).includes("tags"), false);
+});
+
+test("audiobook proof adapter resolves missing chapters and activates only approved evidence", async () => {
+  const calls = [];
+  let activations = 0;
+  const adapter = new AudiobookProofAdapter({
+    executablePath: "python.exe",
+    scriptPath: "C:\\trusted\\repairchapters.py",
+    spawnProcess: fakeProofProcess([
+      { stdout: proofEnvelope({ duration_s: 120, chapter_count: 0, chapters: [] }) },
+      { stdout: proofEnvelope({
+        source: "audnexus", whisper_verified: false, whisper_available: true, total_duration_ms: 120_000,
+        warnings: ["bounded warning"], chapters: validResolvedChapters
+      }) }
+    ], calls),
+    killProcessTree: () => {}
+  });
+  const result = await adapter.proveAndActivate({
+    privateFilePath: "F:\\Private\\Book.m4b",
+    durationMs: 120_000,
+    asin: "b012345678"
+  }, { audiobookId: 11, mediaRevision: "revision-2", activatedAt: "2026-07-12T00:00:00Z" }, () => {
+    activations++;
+  });
+  assert.equal(result.status, "activatable");
+  assert.equal(result.candidate.sourceType, "audnexus");
+  assert.deepEqual(result.commands, ["inspect", "resolve"]);
+  assert.equal(activations, 1);
+  assert.deepEqual(calls.map((call) => call.command), ["inspect", "resolve"]);
+  assert.ok(calls[1].args.includes("B012345678"));
+  assert.equal(calls[1].args.includes("--whisper"), false);
+
+  const invalidAsin = await adapter.prove({
+    privateFilePath: "F:\\Private\\Book.m4b", durationMs: 120_000, asin: "bad/path"
+  });
+  assert.deepEqual(invalidAsin, { status: "failed", code: "INVALID_ASIN", retryable: false, commands: [] });
+});
+
+test("audiobook proof adapter resolves when embedded validation is unusable", async () => {
+  const calls = [];
+  const adapter = new AudiobookProofAdapter({
+    executablePath: "python.exe",
+    scriptPath: "C:\\trusted\\repairchapters.py",
+    spawnProcess: fakeProofProcess([
+      { stdout: proofEnvelope({ duration_s: 120, chapter_count: 2, chapters: validEmbeddedChapters }) },
+      { stdout: proofEnvelope({ ...cleanValidation, short_chapters: 1 }) },
+      { stdout: proofEnvelope({
+        source: "audnexus", whisper_verified: false, whisper_available: true,
+        total_duration_ms: 120_000, warnings: [], chapters: validResolvedChapters
+      }) }
+    ], calls),
+    killProcessTree: () => {}
+  });
+  const result = await adapter.prove({ privateFilePath: "F:\\Private\\Book.m4b", durationMs: 120_000 });
+  assert.equal(result.status, "activatable");
+  assert.deepEqual(result.commands, ["inspect", "validate", "resolve"]);
+  assert.deepEqual(calls.map((call) => call.command), ["inspect", "validate", "resolve"]);
+});
+
+test("audiobook proof adapter rejects unsafe envelopes and redacts child diagnostics", async () => {
+  for (const [stdout, code] of [
+    [proofErrorEnvelope("PROBE_FAILED", "F:\\Private\\Book.m4b token=secret"), "EXTERNAL_ERROR_ENVELOPE"],
+    [proofEnvelope({ duration_s: 120, chapter_count: 0, chapters: [] }, { version: 2 }), "UNSUPPORTED_CONTRACT_VERSION"],
+    ["not json F:\\Private\\Book.m4b", "MALFORMED_EXTERNAL_OUTPUT"]
+  ]) {
+    const adapter = new AudiobookProofAdapter({
+      executablePath: "python.exe",
+      scriptPath: "C:\\trusted\\repairchapters.py",
+      spawnProcess: fakeProofProcess([{ stdout, stderr: "secret path F:\\Private\\Book.m4b" }], []),
+      killProcessTree: () => {}
+    });
+    const result = await adapter.prove({ privateFilePath: "F:\\Private\\Book.m4b", durationMs: 120_000 });
+    assert.equal(result.status, "failed");
+    assert.equal(result.code, code);
+    assert.equal(JSON.stringify(result).includes("Private"), false);
+    assert.equal(JSON.stringify(result).includes("secret"), false);
+  }
+});
+
+test("audiobook proof adapter rejects invalid and uncertain chapter candidates before activation", async () => {
+  const cases = [
+    { chapters: [validResolvedChapters[0]], duration: 60_000, code: "INVALID_CHAPTERS" },
+    { chapters: [validResolvedChapters[0], { ...validResolvedChapters[1], start_ms: 50_000 }], duration: 120_000, code: "INVALID_CHAPTERS" },
+    { chapters: [validResolvedChapters[0], { ...validResolvedChapters[1], end_ms: 130_000 }], duration: 120_000, code: "INVALID_CHAPTERS" },
+    { chapters: validResolvedChapters.map((chapter, index) => index === 1 ? { ...chapter, end_ms: 100_000 } : chapter), duration: 120_000, code: "DURATION_MISMATCH" },
+    {
+      chapters: validResolvedChapters.map((chapter) => ({ ...chapter, confidence: "medium" })),
+      duration: 120_000,
+      code: "LOW_CONFIDENCE",
+      warnings: ["private file F:\\Private\\Book.m4b token=secret"]
+    },
+    { chapters: validResolvedChapters.map((chapter) => ({ ...chapter, title: "" })), duration: 120_000, code: "INVALID_CHAPTERS" }
+  ];
+  for (const fixture of cases) {
+    let activations = 0;
+    const adapter = new AudiobookProofAdapter({
+      executablePath: "python.exe",
+      scriptPath: "C:\\trusted\\repairchapters.py",
+      spawnProcess: fakeProofProcess([
+        { stdout: proofEnvelope({ duration_s: fixture.duration / 1_000, chapter_count: 0, chapters: [] }) },
+        { stdout: proofEnvelope({
+          source: "audnexus", whisper_verified: false, whisper_available: true, total_duration_ms: fixture.duration,
+          warnings: fixture.warnings ?? [], chapters: fixture.chapters
+        }) }
+      ], []),
+      killProcessTree: () => {}
+    });
+    const result = await adapter.proveAndActivate({
+      privateFilePath: "F:\\Private\\Book.m4b", durationMs: fixture.duration
+    }, { audiobookId: 12, mediaRevision: "revision-3", activatedAt: "2026-07-12T00:00:00Z" }, () => {
+      activations++;
+    });
+    assert.notEqual(result.status, "activatable");
+    assert.equal(result.code, fixture.code);
+    assert.equal(activations, 0);
+    assert.equal(JSON.stringify(result).includes("Private"), false);
+    assert.equal(JSON.stringify(result).includes("secret"), false);
+  }
+});
+
+test("audiobook proof adapter enforces output bounds and timeout with process-tree termination", async () => {
+  for (const response of [
+    { stdout: Buffer.alloc(2 * 1024 * 1024 + 1, 65) },
+    { stderr: Buffer.alloc(64 * 1024 + 1, 65), hang: true },
+    { hang: true }
+  ]) {
+    let kills = 0;
+    const adapter = new AudiobookProofAdapter({
+      executablePath: "python.exe",
+      scriptPath: "C:\\trusted\\repairchapters.py",
+      timeoutMs: response.stdout || response.stderr ? 100 : 5,
+      spawnProcess: fakeProofProcess([response], []),
+      killProcessTree: () => { kills++; }
+    });
+    const result = await adapter.prove({ privateFilePath: "F:\\Private\\Book.m4b", durationMs: 120_000 });
+    assert.equal(result.status, "failed");
+    assert.equal(result.code, response.hang && !response.stderr ? "EXTERNAL_TIMEOUT" : "EXTERNAL_OUTPUT_LIMIT");
+    assert.equal(kills, 1);
+  }
+});
+
+test("audiobook proof adapter keeps Whisper opt-in and accepts verified results when enabled", async () => {
+  const calls = [];
+  const adapter = new AudiobookProofAdapter({
+    executablePath: "python.exe",
+    scriptPath: "C:\\trusted\\repairchapters.py",
+    whisperEnabled: true,
+    spawnProcess: fakeProofProcess([
+      { stdout: proofEnvelope({ duration_s: 120, chapter_count: 0, chapters: [] }) },
+      { stdout: proofEnvelope({
+        source: "silence_detection", whisper_verified: true, whisper_available: true, total_duration_ms: 120_000,
+        warnings: [], chapters: validResolvedChapters.map((chapter) => ({ ...chapter, confidence: "medium" }))
+      }) }
+    ], calls),
+    killProcessTree: () => {}
+  });
+  const result = await adapter.prove({
+    privateFilePath: "F:\\Private\\Book.m4b", durationMs: 120_000, whisper: true
+  });
+  assert.equal(result.status, "activatable");
+  assert.equal(result.candidate.sourceType, "whisper_verified");
+  assert.ok(calls[1].args.includes("--whisper"));
 });
 
 
