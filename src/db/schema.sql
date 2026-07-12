@@ -226,6 +226,7 @@ CREATE TABLE IF NOT EXISTS audiobook_books (
   identity_status TEXT NOT NULL DEFAULT 'pending',
   identity_provenance TEXT,
   current_media_revision TEXT,
+  active_chapter_revision_id INTEGER,
   media_revision_updated_at TEXT,
   enrichment_last_attempt_at TEXT,
   enrichment_next_attempt_at TEXT,
@@ -366,6 +367,8 @@ CREATE TABLE IF NOT EXISTS audiobook_discovery_outbox (
   trigger_reason TEXT NOT NULL,
   created_at TEXT NOT NULL,
   consumed_at TEXT,
+  manifest_status TEXT NOT NULL DEFAULT 'pending',
+  safe_outcome_code TEXT,
   FOREIGN KEY(audiobook_id) REFERENCES audiobook_books(id),
   UNIQUE(audiobook_id, media_revision)
 );
@@ -374,3 +377,63 @@ CREATE INDEX IF NOT EXISTS idx_audiobook_discovery_outbox_pending
   ON audiobook_discovery_outbox(consumed_at, id);
 CREATE INDEX IF NOT EXISTS idx_content_catalog_guid
   ON content_catalog(guid) WHERE guid IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS audiobook_media_revisions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  audiobook_id INTEGER NOT NULL,
+  media_revision TEXT NOT NULL,
+  track_count INTEGER NOT NULL,
+  file_count INTEGER NOT NULL,
+  total_duration_ms INTEGER,
+  manifest_status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(audiobook_id) REFERENCES audiobook_books(id) ON DELETE CASCADE,
+  UNIQUE(audiobook_id, media_revision)
+);
+
+CREATE TABLE IF NOT EXISTS audiobook_media_revision_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  revision_id INTEGER NOT NULL,
+  item_order INTEGER NOT NULL,
+  stable_identity TEXT NOT NULL,
+  duration_ms INTEGER,
+  private_file_path TEXT,
+  path_hash TEXT,
+  FOREIGN KEY(revision_id) REFERENCES audiobook_media_revisions(id) ON DELETE CASCADE,
+  UNIQUE(revision_id, item_order)
+);
+
+CREATE TABLE IF NOT EXISTS audiobook_chapter_revisions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  audiobook_id INTEGER NOT NULL,
+  media_revision TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  source_status TEXT NOT NULL,
+  confidence REAL NOT NULL DEFAULT 1.0,
+  chapter_digest TEXT NOT NULL,
+  duration_ms INTEGER,
+  contract_version INTEGER NOT NULL DEFAULT 1,
+  resolver_version TEXT,
+  warnings_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  activated_at TEXT,
+  invalidated_at TEXT,
+  FOREIGN KEY(audiobook_id) REFERENCES audiobook_books(id) ON DELETE CASCADE,
+  UNIQUE(audiobook_id, media_revision, source_type, chapter_digest)
+);
+
+CREATE TABLE IF NOT EXISTS audiobook_chapter_revision_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chapter_revision_id INTEGER NOT NULL,
+  chapter_index INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  start_offset_ms INTEGER NOT NULL,
+  end_offset_ms INTEGER NOT NULL,
+  FOREIGN KEY(chapter_revision_id) REFERENCES audiobook_chapter_revisions(id) ON DELETE CASCADE,
+  UNIQUE(chapter_revision_id, chapter_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_audiobook_media_revisions_book
+  ON audiobook_media_revisions(audiobook_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audiobook_chapter_revisions_book
+  ON audiobook_chapter_revisions(audiobook_id, created_at DESC);

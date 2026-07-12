@@ -1,10 +1,14 @@
-import { createHash } from "node:crypto";
 import type { PlexAdapter } from "../adapters/plexAdapter.js";
 import type { Db } from "../db/database.js";
 import type { PlexRichMetadata } from "../types/index.js";
 import { nowIso } from "../utils/time.js";
 import { AudiobookCatalogService } from "./audiobookService.js";
 import { MetadataService, type CatalogEntry } from "./metadataService.js";
+import {
+  calculateMediaRevisionManifest,
+  persistManifestAndOutbox,
+  reconcileLegacyDiscoveryOutbox
+} from "./audiobookRevisionService.js";
 
 export type AudiobookDiscoveryTrigger = "startup" | "interval" | "webhook-item" | "manual";
 
@@ -122,24 +126,21 @@ export class AudiobookScannerService {
         result.booksPendingIdentity++;
       }
 
-      const revision = failedBooks.has(bookId) ? null : calculateMediaRevision(bookTracks);
-      if (revision) {
-        if (book.current_media_revision && book.current_media_revision !== revision) result.booksChanged++;
+      const manifest = failedBooks.has(bookId) ? null : calculateMediaRevisionManifest(bookTracks);
+      if (manifest) {
+        if (book.current_media_revision && book.current_media_revision !== manifest.mediaRevision) result.booksChanged++;
         else if (wasKnown) result.booksAlreadyKnown++;
 
-        this.db.prepare(`
-          UPDATE audiobook_books
-          SET current_media_revision = ?, media_revision_updated_at = ?, updated_at = ?
-          WHERE id = ?
-        `).run(revision, scanNow.toISOString(), scanNow.toISOString(), bookId);
-
         if (book.identity_status === "identified") {
-          const inserted = this.db.prepare(`
-            INSERT OR IGNORE INTO audiobook_discovery_outbox
-              (audiobook_id, media_revision, trigger_reason, created_at)
-            VALUES (?, ?, ?, ?)
-          `).run(bookId, revision, trigger, scanNow.toISOString());
-          result.outboxEnqueued += Number(inserted.changes);
+          if (persistManifestAndOutbox(this.db, bookId, manifest, trigger, scanNow.toISOString())) {
+            result.outboxEnqueued++;
+          }
+        } else {
+          this.db.prepare(`
+            UPDATE audiobook_books
+            SET current_media_revision = ?, media_revision_updated_at = ?, updated_at = ?
+            WHERE id = ?
+          `).run(manifest.mediaRevision, scanNow.toISOString(), scanNow.toISOString(), bookId);
         }
       }
 
@@ -180,6 +181,8 @@ export class AudiobookScannerService {
         }
       }
     }
+
+    reconcileLegacyDiscoveryOutbox(this.db, scanNow.toISOString());
 
     result.added = result.booksNew;
     result.ok = result.trackFailures === 0;
@@ -231,24 +234,6 @@ function emptyResult(libraryTitle: string): AudiobookScanResult {
     identityConflicts: 0,
     outboxEnqueued: 0
   };
-}
-
-function calculateMediaRevision(tracks: CatalogEntry[]): string | null {
-  const stableTracks = tracks.map((track) => {
-    const stableIdentity = track.guid
-      ? `guid:${track.guid}`
-      : track.filePath
-        ? `path:${createHash("sha256").update(track.filePath.replace(/\\/g, "/").toLowerCase()).digest("hex")}`
-        : null;
-    if (!stableIdentity) return null;
-    const orderKey = track.filePath?.replace(/\\/g, "/").toLowerCase() ?? stableIdentity;
-    return { stableIdentity, orderKey, duration: track.duration };
-  });
-  if (stableTracks.some((track) => track === null)) return null;
-  const parts = (stableTracks as Array<{ stableIdentity: string; orderKey: string; duration: number | null }>)
-    .sort((left, right) => left.orderKey.localeCompare(right.orderKey))
-    .map((track, index) => `${String(index).padStart(6, "0")}|${track.stableIdentity}|${track.duration ?? "unknown"}`);
-  return createHash("sha256").update(parts.join("\n")).digest("hex");
 }
 
 function enrichmentDelayMs(attempt: number, reason?: string): number {

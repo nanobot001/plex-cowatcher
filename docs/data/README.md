@@ -43,7 +43,10 @@ Rules to preserve:
 - `identity_status` keeps `identified`, `pending`, and `conflict` separate from enrichment and chapter-proof state. `identity_provenance` is limited to `folder`, `asin`, or `plex_guid`.
 - `current_media_revision` is a private SHA-256 digest over stable track GUIDs or hashed private paths, duration, and deterministic order. Rating keys and display metadata are excluded.
 - `audiobook_discovery_state` and `audiobook_discovery_runs` hold restart-safe lease, cooldown, trigger, result-count, and safe-error state.
-- `audiobook_discovery_outbox` contains at most one event per `(audiobook_id, media_revision)` for Block 3-2n-5d. It never stores raw paths.
+- `audiobook_media_revisions` and `audiobook_media_revision_items` preserve the immutable ordered manifest behind each revision. Item paths are private SQLite state; only allowlisted manifest status and outcome codes may leave the service boundary.
+- `audiobook_discovery_outbox` contains at most one event per `(audiobook_id, media_revision)`. Its manifest status distinguishes ready, unsupported multi-file, unavailable, and superseded revisions without storing raw paths or diagnostics.
+- `audiobook_chapter_revisions` and `audiobook_chapter_revision_items` retain revision-bound chapter history. `audiobook_books.active_chapter_revision_id` selects the revision projected into the legacy v13 `audiobook_chapter_sources` and `audiobook_chapters` cache tables.
+- Progress may consume the legacy active chapter projection only when its selected chapter revision matches `current_media_revision`. A changed revision makes historical chapters ineligible but does not delete them; books without a matching revision use Plex track/file evidence.
 - Only a fully successful library scan may update absence/last-seen conclusions. Discovery never deletes historical catalog, playback, chapter, or audit rows.
 - Low-confidence or unmatched books remain usable via folder metadata and must not be silently assigned guessed canonical metadata.
 - Precedence for hierarchy updates: `metadata` (highest) > `mapping` > `pattern` > `none`. Updates are only applied when the new provenance has higher precedence or equal (and identical). Disputed classifications of equal authority generate a conflict and are ignored.

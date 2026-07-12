@@ -86,6 +86,28 @@ db.prepare(`INSERT INTO audiobook_books
 db.prepare(`INSERT INTO audiobook_books
   (id,folder_key,title,series_title,chapter_count,source_provenance,enrichment_status,created_at,updated_at)
   VALUES (21,'verified-fixture-audiobook','Verified Fixture Audiobook','Fixture Series',3,'fixture','enriched',?,?)`).run(isoMinutesAgo(5), isoMinutesAgo(5));
+// Book 20 deliberately carries a verified cache for an older media revision. Progress must ignore it.
+db.prepare("UPDATE audiobook_books SET current_media_revision = 'fixture-current-media' WHERE id = 20").run();
+db.prepare(`INSERT INTO audiobook_chapter_sources
+  (audiobook_id,source_type,source_status,confidence,refreshed_at)
+  VALUES (20,'audiobook_tool','active',0.90,?)`).run(isoMinutesAgo(5));
+const staleRevision = db.prepare(`INSERT INTO audiobook_chapter_revisions
+  (audiobook_id,media_revision,source_type,source_status,confidence,chapter_digest,duration_ms,created_at,activated_at)
+  VALUES (20,'fixture-older-media','audiobook_tool','active',0.90,'fixture-stale-digest',2400000,?,?)`)
+  .run(isoMinutesAgo(10), isoMinutesAgo(10));
+db.prepare("UPDATE audiobook_books SET active_chapter_revision_id = ? WHERE id = 20")
+  .run(Number(staleRevision.lastInsertRowid));
+for (const [chapterIndex, title, startOffset, endOffset] of [
+  [1, "Stale Verified Chapter 1", 0, 1200000],
+  [2, "Stale Verified Chapter 2", 1200000, 2400000]
+]) {
+  db.prepare(`INSERT INTO audiobook_chapter_revision_items
+    (chapter_revision_id,chapter_index,title,start_offset_ms,end_offset_ms)
+    VALUES (?,?,?,?,?)`).run(Number(staleRevision.lastInsertRowid), chapterIndex, title, startOffset, endOffset);
+  db.prepare(`INSERT INTO audiobook_chapters
+    (audiobook_id,chapter_index,title,start_offset_ms,end_offset_ms,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?)`).run(20, chapterIndex, title, startOffset, endOffset, isoMinutesAgo(10), isoMinutesAgo(10));
+}
 db.prepare(`INSERT INTO audiobook_chapter_sources
   (audiobook_id,source_type,source_status,confidence,refreshed_at)
   VALUES (21,'audiobook_tool','active',0.96,?)`).run(isoMinutesAgo(5));

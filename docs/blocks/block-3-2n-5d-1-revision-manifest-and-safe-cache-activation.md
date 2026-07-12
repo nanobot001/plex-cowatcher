@@ -1,8 +1,8 @@
 # Block 3-2n-5d-1: Revision Manifest And Safe Cache Activation
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: First child of the 3-2n-5d umbrella. Establish the immutable media-revision and chapter-activation contracts before any external process or worker is introduced.
+> Status: Implemented.
+> Result: Discovery now commits immutable ordered media manifests with its outbox event; chapter imports activate revision-bound history through one transaction; Progress rejects stale chapter proof and falls back to Plex track/file evidence.
+> Notes: Completed 2026-07-12 on `codex/3-2n-5d-1-revision-manifest`. Migration 15 is additive and retains the v13 active cache. Pre-manifest events receive safe `SUPERSEDED_REVISION` or `MANIFEST_UNAVAILABLE` outcomes, multi-file manifests remain non-automatic, and private paths stay confined to SQLite. `npm run verify:block` passed with 88 service tests and 36 dashboard regression tests.
 
 ## Goal
 

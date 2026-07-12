@@ -47,14 +47,14 @@ Corrective sequence:
 24. `block-3-2n-6b-overview-session-feed-deduplication.md` - implemented historical reference.
 25. `block-3-2n-5c-reliable-audiobook-discovery-automation.md` - implemented historical reference.
 26. `block-3-2n-5d-automatic-audiobook-chapter-proof-handoff.md` - umbrella only; do not implement directly.
-   1. `block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md`
+   1. `block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md` - implemented and verified.
    2. `block-3-2n-5d-2-trusted-external-proof-adapter.md`
    3. `block-3-2n-5d-3-durable-proof-worker-and-rollout.md`
 27. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
 
 Do not implement a later corrective block until the previous block's exit gate is recorded as passing. A later block must not conceal, waive, or silently absorb a failed earlier acceptance criterion.
 
-The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n was reviewed and implemented through 3-2n-5c. The remaining audiobook automation work is the ordered 3-2n-5d-1 through 5d-3 sequence, followed by the 3-2o accessibility and regression gate.
+The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n is implemented through 3-2n-5d-1. The remaining audiobook automation work is the ordered 3-2n-5d-2 and 5d-3 sequence, followed by the 3-2o accessibility and regression gate.
 
 ## Umbrella Specifications
 
@@ -99,7 +99,7 @@ The full 3-2m sequence is implemented and verified: household profiles, person p
 - `completed/block-3-5-proactive-audiobook-scanner.md`
 - `block-3-2n-5c-reliable-audiobook-discovery-automation.md` - implemented historical reference.
 - `block-3-2n-5d-automatic-audiobook-chapter-proof-handoff.md` - planned umbrella.
-- `block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md`
+- `block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md` - implemented historical reference.
 - `block-3-2n-5d-2-trusted-external-proof-adapter.md`
 - `block-3-2n-5d-3-durable-proof-worker-and-rollout.md`
 
