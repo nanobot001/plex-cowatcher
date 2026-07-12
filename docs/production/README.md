@@ -14,6 +14,12 @@ Runtime secrets belong in `.env`; household user mapping belongs in `config/user
 
 Public status and health responses must not expose tokens, API keys, private paths, or raw local config. Use the readiness summary instead.
 
+## Automatic Audiobook Proof Rollout
+
+Automatic proof defaults to `AUDIOBOOK_PROOF_ENABLED=false`. Configure `AUDIOBOOK_PROOF_EXECUTABLE` and `AUDIOBOOK_PROOF_SCRIPT` without enabling the worker; Whisper also requires `AUDIOBOOK_PROOF_WHISPER_ENABLED=true` and remains opt-in.
+
+Roll out in this order: back up live SQLite; deploy disabled; inspect `audiobook-proof --action status`; run a dry-run canary for one audiobook; run the same canary with `--apply --confirm`; verify its matching chapter revision, Progress output, audit redaction, and health summary; then enable the worker and restart PM2. The worker processes at most one job per 15-minute completion-based cycle with concurrency one. After restart, run `npm run verify:live-dashboard`.
+
 ## Readiness States
 
 `/api/health`, `/api/status`, and the browser dashboard report these subsystem states:

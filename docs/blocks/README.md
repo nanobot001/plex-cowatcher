@@ -49,12 +49,12 @@ Corrective sequence:
 26. `block-3-2n-5d-automatic-audiobook-chapter-proof-handoff.md` - umbrella only; do not implement directly.
    1. `block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md` - implemented and verified.
    2. `block-3-2n-5d-2-trusted-external-proof-adapter.md` - implemented and verified.
-   3. `block-3-2n-5d-3-durable-proof-worker-and-rollout.md`
+   3. `block-3-2n-5d-3-durable-proof-worker-and-rollout.md` - implementation verified; staged live rollout pending.
 27. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
 
 Do not implement a later corrective block until the previous block's exit gate is recorded as passing. A later block must not conceal, waive, or silently absorb a failed earlier acceptance criterion.
 
-The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n is implemented through 3-2n-5d-2. The remaining audiobook automation work is 3-2n-5d-3, followed by the 3-2o accessibility and regression gate.
+The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n code is implemented through 3-2n-5d-3; the disabled-to-canary-to-enabled 5D live rollout remains pending before the umbrella exit gate, followed by the 3-2o accessibility and regression gate.
 
 ## Umbrella Specifications
 
@@ -101,7 +101,7 @@ The full 3-2m sequence is implemented and verified: household profiles, person p
 - `block-3-2n-5d-automatic-audiobook-chapter-proof-handoff.md` - planned umbrella.
 - `block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md` - implemented historical reference.
 - `block-3-2n-5d-2-trusted-external-proof-adapter.md` - implemented historical reference.
-- `block-3-2n-5d-3-durable-proof-worker-and-rollout.md`
+- `block-3-2n-5d-3-durable-proof-worker-and-rollout.md` - implementation verified; live rollout pending.
 
 Completed blocks remain as historical references. Verify current behavior from code and current docs, not from older block assumptions.
 

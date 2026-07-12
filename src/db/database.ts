@@ -39,6 +39,7 @@ export function migrateDatabase(db: Db): void {
   migrateAudiobookChapters(db);
   migrateAudiobookDiscovery(db);
   migrateAudiobookRevisionManifests(db);
+  migrateAudiobookProofJobs(db);
 }
 
 function migrateCowatchReviewPrompts(db: Db): void {
@@ -488,6 +489,48 @@ function migrateAudiobookRevisionManifests(db: Db): void {
 
     db.prepare("INSERT INTO schema_migrations (version, name) VALUES (15, ?)")
       .run("audiobook_revision_manifests");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrateAudiobookProofJobs(db: Db): void {
+  const applied = db.prepare("SELECT 1 FROM schema_migrations WHERE version = 16").get();
+  if (applied) return;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS audiobook_proof_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        lease_owner TEXT, lease_expires_at TEXT, heartbeat_at TEXT,
+        current_job_id INTEGER, last_completed_at TEXT, next_run_at TEXT
+      );
+      INSERT OR IGNORE INTO audiobook_proof_state (id) VALUES (1);
+      CREATE TABLE IF NOT EXISTS audiobook_proof_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        audiobook_id INTEGER NOT NULL,
+        media_revision TEXT NOT NULL,
+        outbox_id INTEGER,
+        state TEXT NOT NULL CHECK (state IN ('pending','running','retry_wait','succeeded','failed_terminal','unsupported_multi_file')),
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT,
+        lease_owner TEXT, lease_expires_at TEXT, heartbeat_at TEXT,
+        safe_result_code TEXT,
+        diagnostic_source TEXT, diagnostic_confidence TEXT,
+        diagnostic_chapter_count INTEGER,
+        diagnostic_warnings_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        started_at TEXT, completed_at TEXT,
+        FOREIGN KEY(audiobook_id) REFERENCES audiobook_books(id) ON DELETE CASCADE,
+        FOREIGN KEY(outbox_id) REFERENCES audiobook_discovery_outbox(id),
+        UNIQUE(audiobook_id, media_revision)
+      );
+      CREATE INDEX IF NOT EXISTS idx_audiobook_proof_jobs_eligible
+        ON audiobook_proof_jobs(state, next_attempt_at, id);
+    `);
+    db.prepare("INSERT INTO schema_migrations (version, name) VALUES (16, ?)").run("audiobook_proof_jobs");
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");

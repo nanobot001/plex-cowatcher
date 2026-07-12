@@ -28,7 +28,7 @@ function print(value: unknown): void {
 
 async function main(): Promise<void> {
   const users = new UserService(db);
-  if (command !== "audiobook-backfill") {
+  if (!["audiobook-backfill", "audiobook-proof"].includes(command)) {
     users.syncConfiguredUsers();
   }
   const plex = createPlexAdapter();
@@ -317,6 +317,57 @@ async function main(): Promise<void> {
         }
       }
       break;
+    case "audiobook-proof":
+      {
+        const action = arg("action") ?? "status";
+        const { AudiobookProofWorkerService } = await import("../service/audiobookProofWorkerService.js");
+        const worker = new AudiobookProofWorkerService(db);
+        const timestamp = new Date().toISOString();
+        try {
+          if (action === "status") {
+            print({ ok: true, tool: "project.audiobook_proof", timestamp, data: worker.getStatus() });
+            break;
+          }
+          if (action === "canary") {
+            const audiobookId = arg("audiobook-id") ? Number(arg("audiobook-id")) : undefined;
+            const apply = args.includes("--apply");
+            const confirm = args.includes("--confirm");
+            if (!apply) {
+              print({ ok: true, tool: "project.audiobook_proof", timestamp, data: worker.previewCanary(audiobookId) });
+              break;
+            }
+            if (!confirm) throw new Error("PROOF_CANARY_CONFIRM_REQUIRED");
+            new AuditService(db).record("audiobook_proof_canary_requested", "cli", "applied", {
+              audiobookId: audiobookId ?? null
+            });
+            const data = await worker.runOnce({ force: true, audiobookId });
+            print({ ok: true, tool: "project.audiobook_proof", timestamp, data });
+            break;
+          }
+          if (action === "requeue") {
+            const jobId = Number(arg("job-id"));
+            if (!Number.isInteger(jobId) || jobId <= 0) throw new Error("PROOF_JOB_ID_REQUIRED");
+            const data = worker.requeue(jobId, { apply: args.includes("--apply"), confirm: args.includes("--confirm") });
+            print({ ok: true, tool: "project.audiobook_proof", timestamp, data });
+            break;
+          }
+          throw new Error("INVALID_PROOF_ACTION");
+        } catch (error) {
+          print({
+            ok: false,
+            tool: "project.audiobook_proof",
+            timestamp,
+            error: {
+              code: error instanceof Error ? error.message : "AUDIOBOOK_PROOF_FAILED",
+              message: "Audiobook proof operation could not run.",
+              retryable: false,
+              severity: "error"
+            }
+          });
+          process.exitCode = 1;
+        }
+      }
+      break;
     case "import-audiobook-chapters":
       {
         const filePath = args[0];
@@ -368,7 +419,7 @@ async function main(): Promise<void> {
       }
       break;
     default:
-      print({ ok: true, commands: ["health", "users", "recent", "pending", "preview-copy", "apply-copy", "audiobook-backfill", "scan-audiobooks", "import-audiobook-chapters", "audit", "retry-failed", "verify-plex-watched-state", "test-discord-prompt"] });
+      print({ ok: true, commands: ["health", "users", "recent", "pending", "preview-copy", "apply-copy", "audiobook-backfill", "scan-audiobooks", "audiobook-proof", "import-audiobook-chapters", "audit", "retry-failed", "verify-plex-watched-state", "test-discord-prompt"] });
   }
 }
 

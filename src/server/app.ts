@@ -51,6 +51,13 @@ if (isMain) {
   void startWatcherRuntime(app.locals.db);
   void startDiscordRuntime(app.locals.db);
   void startAudiobookDiscoveryRuntime(app.locals.db);
+  void startAudiobookProofRuntime(app.locals.db);
+}
+
+async function startAudiobookProofRuntime(db: ReturnType<typeof openMigratedDatabase>): Promise<void> {
+  if (!appConfig.AUDIOBOOK_PROOF_ENABLED) return;
+  const { AudiobookProofRuntime, AudiobookProofWorkerService } = await import("../service/audiobookProofWorkerService.js");
+  new AudiobookProofRuntime(new AudiobookProofWorkerService(db)).start();
 }
 
 async function startAudiobookDiscoveryRuntime(db: ReturnType<typeof openMigratedDatabase>): Promise<void> {

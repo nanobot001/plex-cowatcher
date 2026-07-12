@@ -32,6 +32,12 @@ const envSchema = z.object({
       return value;
     }, z.boolean())
     .default(false),
+  AUDIOBOOK_PROOF_ENABLED: z
+    .preprocess((value) => {
+      if (typeof value === "string") return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+      return value;
+    }, z.boolean())
+    .default(false),
   TAUTULLI_BASE_URL: z.string().default("http://127.0.0.1:8181"),
   TAUTULLI_API_KEY: z.string().default(""),
   DISCORD_BOT_TOKEN: z.string().default(""),

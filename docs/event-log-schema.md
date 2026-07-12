@@ -96,3 +96,11 @@ Metadata for these events must not include private local file paths.
 - `audiobook_discovery_skipped` records only the bounded reason `cooldown` or `lease_held`.
 
 Discovery events must not contain file paths, authenticated URLs, tokens, raw Plex/provider payloads, or unbounded upstream error text.
+
+### Audiobook proof events
+
+- `audiobook_proof_completed` records job ID, terminal/retry state, attempt count, and an allowlisted result code.
+- `audiobook_proof_canary_requested` records a confirmed one-shot request and optional numeric audiobook ID.
+- `audiobook_proof_requeued` records the selected existing job ID and whether the confirmed request applied or was skipped.
+
+Proof events never include manifests, media paths, chapter titles, raw child output, external messages, tags, or credentials.

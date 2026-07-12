@@ -27,6 +27,8 @@ import { AudiobookScannerService } from "../dist/service/audiobookScannerService
 import { AudiobookDiscoveryService } from "../dist/service/audiobookDiscoveryService.js";
 import { reconcileLegacyDiscoveryOutbox } from "../dist/service/audiobookRevisionService.js";
 import { AudiobookProofAdapter } from "../dist/service/audiobookProofAdapter.js";
+import { AudiobookProofRuntime, AudiobookProofWorkerService } from "../dist/service/audiobookProofWorkerService.js";
+import { HealthService } from "../dist/service/healthService.js";
 import { DashboardService, deriveDashboardCategory } from "../dist/service/dashboardService.js";
 import { DashboardPreferenceService } from "../dist/service/dashboardPreferenceService.js";
 import { CowatchAdjudicationService } from "../dist/service/cowatchAdjudicationService.js";
@@ -1347,6 +1349,7 @@ test("audiobook migration is repeatable and does not denormalize onto observatio
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 13").get().count, 1);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 14").get().count, 1);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 15").get().count, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 16").get().count, 1);
     const catalogColumns = db.prepare("PRAGMA table_info(content_catalog)").all().map((column) => column.name);
     const bookColumns = db.prepare("PRAGMA table_info(audiobook_books)").all().map((column) => column.name);
     const observationColumns = db.prepare("PRAGMA table_info(playback_observations)").all().map((column) => column.name);
@@ -1364,6 +1367,7 @@ test("audiobook migration is repeatable and does not denormalize onto observatio
     assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audiobook_discovery_outbox'").get());
     assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audiobook_media_revisions'").get());
     assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audiobook_chapter_revisions'").get());
+    assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audiobook_proof_jobs'").get());
     assert.equal(observationColumns.includes("audiobook_id"), false);
     assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
   });
@@ -3653,6 +3657,195 @@ test("audiobook proof adapter keeps Whisper opt-in and accepts verified results 
   assert.equal(result.status, "activatable");
   assert.equal(result.candidate.sourceType, "whisper_verified");
   assert.ok(calls[1].args.includes("--whisper"));
+});
+
+function seedProofRevision(db, {
+  audiobookId = 200,
+  revision = "proof-revision-1",
+  status = "ready",
+  currentRevision = revision,
+  privatePath = "F:\\Private\\Proof Book.m4b",
+  durationMs = 120_000
+} = {}) {
+  db.prepare(`
+    INSERT OR IGNORE INTO audiobook_books
+      (id, folder_key, title, source_provenance, enrichment_status, identity_status,
+       current_media_revision, created_at, updated_at)
+    VALUES (?, ?, 'Proof Book', 'fixture', 'enriched', 'identified', ?,
+      '2026-07-12T00:00:00Z', '2026-07-12T00:00:00Z')
+  `).run(audiobookId, `proof-${audiobookId}`, currentRevision);
+  db.prepare("UPDATE audiobook_books SET current_media_revision = ? WHERE id = ?").run(currentRevision, audiobookId);
+  const inserted = db.prepare(`
+    INSERT INTO audiobook_media_revisions
+      (audiobook_id, media_revision, track_count, file_count, total_duration_ms, manifest_status, created_at)
+    VALUES (?, ?, 1, 1, ?, ?, '2026-07-12T00:00:00Z')
+  `).run(audiobookId, revision, durationMs, status);
+  db.prepare(`
+    INSERT INTO audiobook_media_revision_items
+      (revision_id, item_order, stable_identity, duration_ms, private_file_path, path_hash)
+    VALUES (?, 0, 'guid:proof', ?, ?, 'safe-hash')
+  `).run(Number(inserted.lastInsertRowid), durationMs, privatePath);
+  db.prepare(`
+    INSERT INTO audiobook_discovery_outbox
+      (audiobook_id, media_revision, trigger_reason, created_at, manifest_status)
+    VALUES (?, ?, 'manual', '2026-07-12T00:00:00Z', ?)
+  `).run(audiobookId, revision, status);
+}
+
+function activatableProofResult(activate, activationBase) {
+  const candidate = {
+    chapters: [
+      { index: 1, title: "Opening", start_offset_ms: 0, end_offset_ms: 60_000 },
+      { index: 2, title: "Ending", start_offset_ms: 60_000, end_offset_ms: 120_000 }
+    ],
+    sourceType: "audnexus",
+    confidence: 0.95,
+    contractVersion: 1,
+    warnings: []
+  };
+  activate({ ...activationBase, ...candidate, sourceStatus: "active" });
+  return { status: "activatable", candidate, commands: ["inspect", "resolve"] };
+}
+
+test("audiobook proof worker materializes one durable job per revision and classifies unsupported media", async () => {
+  await withTestDb(async (db) => {
+    seedProofRevision(db);
+    seedProofRevision(db, { audiobookId: 201, revision: "multi-revision", status: "unsupported_multi_file" });
+    const worker = new AudiobookProofWorkerService(db, { proveAndActivate: async () => assert.fail("materialization must not invoke adapter") }, true,
+      () => new Date("2026-07-12T01:00:00Z"));
+    assert.equal(worker.materializeOutbox(new Date("2026-07-12T01:00:00Z")), 2);
+    assert.equal(worker.materializeOutbox(new Date("2026-07-12T01:01:00Z")), 0);
+    const jobs = db.prepare("SELECT audiobook_id, state, safe_result_code FROM audiobook_proof_jobs ORDER BY audiobook_id").all();
+    assert.equal(jobs.length, 2);
+    assert.equal(jobs[0].state, "pending");
+    assert.equal(jobs[1].state, "unsupported_multi_file");
+    assert.equal(jobs[1].safe_result_code, "UNSUPPORTED_MULTI_FILE");
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audiobook_discovery_outbox WHERE consumed_at IS NULL").get().count, 0);
+  });
+});
+
+test("audiobook proof worker activates one job, throttles the next cycle, and skips unchanged verified revisions", async () => {
+  await withTestDb(async (db) => {
+    seedProofRevision(db);
+    let adapterCalls = 0;
+    const adapter = {
+      proveAndActivate: async (_input, activationBase, activate) => {
+        adapterCalls++;
+        return activatableProofResult(activate, activationBase);
+      }
+    };
+    const now = new Date("2026-07-12T01:00:00Z");
+    const worker = new AudiobookProofWorkerService(db, adapter, true, () => now);
+    const first = await worker.runOnce({ force: true, now });
+    assert.equal(first.state, "succeeded");
+    assert.equal(first.safeCode, "VERIFIED");
+    assert.equal(adapterCalls, 1);
+    assert.ok(db.prepare("SELECT active_chapter_revision_id FROM audiobook_books WHERE id = 200").get().active_chapter_revision_id);
+    const throttled = await worker.runOnce({ now: new Date(now.getTime() + 60_000) });
+    assert.equal(throttled.status, "throttled");
+
+    db.prepare(`UPDATE audiobook_proof_jobs SET state = 'pending', attempt_count = 0, completed_at = NULL,
+      safe_result_code = NULL WHERE audiobook_id = 200`).run();
+    db.prepare("UPDATE audiobook_proof_state SET next_run_at = NULL").run();
+    const skipped = await worker.runOnce({ force: true, now: new Date(now.getTime() + 120_000) });
+    assert.equal(skipped.safeCode, "ALREADY_VERIFIED");
+    assert.equal(adapterCalls, 1);
+
+    seedProofRevision(db, { audiobookId: 200, revision: "proof-revision-2", currentRevision: "proof-revision-2" });
+    assert.equal(worker.materializeOutbox(new Date(now.getTime() + 180_000)), 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audiobook_proof_jobs WHERE audiobook_id = 200").get().count, 2);
+    db.prepare("UPDATE audiobook_books SET current_media_revision = 'proof-revision-3' WHERE id = 200").run();
+    db.prepare("UPDATE audiobook_proof_state SET next_run_at = NULL").run();
+    const superseded = await worker.runOnce({ force: true, now: new Date(now.getTime() + 240_000) });
+    assert.equal(superseded.safeCode, "SUPERSEDED_REVISION");
+    assert.equal(superseded.state, "failed_terminal");
+    assert.equal(adapterCalls, 1, "superseded work must not invoke the adapter");
+  });
+});
+
+test("audiobook proof worker applies deterministic retry delays and terminates the fifth failure", async () => {
+  await withTestDb(async (db) => {
+    seedProofRevision(db);
+    const adapter = {
+      proveAndActivate: async () => ({ status: "failed", code: "EXTERNAL_TIMEOUT", retryable: true, commands: ["inspect"] })
+    };
+    const worker = new AudiobookProofWorkerService(db, adapter, true, () => new Date("2026-07-12T01:00:00Z"));
+    const delays = [15 * 60_000, 60 * 60_000, 6 * 60 * 60_000, 24 * 60 * 60_000];
+    let now = new Date("2026-07-12T01:00:00Z");
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const result = await worker.runOnce({ force: true, now });
+      const job = db.prepare("SELECT * FROM audiobook_proof_jobs WHERE audiobook_id = 200").get();
+      assert.equal(job.attempt_count, attempt);
+      if (attempt < 5) {
+        assert.equal(result.state, "retry_wait");
+        assert.equal(job.next_attempt_at, new Date(now.getTime() + delays[attempt - 1]).toISOString());
+        now = new Date(job.next_attempt_at);
+      } else {
+        assert.equal(result.state, "failed_terminal");
+        assert.equal(job.next_attempt_at, null);
+      }
+    }
+  });
+});
+
+test("audiobook proof worker recovers expired leases, prevents overlap, and requeue is confirmed idempotent", async () => {
+  await withTestDb(async (db) => {
+    seedProofRevision(db);
+    const now = new Date("2026-07-12T01:00:00Z");
+    const worker = new AudiobookProofWorkerService(db, {
+      proveAndActivate: async () => ({
+        status: "diagnostic", code: "LOW_CONFIDENCE", retryable: false,
+        diagnostic: { source: "audnexus", confidence: "medium", chapterCount: 2, warnings: ["EXTERNAL_WARNING"] },
+        commands: ["inspect", "resolve"]
+      })
+    }, true, () => now);
+    worker.materializeOutbox(now);
+    db.prepare(`UPDATE audiobook_proof_state SET lease_owner = 'other', lease_expires_at = ? WHERE id = 1`)
+      .run(new Date(now.getTime() + 60_000).toISOString());
+    assert.equal((await worker.runOnce({ force: true, now })).status, "lease_held");
+    db.prepare("UPDATE audiobook_proof_state SET lease_expires_at = ? WHERE id = 1")
+      .run(new Date(now.getTime() - 60_000).toISOString());
+    db.prepare(`UPDATE audiobook_proof_jobs SET state = 'running', attempt_count = 1,
+      lease_owner = 'dead', lease_expires_at = ? WHERE audiobook_id = 200`)
+      .run(new Date(now.getTime() - 60_000).toISOString());
+    const recovered = await worker.runOnce({ force: true, now });
+    assert.equal(recovered.state, "failed_terminal");
+    assert.equal(recovered.safeCode, "LOW_CONFIDENCE");
+    const job = db.prepare("SELECT * FROM audiobook_proof_jobs WHERE audiobook_id = 200").get();
+    assert.equal(job.attempt_count, 2);
+    assert.equal(job.diagnostic_source, "audnexus");
+    assert.equal(JSON.stringify(worker.getStatus()).includes("Private"), false);
+
+    const preview = worker.requeue(job.id, { apply: false, confirm: false });
+    assert.equal(preview.dryRun, true);
+    const applied = worker.requeue(job.id, { apply: true, confirm: true });
+    assert.equal(applied.changed, true);
+    const repeated = worker.requeue(job.id, { apply: true, confirm: true });
+    assert.equal(repeated.changed, false);
+    assert.throws(() => worker.requeue(job.id, { apply: true, confirm: false }), /PROOF_REQUEUE_CONFIRM_REQUIRED/);
+    const audits = db.prepare("SELECT payload_json FROM audit_log WHERE action LIKE 'audiobook_proof_%'").all();
+    assert.equal(JSON.stringify(audits).includes("Private"), false);
+  });
+});
+
+test("audiobook proof health and runtime seams remain bounded while automatic proof is disabled by default", async () => {
+  await withTestDb(async (db) => {
+    seedProofRevision(db);
+    const health = new HealthService(db).getHealth();
+    assert.equal(health.audiobookProof.status, "disabled");
+    assert.equal(health.audiobookProof.pending, 0);
+    assert.equal(JSON.stringify(health.audiobookProof).includes("Private"), false);
+    let calls = 0;
+    const runtime = new AudiobookProofRuntime({
+      runOnce: async () => { calls++; return { ok: true, status: "idle" }; }
+    });
+    await runtime.runOnce({ force: true });
+    assert.equal(calls, 1);
+    runtime.start();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    runtime.stop();
+    assert.ok(calls >= 2);
+  });
 });
 
 

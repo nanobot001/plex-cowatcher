@@ -1,8 +1,9 @@
 # Block 3-2n-5d-3: Durable Proof Worker And Rollout
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Final child of the 3-2n-5d umbrella. Connect manifest-backed discovery to the verified adapter through a bounded, restart-safe PM2 runtime and stage the live rollout.
+> Status: Implemented with rollout pending on 2026-07-12.
+> Result: Implemented with limitations.
+> Verification: `npm run verify:block` - passed with 100 service tests, 36 dashboard regression tests, static dashboard validation, and tool-contract verification.
+> Notes: Added migration 16, unique durable proof jobs, global/job leases and heartbeat recovery, bounded completion scheduling, deterministic retries, safe activation/skip classifications, disabled-by-default same-process runtime, CLI status/canary/requeue operations, and privacy-safe health/audit summaries. The production backup, configured single-book canary, PM2 enablement, restart, and `verify:live-dashboard` remain deliberately pending until this branch is merged and live adapter paths/media are selected.
 
 ## Goal
 

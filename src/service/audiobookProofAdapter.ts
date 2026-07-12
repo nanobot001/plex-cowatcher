@@ -21,6 +21,7 @@ export type AudiobookProofSafeCode =
   | "MALFORMED_EXTERNAL_OUTPUT"
   | "EXTERNAL_OUTPUT_LIMIT"
   | "EXTERNAL_TIMEOUT"
+  | "EXTERNAL_FILE_UNAVAILABLE"
   | "INVALID_CHAPTERS"
   | "DURATION_MISMATCH"
   | "LOW_CONFIDENCE";
@@ -272,7 +273,12 @@ export class AudiobookProofAdapter {
         try {
           const envelope = JSON.parse(Buffer.concat(stdout).toString("utf8"));
           validateEnvelope(envelope);
-          if (envelope.ok !== true) throw new SafeProofError("EXTERNAL_ERROR_ENVELOPE", isTransientEnvelope(envelope));
+          if (envelope.ok !== true) {
+            if (envelope?.error?.code === "FILE_NOT_FOUND") {
+              throw new SafeProofError("EXTERNAL_FILE_UNAVAILABLE", true);
+            }
+            throw new SafeProofError("EXTERNAL_ERROR_ENVELOPE", isTransientEnvelope(envelope));
+          }
           resolve(envelope);
         } catch (error) {
           reject(error instanceof SafeProofError ? error : new SafeProofError("MALFORMED_EXTERNAL_OUTPUT"));
