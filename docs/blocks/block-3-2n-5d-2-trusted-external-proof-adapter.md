@@ -1,8 +1,9 @@
 # Block 3-2n-5d-2: Trusted External Proof Adapter
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Second child of the 3-2n-5d umbrella. Build and verify the read-only external-process boundary after 5D-1 provides immutable manifests and atomic activation.
+> Status: Implemented on 2026-07-12.
+> Result: Implemented.
+> Verification: `npm run verify:block` - passed with 95 service tests, 36 dashboard regression tests, static dashboard validation, and tool-contract verification.
+> Notes: Added the configurable read-only process adapter, strict version-1 envelope and chapter validation, bounded output/timeout/tree termination, allowlisted diagnostics, opt-in Whisper policy, and the guarded 5D-1 activation handoff. Tests use injected child-process fakes only; no external project, ffmpeg, network, or private media is required.
 
 ## Goal
 

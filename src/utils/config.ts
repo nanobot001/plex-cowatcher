@@ -24,6 +24,14 @@ const envSchema = z.object({
     .default(true),
   AUDIOBOOK_LIBRARY: z.string().default("Audiobooks"),
   AUDIOBOOK_SCAN_INTERVAL_MINUTES: z.coerce.number().min(15).default(360),
+  AUDIOBOOK_PROOF_EXECUTABLE: z.string().default(""),
+  AUDIOBOOK_PROOF_SCRIPT: z.string().default(""),
+  AUDIOBOOK_PROOF_WHISPER_ENABLED: z
+    .preprocess((value) => {
+      if (typeof value === "string") return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+      return value;
+    }, z.boolean())
+    .default(false),
   TAUTULLI_BASE_URL: z.string().default("http://127.0.0.1:8181"),
   TAUTULLI_API_KEY: z.string().default(""),
   DISCORD_BOT_TOKEN: z.string().default(""),
