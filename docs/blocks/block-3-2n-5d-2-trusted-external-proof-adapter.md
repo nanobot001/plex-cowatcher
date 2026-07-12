@@ -4,6 +4,7 @@
 > Result: Implemented.
 > Verification: `npm run verify:block` - passed with 95 service tests, 36 dashboard regression tests, static dashboard validation, and tool-contract verification.
 > Notes: Added the configurable read-only process adapter, strict version-1 envelope and chapter validation, bounded output/timeout/tree termination, allowlisted diagnostics, opt-in Whisper policy, and the guarded 5D-1 activation handoff. Tests use injected child-process fakes only; no external project, ffmpeg, network, or private media is required.
+> Follow-up: The first 5D-3 live canary exposed malformed embedded end metadata that this block rejected despite usable ordered starts. Corrective Block 3-2n-5d-2A owns normalization and must pass before rollout resumes; this implemented record remains historical.
 
 ## Goal
 

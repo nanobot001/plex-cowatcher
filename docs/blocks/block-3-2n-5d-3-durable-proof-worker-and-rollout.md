@@ -1,9 +1,9 @@
 # Block 3-2n-5d-3: Durable Proof Worker And Rollout
 
-> Status: Implemented with rollout pending on 2026-07-12.
+> Status: Implemented with rollout blocked on 3-2n-5d-2A as of 2026-07-12.
 > Result: Implemented with limitations.
 > Verification: `npm run verify:block` - passed with 100 service tests, 36 dashboard regression tests, static dashboard validation, and tool-contract verification.
-> Notes: Added migration 16, unique durable proof jobs, global/job leases and heartbeat recovery, bounded completion scheduling, deterministic retries, safe activation/skip classifications, disabled-by-default same-process runtime, CLI status/canary/requeue operations, and privacy-safe health/audit summaries. The production backup, configured single-book canary, PM2 enablement, restart, and `verify:live-dashboard` remain deliberately pending until this branch is merged and live adapter paths/media are selected.
+> Notes: Added migration 16, unique durable proof jobs, global/job leases and heartbeat recovery, bounded completion scheduling, deterministic retries, safe activation/skip classifications, disabled-by-default same-process runtime, CLI status/canary/requeue operations, and privacy-safe health/audit summaries. A production backup and disabled Eric canary were completed. The canary safely rejected activation but exposed an embedded-timeline normalization gap; recurring enablement is blocked until 5D-2A passes and the corrected Eric canary succeeds.
 
 ## Goal
 
@@ -12,6 +12,7 @@ Automatically process eligible audiobook proof work at a safe rate, survive rest
 ## Dependencies And Entry Gate
 
 - Blocks 3-2n-5d-1 and 3-2n-5d-2 are implemented and verified.
+- Corrective Block 3-2n-5d-2A must be implemented, pass `npm run verify:block`, and recover the disabled Eric canary before recurring rollout resumes.
 - Production remains disabled until the staged canary and privacy checks pass.
 - The existing manual import remains available throughout rollout and rollback.
 
