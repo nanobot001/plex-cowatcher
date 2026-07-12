@@ -2,7 +2,22 @@
 
 > Status: Planned.
 > Result: Not implemented.
-> Notes: Follow-up to Block 3-2n-5c. Once CoWatcher can reliably discover audiobooks in its normal service runtime, it should automatically trigger the separate `audiobook` project one time per unresolved book, cache verified chapter boundaries, and reuse that proof for future Progress mapping.
+> Notes: Umbrella only; do not implement directly. Implement 3-2n-5d-1, then 3-2n-5d-2, then 3-2n-5d-3 so revision integrity, the external-process boundary, and runtime rollout have independent exit gates.
+
+## Child Block Sequence
+
+1. `block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md`
+2. `block-3-2n-5d-2-trusted-external-proof-adapter.md`
+3. `block-3-2n-5d-3-durable-proof-worker-and-rollout.md`
+
+The umbrella is complete only after all three child blocks pass `npm run verify:block`; 5D-3 also owns the staged live rollout and `npm run verify:live-dashboard`.
+
+Locked split decisions:
+
+- 5D-1 must persist immutable revision membership before any external proof work can run.
+- 5D-2 treats the current unversioned external envelope as compatibility version 1, validates imported chapter fields strictly, and ignores only bounded harmless envelope metadata.
+- Only clean embedded, high-confidence Audnexus, or Whisper-verified boundaries may become active chapter truth.
+- 5D-3 processes at most one eligible job every 15 minutes and uses a disabled, backed-up, single-book canary before enabling recurring production work.
 
 ## Goal
 
@@ -14,7 +29,7 @@ Make verified audiobook chapter proof happen automatically after dependable disc
 - Deduplicate jobs by audiobook plus private media revision. "One-time proof" means once per unchanged media revision; failed work can retry with capped backoff and an expiring lease.
 - Invoke the external `audiobook` project through a configured trusted local adapter rather than hardcoded repo paths. The adapter may receive a private local media path in-process, but must never log or return it.
 - Call only the external project's read-only JSON commands: `inspect`, then `validate` for embedded chapters, and `resolve` only when embedded chapters are missing or unusable.
-- Normalize its versioned JSON envelope into the local import contract, translating `start_ms`/`end_ms`, source, confidence, duration, and safe warnings. Reject unknown fields and malformed, unordered, overlapping, out-of-range, single-chapter, or duration-mismatched results.
+- Normalize its JSON envelope into a compatibility-versioned local import contract, translating `start_ms`/`end_ms`, source, confidence, duration, and safe warnings. Strictly reject unknown or ambiguous imported chapter fields and malformed, unordered, overlapping, out-of-range, single-chapter, or duration-mismatched results while ignoring bounded harmless envelope metadata.
 - Preserve the one-time-proof model: after a validated source revision is active, future listening events reuse the cache rather than re-run proof on every play.
 - Support a full-book single-file edition first. For multi-file editions, either build a deterministic book-global timeline with per-file cumulative offsets or mark the job `unsupported_multi_file` and retain Plex track/file fallback; never apply one file's offsets to the entire book.
 - Record structured audit/state output for queued, running, succeeded, skipped, retried, and failed proof attempts.
