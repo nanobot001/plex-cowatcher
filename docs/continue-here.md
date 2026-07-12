@@ -3,11 +3,11 @@
 ## 2026-07-11
 
 Current state:
-- Blocks 3-2n-6 (Progress Evidence Map Polish), 3-2n-6a (Progress Watcher Coverage and Workspace Width), and 3-2n-6b (Overview Session Feed De-duplication) are implemented and verified. The latest 6b verification passed both `npm run verify:block` and `npm run verify:live-dashboard`.
-- The remaining 3-2n audiobook automation work is 3-2n-5c (Reliable Audiobook Discovery Automation), followed by 3-2n-5d (Automatic Audiobook Chapter Proof Handoff).
+- Blocks 3-2n-6, 3-2n-6a, 3-2n-6b, and 3-2n-5c are implemented and verified. The latest 5C verification passed both `npm run verify:block` and `npm run verify:live-dashboard`.
+- Automatic audiobook discovery now runs independently under PM2, reconciles rich Plex metadata, persists restart/cooldown state, and emits one outbox event per stable media revision. A live 960-track scan succeeded, and its immediate rerun was idempotent.
 
 Next step:
-- Implement **Block 3-2n-5c: Reliable Audiobook Discovery Automation** (`docs/blocks/block-3-2n-5c-reliable-audiobook-discovery-automation.md`), then 3-2n-5d and 3-2o.
+- Implement **Block 3-2n-5d: Automatic Audiobook Chapter Proof Handoff** (`docs/blocks/block-3-2n-5d-automatic-audiobook-chapter-proof-handoff.md`), then 3-2o.
 
 ## 2026-07-09
 

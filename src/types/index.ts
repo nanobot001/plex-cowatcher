@@ -69,8 +69,8 @@ export interface PlexRichMetadata {
   filePath?: string;
 }
 
-export type AudiobookProvenance = "audnexus" | "google_books" | "folder_path" | "manual";
-export type AudiobookEnrichmentStatus = "enriched" | "partial" | "pending";
+export type AudiobookProvenance = "audnexus" | "google_books" | "folder_path" | "plex" | "manual";
+export type AudiobookEnrichmentStatus = "enriched" | "partial" | "pending" | "retry_wait";
 
 export interface AudiobookBook {
   id?: number;

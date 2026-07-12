@@ -15,7 +15,7 @@ import { CowatchingIntelligenceService } from "../service/cowatchingIntelligence
 import { DashboardService } from "../service/dashboardService.js";
 import { DashboardPreferenceService } from "../service/dashboardPreferenceService.js";
 import { CowatchAdjudicationService, type CowatchDecision } from "../service/cowatchAdjudicationService.js";
-import { MetadataService } from "../service/metadataService.js";
+import { AudiobookDiscoveryService } from "../service/audiobookDiscoveryService.js";
 import { appConfig } from "../utils/config.js";
 import { parseDays } from "../utils/time.js";
 
@@ -44,6 +44,7 @@ export function buildRouter(
   const dashboardPreferences = new DashboardPreferenceService(db);
   const dashboardService = new DashboardService(db);
   const cowatchAdjudications = new CowatchAdjudicationService(db);
+  const audiobookDiscovery = new AudiobookDiscoveryService(db, plex);
   const handleDashboardReadError = (error: unknown, res: express.Response, next: express.NextFunction) => {
     if (error instanceof Error && error.message.startsWith("Validation Error:")) {
       res.status(400).json({ ok: false, errorCode: "VALIDATION_ERROR", message: error.message });
@@ -467,18 +468,11 @@ export function buildRouter(
         const ratingKey = metadata.ratingKey;
         if (!ratingKey) return;
 
-        console.log(`[Webhook] Ingesting track ${ratingKey} for library '${libraryTitle}'`);
-        const { MetadataService } = await import("../service/metadataService.js");
-        const { AudiobookCatalogService } = await import("../service/audiobookService.js");
-
-        const metadataService = new MetadataService(db, plex);
-        const catalogService = new AudiobookCatalogService(db);
-
-        const entry = await metadataService.refreshMetadata(ratingKey);
-        if (entry?.audiobookId) {
-          await catalogService.enrichBook(entry.audiobookId, true);
-          console.log(`[Webhook] Enriched bookId ${entry.audiobookId} via webhook`);
-        }
+        await audiobookDiscovery.run("webhook-item", {
+          library: libraryTitle || appConfig.AUDIOBOOK_LIBRARY,
+          ratingKey,
+          plexGuid: metadata.guid
+        });
       }
     }
   });

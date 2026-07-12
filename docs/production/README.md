@@ -2,6 +2,12 @@
 
 Deployment, runtime, release, operations, environments, and monitoring live here.
 
+## Automatic Audiobook Discovery
+
+The PM2-hosted service starts audiobook discovery whenever Plex is configured. It is independent of Tautulli and Discord. Defaults are `AUDIOBOOK_DISCOVERY_ENABLED=true`, `AUDIOBOOK_LIBRARY=Audiobooks`, and `AUDIOBOOK_SCAN_INTERVAL_MINUTES=360` (minimum 15). Startup scans respect the persisted successful-scan cooldown, and an expiring SQLite lease prevents overlap and restart storms.
+
+Use `node dist/cli/cli.js scan-audiobooks --library "Audiobooks" --pretty` for an explicit operator run. Check `/api/health`, structured audit events, and `audiobook_discovery_runs` for safe status. Before the first live rollout, back up SQLite, restart PM2, verify one eligible scan, rerun once to prove `booksNew = 0` and `outboxEnqueued = 0`, then run `npm run verify:live-dashboard`.
+
 ## Local Configuration
 
 Runtime secrets belong in `.env`; household user mapping belongs in `config/users.json`. Create it from `config/users.example.json` and keep real local values out of Git.

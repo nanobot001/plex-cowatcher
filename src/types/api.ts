@@ -17,6 +17,7 @@ export interface HealthResponse {
     discord: ReadinessSubsystem;
     watcher: ReadinessSubsystem;
     plexMutation: ReadinessSubsystem;
+    audiobookDiscovery: ReadinessSubsystem;
   };
   watcher: ReadinessSubsystem & {
     enabled: boolean;
@@ -33,6 +34,12 @@ export interface HealthResponse {
   plex: ReadinessSubsystem;
   tautulli: ReadinessSubsystem;
   plexMutation: ReadinessSubsystem;
+  audiobookDiscovery: ReadinessSubsystem & {
+    lastAttemptAt?: string;
+    lastSuccessAt?: string;
+    nextRunAt?: string;
+    currentRunId?: number;
+  };
   pendingPrompts: number;
   failedSyncs: number;
 }

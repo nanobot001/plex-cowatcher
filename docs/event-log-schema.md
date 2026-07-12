@@ -88,3 +88,11 @@ Recorded when apply mode completes, including partial runs.
 ```
 
 Metadata for these events must not include private local file paths.
+
+### Audiobook discovery events
+
+- `audiobook_discovery_started` records the run ID, configured library selector, and trigger reason.
+- `audiobook_discovery_completed` records safe track/book/outbox counts and a status of `succeeded`, `partial`, or `failed`.
+- `audiobook_discovery_skipped` records only the bounded reason `cooldown` or `lease_held`.
+
+Discovery events must not contain file paths, authenticated URLs, tokens, raw Plex/provider payloads, or unbounded upstream error text.

@@ -40,6 +40,11 @@ Rules to preserve:
 - `playback_observations` does not store `audiobook_id`. Queries must join observations through `content_catalog` so rematching a book does not leave stale denormalized IDs behind.
 - `source_provenance` identifies whether the current book metadata came from `folder_path`, `audnexus`, or `google_books`.
 - `enrichment_status` records whether canonical enrichment is still `pending` or already `enriched`.
+- `identity_status` keeps `identified`, `pending`, and `conflict` separate from enrichment and chapter-proof state. `identity_provenance` is limited to `folder`, `asin`, or `plex_guid`.
+- `current_media_revision` is a private SHA-256 digest over stable track GUIDs or hashed private paths, duration, and deterministic order. Rating keys and display metadata are excluded.
+- `audiobook_discovery_state` and `audiobook_discovery_runs` hold restart-safe lease, cooldown, trigger, result-count, and safe-error state.
+- `audiobook_discovery_outbox` contains at most one event per `(audiobook_id, media_revision)` for Block 3-2n-5d. It never stores raw paths.
+- Only a fully successful library scan may update absence/last-seen conclusions. Discovery never deletes historical catalog, playback, chapter, or audit rows.
 - Low-confidence or unmatched books remain usable via folder metadata and must not be silently assigned guessed canonical metadata.
 - Precedence for hierarchy updates: `metadata` (highest) > `mapping` > `pattern` > `none`. Updates are only applied when the new provenance has higher precedence or equal (and identical). Disputed classifications of equal authority generate a conflict and are ignored.
 - Mappings: Discworld subseries (Guards, Witches, Death, Rincewind, Tiffany, Moist), Mistborn subseries (Era 1, Era 2/Wax and Wayne, companion classification), and Wheel of Time (parent series only) are resolved deterministically.

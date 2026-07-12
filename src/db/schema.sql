@@ -223,6 +223,14 @@ CREATE TABLE IF NOT EXISTS audiobook_books (
   subseries_title TEXT,
   related_work_classification TEXT,
   hierarchy_provenance TEXT,
+  identity_status TEXT NOT NULL DEFAULT 'pending',
+  identity_provenance TEXT,
+  current_media_revision TEXT,
+  media_revision_updated_at TEXT,
+  enrichment_last_attempt_at TEXT,
+  enrichment_next_attempt_at TEXT,
+  enrichment_attempt_count INTEGER NOT NULL DEFAULT 0,
+  enrichment_last_error_code TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -255,7 +263,9 @@ CREATE TABLE IF NOT EXISTS content_catalog (
   source_provenance TEXT NOT NULL,
   refreshed_at TEXT NOT NULL,
   file_path TEXT,
-  audiobook_id INTEGER REFERENCES audiobook_books(id)
+  audiobook_id INTEGER REFERENCES audiobook_books(id),
+  last_seen_at TEXT,
+  last_seen_scan_id INTEGER
 );
 
 INSERT OR IGNORE INTO schema_migrations (version, name)
@@ -321,3 +331,46 @@ CREATE INDEX IF NOT EXISTS idx_audiobook_chapters_book ON audiobook_chapters(aud
 
 INSERT OR IGNORE INTO schema_migrations (version, name)
 VALUES (13, 'audiobook_chapters');
+
+CREATE TABLE IF NOT EXISTS audiobook_discovery_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  lease_owner TEXT,
+  lease_expires_at TEXT,
+  heartbeat_at TEXT,
+  last_attempt_at TEXT,
+  last_success_at TEXT,
+  current_run_id INTEGER,
+  next_run_at TEXT
+);
+
+INSERT OR IGNORE INTO audiobook_discovery_state (id) VALUES (1);
+
+CREATE TABLE IF NOT EXISTS audiobook_discovery_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  trigger_reason TEXT NOT NULL,
+  status TEXT NOT NULL,
+  library_title TEXT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  safe_error_code TEXT,
+  counts_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_audiobook_discovery_runs_started
+  ON audiobook_discovery_runs(started_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS audiobook_discovery_outbox (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  audiobook_id INTEGER NOT NULL,
+  media_revision TEXT NOT NULL,
+  trigger_reason TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  consumed_at TEXT,
+  FOREIGN KEY(audiobook_id) REFERENCES audiobook_books(id),
+  UNIQUE(audiobook_id, media_revision)
+);
+
+CREATE INDEX IF NOT EXISTS idx_audiobook_discovery_outbox_pending
+  ON audiobook_discovery_outbox(consumed_at, id);
+CREATE INDEX IF NOT EXISTS idx_content_catalog_guid
+  ON content_catalog(guid) WHERE guid IS NOT NULL;
