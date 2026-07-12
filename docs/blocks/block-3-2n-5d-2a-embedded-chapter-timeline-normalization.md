@@ -1,8 +1,9 @@
 # Block 3-2n-5d-2A: Embedded Chapter Timeline Normalization
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Corrective adapter block discovered during the disabled 5D-3 Eric canary. This block must pass before the 5D-3 live rollout resumes.
+> Status: Implemented on 2026-07-12.
+> Result: Implemented.
+> Verification: `npm run verify:block` - passed with 103 service tests, 36 dashboard regression tests, static dashboard validation, and tool-contract verification. Corrected disabled Eric canary and `npm run verify:live-dashboard` also passed.
+> Notes: Embedded starts now normalize into contiguous duration-bounded ranges, advisory raw-end/short-chapter checks no longer force resolution, and invalid starts retain bounded fallback provenance. The live Eric job succeeded with 57 active revision-matched embedded chapters while recurring proof remained disabled.
 
 ## Goal
 

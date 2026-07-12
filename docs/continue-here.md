@@ -5,11 +5,11 @@
 Current state:
 - Blocks 3-2n-5d-1, 3-2n-5d-2, and the code portion of 3-2n-5d-3 are implemented and passed `npm run verify:block`.
 - The production SQLite database was backed up, the trusted adapter was configured, and automatic proof remains disabled.
-- The first live canary targeted audiobook ID 34 (`Eric`). The worker and privacy controls behaved safely, but CoWatcher rejected 57 usable embedded starts because five chapters were short and the container's final end was one hour past the last start. It then received low-confidence silence fallback and correctly did not activate it.
-- Planned corrective Block 3-2n-5d-2A now owns embedded start normalization. The 5D-3 recurring-worker rollout is blocked until that block and the corrected Eric canary pass.
+- The first live canary targeted audiobook ID 34 (`Eric`) and exposed an embedded end-metadata normalization gap. Block 3-2n-5d-2A corrected it and passed `npm run verify:block` with 103 service tests and 36 dashboard regressions.
+- The corrected disabled canary succeeded with 57 active revision-matched embedded chapters, verified chapter Progress, path-safe audits, and a passing `npm run verify:live-dashboard`. Automatic proof remains disabled.
 
 Next step:
-- Implement **Block 3-2n-5d-2A: Embedded Chapter Timeline Normalization** (`docs/blocks/block-3-2n-5d-2a-embedded-chapter-timeline-normalization.md`). Keep automatic proof disabled, run `npm run verify:block`, then repeat only the confirmed Eric canary and run `npm run verify:live-dashboard` before resuming 5D-3.
+- Resume the explicit recurring-worker enablement portion of **Block 3-2n-5d-3: Durable Proof Worker And Rollout** (`docs/blocks/block-3-2n-5d-3-durable-proof-worker-and-rollout.md`). Review the 54 pending and 15 unsupported jobs, then enable only with an explicit rollout decision and rerun the live smoke gate.
 
 ## 2026-07-11
 

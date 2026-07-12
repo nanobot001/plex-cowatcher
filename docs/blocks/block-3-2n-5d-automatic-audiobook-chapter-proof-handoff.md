@@ -2,7 +2,7 @@
 
 > Status: Planned.
 > Result: Not implemented.
-> Notes: Umbrella only; do not implement directly. The original child code is implemented, but corrective 3-2n-5d-2A must pass after the first Eric canary exposed embedded end-metadata drift and before the 3-2n-5d-3 live rollout resumes.
+> Notes: Umbrella only; do not implement directly. Corrective 3-2n-5d-2A and its disabled Eric canary passed after the first canary exposed embedded end-metadata drift. Recurring-worker enablement remains the final 3-2n-5d-3 rollout step.
 
 ## Child Block Sequence
 

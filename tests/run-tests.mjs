@@ -3497,6 +3497,58 @@ test("audiobook proof adapter validates embedded chapters and skips resolve", as
   assert.equal(JSON.stringify(result).includes("tags"), false);
 });
 
+test("audiobook proof adapter normalizes Eric-shaped embedded starts and ignores advisory end-gap checks", async () => {
+  const durationMs = 14_326_503;
+  const starts = Array.from({ length: 57 }, (_, index) => index <= 5 ? index * 12_000 : 60_000 + (index - 5) * 270_000);
+  const chapters = starts.map((start, index) => ({
+    title: `Chapter ${index + 1}`,
+    start_ms: start,
+    end_ms: index < starts.length - 1 ? starts[index + 1] : start + 3_600_000
+  }));
+  const calls = [];
+  let activation = null;
+  const adapter = new AudiobookProofAdapter({
+    executablePath: "python.exe",
+    scriptPath: "C:\\trusted\\repairchapters.py",
+    spawnProcess: fakeProofProcess([
+      { stdout: proofEnvelope({ duration_s: durationMs / 1_000, chapter_count: chapters.length, chapters }) },
+      { stdout: proofEnvelope({
+        ...cleanValidation,
+        chapter_count: chapters.length,
+        short_chapters: 5,
+        duration_gap_s: 3_547.655
+      }) }
+    ], calls),
+    killProcessTree: () => assert.fail("valid process must not be killed")
+  });
+
+  const result = await adapter.proveAndActivate({
+    privateFilePath: "F:\\Private\\Eric.m4b",
+    durationMs
+  }, {
+    audiobookId: 34,
+    mediaRevision: "eric-revision",
+    activatedAt: "2026-07-12T00:00:00Z"
+  }, (input) => { activation = input; });
+
+  assert.equal(result.status, "activatable");
+  assert.equal(result.candidate.sourceType, "embedded");
+  assert.deepEqual(result.commands, ["inspect", "validate"]);
+  assert.deepEqual(calls.map((call) => call.command), ["inspect", "validate"]);
+  assert.equal(activation.chapters.length, 57);
+  assert.equal(activation.chapters.at(-1).end_offset_ms, durationMs);
+  assert.equal(activation.chapters.filter((chapter) => chapter.end_offset_ms - chapter.start_offset_ms < 30_000).length, 5);
+  for (let index = 0; index < activation.chapters.length; index++) {
+    const chapter = activation.chapters[index];
+    assert.ok(chapter.end_offset_ms > chapter.start_offset_ms);
+    assert.ok(chapter.end_offset_ms <= durationMs);
+    if (index < activation.chapters.length - 1) {
+      assert.equal(chapter.end_offset_ms, activation.chapters[index + 1].start_offset_ms);
+    }
+  }
+  assert.equal(JSON.stringify(result).includes("Private"), false);
+});
+
 test("audiobook proof adapter resolves missing chapters and activates only approved evidence", async () => {
   const calls = [];
   let activations = 0;
@@ -3533,14 +3585,18 @@ test("audiobook proof adapter resolves missing chapters and activates only appro
   assert.deepEqual(invalidAsin, { status: "failed", code: "INVALID_ASIN", retryable: false, commands: [] });
 });
 
-test("audiobook proof adapter resolves when embedded validation is unusable", async () => {
+test("audiobook proof adapter resolves invalid embedded starts and preserves an allowlisted rejection warning", async () => {
   const calls = [];
   const adapter = new AudiobookProofAdapter({
     executablePath: "python.exe",
     scriptPath: "C:\\trusted\\repairchapters.py",
     spawnProcess: fakeProofProcess([
-      { stdout: proofEnvelope({ duration_s: 120, chapter_count: 2, chapters: validEmbeddedChapters }) },
-      { stdout: proofEnvelope({ ...cleanValidation, short_chapters: 1 }) },
+      { stdout: proofEnvelope({
+        duration_s: 120,
+        chapter_count: 2,
+        chapters: [validEmbeddedChapters[0], { ...validEmbeddedChapters[1], start_ms: 0 }]
+      }) },
+      { stdout: proofEnvelope({ ...cleanValidation, duplicate_timestamps: 1 }) },
       { stdout: proofEnvelope({
         source: "audnexus", whisper_verified: false, whisper_available: true,
         total_duration_ms: 120_000, warnings: [], chapters: validResolvedChapters
@@ -3552,6 +3608,77 @@ test("audiobook proof adapter resolves when embedded validation is unusable", as
   assert.equal(result.status, "activatable");
   assert.deepEqual(result.commands, ["inspect", "validate", "resolve"]);
   assert.deepEqual(calls.map((call) => call.command), ["inspect", "validate", "resolve"]);
+  assert.deepEqual(result.candidate.warnings, ["EMBEDDED_STARTS_INVALID"]);
+});
+
+test("audiobook proof adapter rejects malformed embedded starts without clamping and retains low-confidence provenance", async () => {
+  const invalidCases = [
+    [validEmbeddedChapters[0], { ...validEmbeddedChapters[1], start_ms: 0 }],
+    [validEmbeddedChapters[0], { ...validEmbeddedChapters[1], start_ms: -1 }],
+    [validEmbeddedChapters[0], { ...validEmbeddedChapters[1], start_ms: 60_000.5 }],
+    [validEmbeddedChapters[0], { ...validEmbeddedChapters[1], start_ms: 120_000 }],
+    [validEmbeddedChapters[0], { ...validEmbeddedChapters[1], title: "" }],
+    [
+      { title: "One", start_ms: 0, end_ms: 80_000 },
+      { title: "Two", start_ms: 80_000, end_ms: 100_000 },
+      { title: "Three", start_ms: 60_000, end_ms: 120_000 }
+    ]
+  ];
+  for (const chapters of invalidCases) {
+    let activations = 0;
+    const adapter = new AudiobookProofAdapter({
+      executablePath: "python.exe",
+      scriptPath: "C:\\trusted\\repairchapters.py",
+      spawnProcess: fakeProofProcess([
+        { stdout: proofEnvelope({ duration_s: 120, chapter_count: chapters.length, chapters }) },
+        { stdout: proofEnvelope({ ...cleanValidation, chapter_count: chapters.length }) },
+        { stdout: proofEnvelope({
+          source: "silence_detection", whisper_verified: false, whisper_available: false,
+          total_duration_ms: 120_000, warnings: [],
+          chapters: validResolvedChapters.map((chapter) => ({ ...chapter, source: "silence_detection", confidence: "low" }))
+        }) }
+      ], []),
+      killProcessTree: () => {}
+    });
+    const result = await adapter.proveAndActivate({
+      privateFilePath: "F:\\Private\\Book.m4b", durationMs: 120_000
+    }, { audiobookId: 12, mediaRevision: "invalid-embedded", activatedAt: "2026-07-12T00:00:00Z" }, () => {
+      activations++;
+    });
+    assert.equal(result.status, "diagnostic");
+    assert.equal(result.code, "LOW_CONFIDENCE");
+    assert.deepEqual(result.commands, ["inspect", "validate", "resolve"]);
+    assert.ok(result.diagnostic.warnings.includes("EMBEDDED_STARTS_INVALID"));
+    assert.equal(activations, 0);
+  }
+});
+
+test("audiobook proof adapter rejects malformed validation contracts and embedded duration mismatch", async () => {
+  const malformedValidationAdapter = new AudiobookProofAdapter({
+    executablePath: "python.exe",
+    scriptPath: "C:\\trusted\\repairchapters.py",
+    spawnProcess: fakeProofProcess([
+      { stdout: proofEnvelope({ duration_s: 120, chapter_count: 2, chapters: validEmbeddedChapters }) },
+      { stdout: proofEnvelope({ ...cleanValidation, duration_gap_s: "unknown" }) }
+    ], []),
+    killProcessTree: () => {}
+  });
+  const malformed = await malformedValidationAdapter.prove({ privateFilePath: "F:\\Private\\Book.m4b", durationMs: 120_000 });
+  assert.equal(malformed.status, "failed");
+  assert.equal(malformed.code, "MALFORMED_EXTERNAL_OUTPUT");
+
+  const mismatchAdapter = new AudiobookProofAdapter({
+    executablePath: "python.exe",
+    scriptPath: "C:\\trusted\\repairchapters.py",
+    spawnProcess: fakeProofProcess([
+      { stdout: proofEnvelope({ duration_s: 131, chapter_count: 2, chapters: validEmbeddedChapters }) }
+    ], []),
+    killProcessTree: () => {}
+  });
+  const mismatch = await mismatchAdapter.prove({ privateFilePath: "F:\\Private\\Book.m4b", durationMs: 120_000 });
+  assert.equal(mismatch.status, "failed");
+  assert.equal(mismatch.code, "DURATION_MISMATCH");
+  assert.deepEqual(mismatch.commands, ["inspect"]);
 });
 
 test("audiobook proof adapter rejects unsafe envelopes and redacts child diagnostics", async () => {
