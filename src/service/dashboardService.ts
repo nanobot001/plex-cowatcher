@@ -88,6 +88,8 @@ type AudiobookChapterProgressSnapshot = {
   }>;
   distinctItems: number;
   distinctCompleted: number;
+  currentChapterIndex?: number | null;
+  currentProgressPercent?: number | null;
   peopleStats: Map<string, { distinctItems: number; distinctCompleted: number; partials: number }>;
 };
 
@@ -1681,6 +1683,8 @@ export class DashboardService {
         let progressSource: any = undefined;
         let progressSourceVerified: any = undefined;
         let hasVerifiedChapters: boolean | undefined = undefined;
+        let currentChapterIndex: number | null = null;
+        let currentProgressPercent: number | null = null;
         let audiobookBook: any = null;
 
         if (first.category === "audiobook") {
@@ -1767,6 +1771,8 @@ export class DashboardService {
             totalItems = audiobookProgress.chapters.length;
             distinctItems = audiobookProgress.distinctItems;
             distinctCompleted = audiobookProgress.distinctCompleted;
+            currentChapterIndex = audiobookProgress.currentChapterIndex ?? null;
+            currentProgressPercent = audiobookProgress.currentProgressPercent ?? null;
             partials = [...audiobookProgress.peopleStats.values()].reduce((sum, stat) => sum + stat.partials, 0);
             people = people.map((person) => {
               const stats = audiobookProgress.peopleStats.get(person.displayName);
@@ -1786,6 +1792,8 @@ export class DashboardService {
           progressSource,
           progressSourceVerified,
           hasVerifiedChapters,
+          currentChapterIndex,
+          currentProgressPercent,
           totalKnown,
           totalItems,
           distinctItems,
@@ -2211,6 +2219,7 @@ export class DashboardService {
     cachedChapters: CachedAudiobookChapter[]
   ): AudiobookChapterProgressSnapshot {
     const bookDurationMs = Math.max(...cachedChapters.map((chapter) => chapter.end_offset_ms));
+    const currentPosition = this.resolveCurrentAudiobookPosition(plays, cachedChapters, bookDurationMs);
     const completedChapters = new Set<number>();
     const touchedChapters = new Set<number>();
     const peopleStats = new Map<string, { distinctItems: number; distinctCompleted: number; partials: number }>();
@@ -2253,10 +2262,11 @@ export class DashboardService {
 
         let state: ProgressNodeState = "unknown";
         let stateSource: ProgressNodeStateSource = "none";
-        if (mappedStates.length > 1) {
+        const hasWatchedEvidence = mappedStates.includes("watched") || mappedStates.includes("repeated");
+        if (hasWatchedEvidence && mappedStates.length > 1) {
           state = "repeated";
           stateSource = mappedSources.includes("book_completion") ? "book_completion" : "verified_offset";
-        } else if (mappedStates.includes("watched")) {
+        } else if (hasWatchedEvidence) {
           state = "watched";
           stateSource = mappedSources[mappedStates.indexOf("watched")] ?? "verified_offset";
         } else if (mappedStates.includes("partial")) {
@@ -2313,16 +2323,43 @@ export class DashboardService {
       chapters,
       distinctItems: touchedChapters.size,
       distinctCompleted: completedChapters.size,
+      currentChapterIndex: currentPosition?.chapterIndex ?? null,
+      currentProgressPercent: currentPosition?.progressPercent ?? null,
       peopleStats
     };
   }
 
+  private resolveCurrentAudiobookPosition(
+    plays: DashboardActivityItem[],
+    cachedChapters: CachedAudiobookChapter[],
+    bookDurationMs: number
+  ): { chapterIndex: number; progressPercent: number } | null {
+    const orderedPlays = [...plays].sort((a, b) => b.watchedAt.localeCompare(a.watchedAt) || b.id - a.id);
+    for (const play of orderedPlays) {
+      const offset = this.resolveAudiobookOffsetMs(play, bookDurationMs);
+      if (offset.status === "valid") {
+        const chapter = cachedChapters.find((candidate) => offset.value < candidate.end_offset_ms) ?? cachedChapters[cachedChapters.length - 1];
+        if (!chapter) continue;
+        const sourcePercent = Number(play.percentComplete);
+        const progressPercent = Number.isFinite(sourcePercent)
+          ? Math.max(0, Math.min(100, Math.round(sourcePercent)))
+          : Math.max(0, Math.min(100, Math.round((offset.value / bookDurationMs) * 100)));
+        return { chapterIndex: chapter.chapter_index, progressPercent };
+      }
+      if (play.completed) {
+        const finalChapter = cachedChapters[cachedChapters.length - 1];
+        if (finalChapter) return { chapterIndex: finalChapter.chapter_index, progressPercent: 100 };
+      }
+    }
+    return null;
+  }
+
   private resolveAudiobookOffsetMs(play: DashboardActivityItem, bookDurationMs: number): { status: "valid"; value: number } | { status: "missing" | "uncertain" } {
     let offset = normalizeAudiobookEvidenceOffsetMs(play.viewOffset, bookDurationMs);
-    if (offset <= 0 && play.percentComplete != null && play.duration) {
-      const durationMs = normalizeDurationMs(play.duration);
-      if (durationMs > 0) {
-        offset = Math.round(durationMs * Math.max(0, Math.min(100, play.percentComplete)) / 100);
+    if (offset <= 0 && play.percentComplete != null && bookDurationMs > 0) {
+      offset = Math.round(bookDurationMs * Math.max(0, Math.min(100, play.percentComplete)) / 100);
+      if (Number.isFinite(Number(play.percentComplete))) {
+        return { status: "valid", value: offset };
       }
     }
     if (offset <= 0) {
@@ -2484,6 +2521,8 @@ export class DashboardService {
           bookTitle: audiobook.title,
           chapters: audiobookProgress.chapters,
           hasVerifiedChapters: audiobookProgress.hasVerifiedChapters,
+          currentChapterIndex: audiobookProgress.currentChapterIndex ?? null,
+          currentProgressPercent: audiobookProgress.currentProgressPercent ?? null,
           source: audiobookProgress.source
         };
 
@@ -2514,6 +2553,8 @@ export class DashboardService {
           progressSource,
           progressSourceVerified,
           hasVerifiedChapters,
+          currentChapterIndex: hasVerifiedChapters ? (audiobookProgress.currentChapterIndex ?? null) : null,
+          currentProgressPercent: hasVerifiedChapters ? (audiobookProgress.currentProgressPercent ?? null) : null,
           totalKnown,
           totalItems,
           distinctItems: hasVerifiedChapters ? audiobookProgress.distinctItems : distinctItems.size,

@@ -545,12 +545,12 @@ test("Progress hierarchy expands lazily, caches responses, and preserves route s
   const verifiedAudiobookCard = cardFor("Verified Fixture Audiobook");
   await expect(verifiedAudiobookCard).toBeVisible();
   await expect(verifiedAudiobookCard.locator(".progress-card-source")).toContainText("Verified audiobook chapters");
-  await expect(verifiedAudiobookCard.getByTestId("progress-summary")).toContainText("1 of 3 chapters · 33%");
-  await expect(verifiedAudiobookCard.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "33");
+  await expect(verifiedAudiobookCard.getByTestId("progress-summary")).toContainText("2 of 3 chapters · 50%");
+  await expect(verifiedAudiobookCard.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
   await verifiedAudiobookCard.click();
   await expect(progressDialog).toBeVisible();
   const verifiedOverview = progressDialog.getByTestId("progress-dialog-summary");
-  await expect(verifiedOverview).toContainText("1 of 3 chapters · 33%");
+  await expect(verifiedOverview).toContainText("2 of 3 chapters · 50%");
   await expect(verifiedOverview).toContainText("Verified audiobook chapters");
   await expect(verifiedOverview).toContainText("Plays");
   await expect(verifiedOverview).toContainText("Observed");

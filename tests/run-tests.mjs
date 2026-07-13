@@ -3368,12 +3368,13 @@ test("verified audiobook chapter progress maps offsets, book completion, repeats
     const insertObservation = db.prepare(`
       INSERT INTO playback_observations
         (user_id, rating_key, media_type, library_name, title, watched_at, watched_at_provenance, percent_complete, percent_complete_provenance, view_offset, duration, completed, created_at, updated_at)
-      VALUES (?, 'single-file-book', 'track', 'Audiobooks', 'Single File Book', ?, 'fixture', ?, 'fixture', ?, 180000, ?, ?, ?)
+      VALUES (?, 'single-file-book', 'track', 'Audiobooks', 'Single File Book', ?, 'fixture', ?, 'fixture', ?, ?, ?, ?, ?)
     `);
-    insertObservation.run(1, '2026-07-06T10:00:00Z', 50, 90000, 0, '2026-07-06T10:00:00Z', '2026-07-06T10:00:00Z');
-    insertObservation.run(1, '2026-07-06T10:30:00Z', 15, 30000, 0, '2026-07-06T10:30:00Z', '2026-07-06T10:30:00Z');
-    insertObservation.run(2, '2026-07-06T11:00:00Z', null, null, 1, '2026-07-06T11:00:00Z', '2026-07-06T11:00:00Z');
-    insertObservation.run(3, '2026-07-06T12:00:00Z', null, 9999999, 0, '2026-07-06T12:00:00Z', '2026-07-06T12:00:00Z');
+    insertObservation.run(1, '2026-07-06T10:45:00Z', 50, null, 60000, 0, '2026-07-06T10:45:00Z', '2026-07-06T10:45:00Z');
+    insertObservation.run(1, '2026-07-06T10:30:00Z', 15, 30000, 180000, 0, '2026-07-06T10:30:00Z', '2026-07-06T10:30:00Z');
+    insertObservation.run(1, '2026-07-06T10:15:00Z', 45, null, 60000, 0, '2026-07-06T10:15:00Z', '2026-07-06T10:15:00Z');
+    insertObservation.run(2, '2026-07-06T11:00:00Z', null, null, 180000, 1, '2026-07-06T11:00:00Z', '2026-07-06T11:00:00Z');
+    insertObservation.run(3, '2026-07-06T12:00:00Z', null, 9999999, 180000, 0, '2026-07-06T12:00:00Z', '2026-07-06T12:00:00Z');
 
     const { DashboardService } = await import("../dist/service/dashboardService.js");
     const dashboard = new DashboardService(db);
@@ -3384,6 +3385,8 @@ test("verified audiobook chapter progress maps offsets, book completion, repeats
     assert.equal(tonyProgress.progressSource, "audiobook_tool");
     assert.equal(tonyProgress.totalKnown, true);
     assert.equal(tonyProgress.totalItems, 3);
+    assert.equal(tonyProgress.currentChapterIndex, 2);
+    assert.equal(tonyProgress.currentProgressPercent, 50);
     assert.equal(tonyProgress.distinctCompleted, 1);
     assert.equal(tonyProgress.distinctItems, 2);
     assert.equal(tonyProgress.people[0].distinctCompleted, 1);
@@ -3394,6 +3397,8 @@ test("verified audiobook chapter progress maps offsets, book completion, repeats
     assert.equal(expansion.progressUnit, "chapter");
     assert.equal(expansion.progressSourceVerified, true);
     assert.equal(expansion.totalItems, 3);
+    assert.equal(expansion.currentChapterIndex, 3);
+    assert.equal(expansion.currentProgressPercent, 100);
     assert.equal(expansion.distinctCompleted, 3);
     assert.equal(expansion.hierarchy.type, "audiobook");
 

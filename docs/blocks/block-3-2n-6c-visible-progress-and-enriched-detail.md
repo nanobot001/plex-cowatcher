@@ -4,6 +4,7 @@
 > Result: Implemented.
 > Verification: `npm run verify:block` - passed with 103 service tests, 36 dashboard regression tests, static dashboard validation, and tool-contract verification. Live Warbreaker DOM/geometry inspection and `npm run verify:live-dashboard` also passed.
 > Notes: Known totals now show explicit completed/total/percentage summaries, unknown totals remain honest, and the Progress-only modal is a viewport-bounded 1180px desktop workspace with real source, play, observed-time, activity, and participant context.
+> Correction 2026-07-12: Verified audiobook summaries now report the latest chapter position and source percentage separately from historical chapter completion evidence; percentage fallback uses the verified book duration.
 
 ## Goal
 

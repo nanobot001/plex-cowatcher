@@ -1697,8 +1697,16 @@ function progressUnitCopy(x, count) {
 function progressSummaryCopy(x) {
   const total = Number(x.totalItems || 0);
   if (x.totalKnown && total > 0) {
-    const completed = Math.max(0, Math.min(total, Number(x.distinctCompleted || 0)));
-    const percent = Math.max(0, Math.min(100, Math.round((completed / total) * 100)));
+    const hasCurrentAudiobookPosition = x.category === "audiobook"
+      && x.progressUnit === "chapter"
+      && Number.isInteger(Number(x.currentChapterIndex))
+      && Number(x.currentChapterIndex) > 0;
+    const completed = hasCurrentAudiobookPosition
+      ? Math.max(0, Math.min(total, Number(x.currentChapterIndex)))
+      : Math.max(0, Math.min(total, Number(x.distinctCompleted || 0)));
+    const percent = hasCurrentAudiobookPosition && x.currentProgressPercent != null
+      ? Math.max(0, Math.min(100, Number(x.currentProgressPercent)))
+      : Math.max(0, Math.min(100, Math.round((completed / total) * 100)));
     return {
       text: `${completed} of ${total} ${progressUnitCopy(x, total)} · ${percent}%`,
       percent
