@@ -25,3 +25,10 @@ Every tool must have a risk level.
 - Prompt dismiss and re-prompt endpoints are `write_action`. Both require explicit confirmation, lifecycle validation, idempotent retry behavior, and audit events.
 - Co-watch review decisions are `write_action`. They default to dry-run and require `apply=true`, explicit confirmation, and a stable request ID before appending an adjudication.
 - Asking for Discord review is a separate `write_action` with the same dry-run/apply confirmation contract. Discord interaction resolution is adjudication-only and has no Plex mutation authority.
+
+## Audiobook Proof Operations
+
+- Proof queue status is read-only and path-safe.
+- A one-book canary and requeue are `write_action` operations. Both are dry-run by default and require explicit apply and confirmation.
+- Requeue can reset only one existing non-running job and cannot create a second job for a revision.
+- No public HTTP proof mutation route or household dashboard repair action is permitted.

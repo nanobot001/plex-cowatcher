@@ -1506,6 +1506,7 @@ async function renderProgress() {
     const totalLabel = x.totalKnown ? x.totalItems : "unknown";
     const observedStr = x.observedMinutes > 0 ? fmtHourValue(x.observedMinutes) : "0m";
     const sourceLine = x.category === "audiobook" ? progressSourceCopy(x) : "";
+    const visibleProgress = progressSummaryCopy(x);
 
     // People Badges
     const peopleBadges = (x.people || []).map(p => `
@@ -1544,6 +1545,8 @@ async function renderProgress() {
               <span class="progress-card-category-badge" data-cat="${esc(x.category)}">${esc(categoryLabel(x.category))}</span>
             </div>
             ${summaryLine ? `<p class="progress-card-summary">${summaryLine}</p>` : ""}
+            <p class="progress-card-progress" data-testid="progress-summary">${esc(visibleProgress.text)}</p>
+            ${progressMeterMarkup(visibleProgress, x.title)}
             <p class="progress-card-details">
               ${x.distinctItems} distinct &middot; ${x.plays} play${x.plays > 1 ? "s" : ""} ${x.plays - x.distinctItems > 0 ? `(${x.plays - x.distinctItems} repeat${x.plays - x.distinctItems > 1 ? "s" : ""})` : ""}
             </p>
@@ -1683,6 +1686,60 @@ function progressSourceCopy(x) {
   if (x.progressUnit === "track") return "Plex track/file evidence";
   if (x.progressUnit === "book") return "Book-level evidence";
   return "Progress source unknown";
+}
+
+function progressUnitCopy(x, count) {
+  const fallback = x.category === "audiobook" ? "items" : "items";
+  const label = String(x.progressUnitLabel || x.progressUnit || fallback);
+  return count === 1 ? label.replace(/s$/, "") : label;
+}
+
+function progressSummaryCopy(x) {
+  const total = Number(x.totalItems || 0);
+  if (x.totalKnown && total > 0) {
+    const completed = Math.max(0, Math.min(total, Number(x.distinctCompleted || 0)));
+    const percent = Math.max(0, Math.min(100, Math.round((completed / total) * 100)));
+    return {
+      text: `${completed} of ${total} ${progressUnitCopy(x, total)} · ${percent}%`,
+      percent
+    };
+  }
+  const observed = Math.max(0, Number(x.distinctItems || x.distinctCompleted || 0));
+  return {
+    text: `${observed} ${progressUnitCopy(x, observed)} observed · total unknown`,
+    percent: null
+  };
+}
+
+function progressMeterMarkup(summary, title) {
+  if (summary.percent == null) return "";
+  return `
+    <div class="progress-summary-meter" role="progressbar" aria-label="${esc(title)} ${esc(summary.text)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${summary.percent}">
+      <span style="width:${summary.percent}%"></span>
+    </div>
+  `;
+}
+
+function progressOverviewMarkup(x) {
+  const summary = progressSummaryCopy(x);
+  const source = x.category === "audiobook" ? progressSourceCopy(x) : "Plex playback evidence";
+  const people = (x.people || []).map(person => `<span class="media-badge progress-dialog-person">${esc(person.displayName)}</span>`).join("");
+  const observed = Number(x.observedMinutes || 0) > 0 ? fmtHourValue(x.observedMinutes) : "0m";
+  const latest = x.latestWatchedAt ? fmtDate(x.latestWatchedAt) : "No recent activity";
+  return `
+    <section class="progress-dialog-overview" data-testid="progress-dialog-summary" aria-label="Progress overview">
+      <p class="eyebrow">Overall progress</p>
+      <strong class="progress-dialog-summary-copy">${esc(summary.text)}</strong>
+      ${progressMeterMarkup(summary, x.title || x.showTitle || "Progress")}
+      <dl class="progress-dialog-stats">
+        <div><dt>Source</dt><dd data-testid="progress-dialog-source">${esc(source)}</dd></div>
+        <div><dt>Plays</dt><dd data-testid="progress-dialog-plays">${esc(x.plays || 0)}</dd></div>
+        <div><dt>Observed</dt><dd data-testid="progress-dialog-observed">${esc(observed)}</dd></div>
+        <div><dt>Latest activity</dt><dd data-testid="progress-dialog-latest">${esc(latest)}</dd></div>
+      </dl>
+      <div class="progress-dialog-people" data-testid="progress-dialog-people" aria-label="People">${people || '<span class="text-muted">No visible participants</span>'}</div>
+    </section>
+  `;
 }
 
 function progressStateBadges(watchedStates, itemTitle, stateSources = {}, partialPositions = {}, watcherEvidence = []) {
@@ -1851,10 +1908,17 @@ async function syncProgressDetailFromURL() {
     if (contentEl && hierarchy) {
       contentEl.innerHTML = `
         <div class="progress-dialog-layout detail-layout">
-          <div class="detail-poster-column">
+          <div class="detail-poster-column progress-dialog-reference">
             <div class="detail-poster-wrapper">
               ${optimisticItem ? art(optimisticItem) : ''}
             </div>
+            ${progressOverviewMarkup({
+              ...hierarchy,
+              plays: optimisticItem?.plays ?? hierarchy.plays,
+              observedMinutes: optimisticItem?.observedMinutes ?? hierarchy.observedMinutes,
+              latestWatchedAt: optimisticItem?.latestWatchedAt ?? hierarchy.latestWatchedAt,
+              people: optimisticItem?.people ?? hierarchy.people
+            })}
           </div>
           <div class="detail-scroll-container">
             <div class="detail-info-wrapper">

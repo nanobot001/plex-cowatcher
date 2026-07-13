@@ -24,7 +24,8 @@ const expectedTools = [
   "project.watch_summary",
   "project.viewing_sessions",
   "project.cowatching",
-  "project.audiobook_backfill"
+  "project.audiobook_backfill",
+  "project.audiobook_proof"
 ];
 
 for (const tool of expectedTools) {
@@ -46,7 +47,8 @@ const expectedCliCommands = [
   "watch-summary",
   "viewing-sessions",
   "cowatching",
-  "audiobook-backfill"
+  "audiobook-backfill",
+  "audiobook-proof"
 ];
 
 for (const cmd of expectedCliCommands) {

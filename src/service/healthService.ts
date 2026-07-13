@@ -18,6 +18,7 @@ export class HealthService {
     const watcher = watcherReadiness(userConfig.sourceUserCount);
     const plexMutation = plexMutationReadiness();
     const audiobookDiscovery = audiobookDiscoveryReadiness(this.db);
+    const audiobookProof = audiobookProofReadiness(this.db);
     const readiness = {
       database,
       plex,
@@ -25,7 +26,8 @@ export class HealthService {
       discord,
       watcher,
       plexMutation,
-      audiobookDiscovery
+      audiobookDiscovery,
+      audiobookProof
     };
 
     return {
@@ -40,10 +42,33 @@ export class HealthService {
       tautulli,
       plexMutation,
       audiobookDiscovery,
+      audiobookProof,
       pendingPrompts: pendingPrompts.count,
       failedSyncs: failedSyncs.count
     };
   }
+}
+
+function audiobookProofReadiness(db: Db): HealthResponse["audiobookProof"] {
+  const state = db.prepare("SELECT last_completed_at, next_run_at, lease_expires_at FROM audiobook_proof_state WHERE id = 1").get() as any;
+  const counts = Object.fromEntries((db.prepare(`
+    SELECT state, COUNT(*) AS count FROM audiobook_proof_jobs GROUP BY state
+  `).all() as any[]).map((row) => [row.state, Number(row.count)]));
+  const summary = {
+    pending: Number(counts.pending ?? 0),
+    retryWait: Number(counts.retry_wait ?? 0),
+    failedTerminal: Number(counts.failed_terminal ?? 0),
+    nextRunAt: state?.next_run_at ?? undefined,
+    lastCompletedAt: state?.last_completed_at ?? undefined,
+    leaseActive: Boolean(state?.lease_expires_at && Date.parse(state.lease_expires_at) > Date.now())
+  };
+  if (!appConfig.AUDIOBOOK_PROOF_ENABLED) {
+    return { ...ready("disabled", false, "Automatic audiobook proof is disabled pending canary rollout."), ...summary };
+  }
+  if (!appConfig.AUDIOBOOK_PROOF_EXECUTABLE.trim() || !appConfig.AUDIOBOOK_PROOF_SCRIPT.trim()) {
+    return { ...ready("unconfigured", false, "Automatic audiobook proof requires trusted executable and script configuration."), ...summary };
+  }
+  return { ...ready("healthy", true, "Automatic audiobook proof is configured."), ...summary };
 }
 
 function audiobookDiscoveryReadiness(db: Db): HealthResponse["audiobookDiscovery"] {

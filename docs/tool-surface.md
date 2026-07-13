@@ -28,6 +28,7 @@ Here is how the project's implemented commands and API routes map to the standar
 | `project.audiobook_backfill` | `node dist/cli/cli.js audiobook-backfill` | *(none)* | `write_action` | Dry-run by default; optionally links audiobook tracks, enriches canonical book rows, writes resumable cursors, and creates a verified SQLite backup before apply. |
 | `project.audiobook_scan` | `node dist/cli/cli.js scan-audiobooks` | `POST /webhooks/plex` | `write_action` | Runs the shared restart-safe discovery coordinator. Full scans reconcile metadata and publish revision-deduplicated outbox events; webhooks perform fast item awareness. |
 | `project.audiobook_import_chapters` | `node dist/cli/cli.js import-audiobook-chapters` | *(none)* | `write_action` | Dry-run by default; imports verified audiobook chapter boundaries from a JSON file. |
+| `project.audiobook_proof` | `node dist/cli/cli.js audiobook-proof --action status\|canary\|requeue` | *(none)* | `write_action` | Reports bounded queue status, runs one confirmed canary, or idempotently requeues one existing job. |
 
 ## Contract Notes
 
@@ -36,6 +37,7 @@ Here is how the project's implemented commands and API routes map to the standar
 - `project.audiobook_backfill` is intentionally CLI-only. It is not exposed as a public HTTP mutation route.
 - Write-capable tools must preserve dry-run behavior unless the caller explicitly opts into apply mode and any required confirmations.
 - `project.audiobook_scan` preserves legacy `scanned`, `added`, `enriched`, and `errors` fields while adding track/book/pending/conflict/outbox counts. Outputs never include private paths or raw provider errors.
+- `project.audiobook_proof` is CLI-only. Canary and requeue are dry-run by default and require both `--apply` and `--confirm`; outputs contain only job IDs, counts, states, timing, and allowlisted codes.
 
 ## Output Contract
 

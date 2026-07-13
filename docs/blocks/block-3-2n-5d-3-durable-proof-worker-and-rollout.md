@@ -1,8 +1,9 @@
 # Block 3-2n-5d-3: Durable Proof Worker And Rollout
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Final child of the 3-2n-5d umbrella. Connect manifest-backed discovery to the verified adapter through a bounded, restart-safe PM2 runtime and stage the live rollout.
+> Status: Implemented with recurring rollout ready to resume as of 2026-07-12.
+> Result: Implemented with limitations.
+> Verification: `npm run verify:block` - passed with 100 service tests, 36 dashboard regression tests, static dashboard validation, and tool-contract verification.
+> Notes: Added migration 16, unique durable proof jobs, global/job leases and heartbeat recovery, bounded completion scheduling, deterministic retries, safe activation/skip classifications, disabled-by-default same-process runtime, CLI status/canary/requeue operations, and privacy-safe health/audit summaries. The backup, corrective 5D-2A gate, disabled Eric canary, PM2 restart, audit checks, verified Progress readback, and live dashboard smoke gate passed. Recurring proof remains disabled pending the explicit 5D-3 enablement decision.
 
 ## Goal
 
@@ -11,6 +12,7 @@ Automatically process eligible audiobook proof work at a safe rate, survive rest
 ## Dependencies And Entry Gate
 
 - Blocks 3-2n-5d-1 and 3-2n-5d-2 are implemented and verified.
+- Corrective Block 3-2n-5d-2A is implemented; `npm run verify:block` and the disabled Eric recovery canary passed.
 - Production remains disabled until the staged canary and privacy checks pass.
 - The existing manual import remains available throughout rollout and rollback.
 

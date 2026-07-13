@@ -9,6 +9,8 @@ const MAX_CHAPTERS = 5_000;
 const MAX_TITLE_LENGTH = 500;
 const MAX_WARNING_COUNT = 50;
 const DURATION_TOLERANCE_MS = 10_000;
+const EMBEDDED_STARTS_INVALID_WARNING = "EMBEDDED_STARTS_INVALID";
+const EMBEDDED_VALIDATION_REJECTED_WARNING = "EMBEDDED_VALIDATION_REJECTED";
 
 export type AudiobookProofSafeCode =
   | "PROOF_NOT_CONFIGURED"
@@ -21,6 +23,7 @@ export type AudiobookProofSafeCode =
   | "MALFORMED_EXTERNAL_OUTPUT"
   | "EXTERNAL_OUTPUT_LIMIT"
   | "EXTERNAL_TIMEOUT"
+  | "EXTERNAL_FILE_UNAVAILABLE"
   | "INVALID_CHAPTERS"
   | "DURATION_MISMATCH"
   | "LOW_CONFIDENCE";
@@ -114,35 +117,46 @@ export class AudiobookProofAdapter {
       commands.push("inspect");
       const inspect = await this.runCommand("inspect", input.privateFilePath);
       const inspectData = requireObject(inspect.data);
-      const inspectedDuration = finiteNumber(inspectData.duration_s) * 1_000;
+      const inspectedDuration = Math.round(finiteNumber(inspectData.duration_s) * 1_000);
       if (!Number.isInteger(inspectData.chapter_count) || inspectData.chapter_count < 0 ||
           !Number.isFinite(inspectedDuration) || inspectedDuration <= 0) {
         throw new SafeProofError("MALFORMED_EXTERNAL_OUTPUT");
       }
-      const embedded = parseChapters(inspectData.chapters, false);
-      if (inspectData.chapter_count !== embedded.length) throw new SafeProofError("MALFORMED_EXTERNAL_OUTPUT");
+      if (!Array.isArray(inspectData.chapters) || inspectData.chapters.length > MAX_CHAPTERS ||
+          inspectData.chapter_count !== inspectData.chapters.length) {
+        throw new SafeProofError("MALFORMED_EXTERNAL_OUTPUT");
+      }
       if (Math.abs(inspectedDuration - input.durationMs) > DURATION_TOLERANCE_MS) {
         throw new SafeProofError("DURATION_MISMATCH");
       }
 
-      if (embedded.length >= 2) {
+      let embeddedRejectionWarning: string | undefined;
+      if (inspectData.chapters.length >= 2) {
         commands.push("validate");
         const validation = await this.runCommand("validate", input.privateFilePath);
         const validationData = requireObject(validation.data);
         validateValidationContract(validationData);
-        if (isCleanValidation(validationData)) {
-          validateChapterTimeline(embedded, input.durationMs);
-          return {
-            status: "activatable",
-            candidate: {
-              chapters: embedded,
-              sourceType: "embedded",
-              confidence: 1,
-              contractVersion: 1,
-              warnings: []
-            },
-            commands
-          };
+        if (validationData.has_chapters === true && validationData.chapter_count === inspectData.chapter_count) {
+          try {
+            const embedded = normalizeEmbeddedChapters(inspectData.chapters, inspectedDuration);
+            validateChapterTimeline(embedded, inspectedDuration);
+            return {
+              status: "activatable",
+              candidate: {
+                chapters: embedded,
+                sourceType: "embedded",
+                confidence: 1,
+                contractVersion: 1,
+                warnings: []
+              },
+              commands
+            };
+          } catch (error) {
+            if (!(error instanceof SafeProofError) || error.code !== "INVALID_CHAPTERS") throw error;
+            embeddedRejectionWarning = EMBEDDED_STARTS_INVALID_WARNING;
+          }
+        } else {
+          embeddedRejectionWarning = EMBEDDED_VALIDATION_REJECTED_WARNING;
         }
       }
 
@@ -163,7 +177,7 @@ export class AudiobookProofAdapter {
       }
       const chapters = parseChapters(resolveData.chapters, true);
       validateChapterTimeline(chapters, input.durationMs);
-      const warnings = boundedWarnings(resolveData.warnings);
+      const warnings = mergeWarnings(boundedWarnings(resolveData.warnings), embeddedRejectionWarning);
       const source = typeof resolveData.source === "string" ? resolveData.source.toLowerCase() : "";
       const whisperVerified = resolveData.whisper_verified === true;
       const allHighConfidence = chapters.every((chapter) =>
@@ -272,7 +286,12 @@ export class AudiobookProofAdapter {
         try {
           const envelope = JSON.parse(Buffer.concat(stdout).toString("utf8"));
           validateEnvelope(envelope);
-          if (envelope.ok !== true) throw new SafeProofError("EXTERNAL_ERROR_ENVELOPE", isTransientEnvelope(envelope));
+          if (envelope.ok !== true) {
+            if (envelope?.error?.code === "FILE_NOT_FOUND") {
+              throw new SafeProofError("EXTERNAL_FILE_UNAVAILABLE", true);
+            }
+            throw new SafeProofError("EXTERNAL_ERROR_ENVELOPE", isTransientEnvelope(envelope));
+          }
           resolve(envelope);
         } catch (error) {
           reject(error instanceof SafeProofError ? error : new SafeProofError("MALFORMED_EXTERNAL_OUTPUT"));
@@ -330,6 +349,30 @@ function parseChapters(
   });
 }
 
+function normalizeEmbeddedChapters(value: unknown, durationMs: number): ChapterActivationItem[] {
+  if (!Array.isArray(value) || value.length < 2 || value.length > MAX_CHAPTERS ||
+      !Number.isInteger(durationMs) || durationMs <= 0) {
+    throw new SafeProofError("INVALID_CHAPTERS");
+  }
+  const starts = value.map((raw, offset) => {
+    const chapter = requireObject(raw);
+    const title = typeof chapter.title === "string" ? chapter.title.trim() : "";
+    const start = finiteNumber(chapter.start_ms);
+    const suppliedEnd = finiteNumber(chapter.end_ms);
+    if (!title || title.length > MAX_TITLE_LENGTH || !Number.isInteger(start) || !Number.isInteger(suppliedEnd) ||
+        start < 0 || start >= durationMs || (offset > 0 && start <= finiteNumber(requireObject(value[offset - 1]).start_ms))) {
+      throw new SafeProofError("INVALID_CHAPTERS");
+    }
+    return { title, start };
+  });
+  return starts.map((chapter, offset) => ({
+    index: offset + 1,
+    title: chapter.title,
+    start_offset_ms: chapter.start,
+    end_offset_ms: starts[offset + 1]?.start ?? durationMs
+  }));
+}
+
 function validateChapterTimeline(chapters: ChapterActivationItem[], durationMs: number): void {
   if (chapters.length < 2 || !Number.isFinite(durationMs) || durationMs <= 0) {
     throw new SafeProofError("INVALID_CHAPTERS");
@@ -347,13 +390,6 @@ function validateChapterTimeline(chapters: ChapterActivationItem[], durationMs: 
   }
 }
 
-function isCleanValidation(value: Record<string, unknown>): boolean {
-  return value.has_chapters === true &&
-    ["overlapping_chapters", "short_chapters", "missing_titles", "duplicate_timestamps", "duplicate_titles"]
-      .every((key) => finiteNumber(value[key]) === 0) &&
-    finiteNumber(value.duration_gap_s) <= 10;
-}
-
 function validateValidationContract(value: Record<string, unknown>): void {
   const chapterCount = finiteNumber(value.chapter_count);
   if (typeof value.has_chapters !== "boolean" || !Number.isInteger(chapterCount) ||
@@ -366,6 +402,11 @@ function validateValidationContract(value: Record<string, unknown>): void {
       !Number.isFinite(finiteNumber(value.duration_gap_s)) || finiteNumber(value.duration_gap_s) < 0) {
     throw new SafeProofError("MALFORMED_EXTERNAL_OUTPUT");
   }
+}
+
+function mergeWarnings(warnings: string[], embeddedRejectionWarning?: string): string[] {
+  return [...new Set([...(embeddedRejectionWarning ? [embeddedRejectionWarning] : []), ...warnings])]
+    .slice(0, MAX_WARNING_COUNT);
 }
 
 function boundedWarnings(value: unknown): string[] {

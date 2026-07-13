@@ -2,20 +2,22 @@
 
 > Status: Planned.
 > Result: Not implemented.
-> Notes: Umbrella only; do not implement directly. Implement 3-2n-5d-1, then 3-2n-5d-2, then 3-2n-5d-3 so revision integrity, the external-process boundary, and runtime rollout have independent exit gates.
+> Notes: Umbrella only; do not implement directly. Corrective 3-2n-5d-2A and its disabled Eric canary passed after the first canary exposed embedded end-metadata drift. Recurring-worker enablement remains the final 3-2n-5d-3 rollout step.
 
 ## Child Block Sequence
 
 1. `block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md`
 2. `block-3-2n-5d-2-trusted-external-proof-adapter.md`
-3. `block-3-2n-5d-3-durable-proof-worker-and-rollout.md`
+3. `block-3-2n-5d-2a-embedded-chapter-timeline-normalization.md`
+4. `block-3-2n-5d-3-durable-proof-worker-and-rollout.md`
 
-The umbrella is complete only after all three child blocks pass `npm run verify:block`; 5D-3 also owns the staged live rollout and `npm run verify:live-dashboard`.
+The umbrella is complete only after all child blocks pass `npm run verify:block`; 5D-2A also requires the corrected disabled Eric canary, and 5D-3 retains ownership of recurring-worker enablement and the final `npm run verify:live-dashboard` rollout gate.
 
 Locked split decisions:
 
 - 5D-1 must persist immutable revision membership before any external proof work can run.
 - 5D-2 treats the current unversioned external envelope as compatibility version 1, validates imported chapter fields strictly, and ignores only bounded harmless envelope metadata.
+- 5D-2A treats valid embedded starts as navigation evidence, reconstructs bounded ends, and never clamps an invalid start.
 - Only clean embedded, high-confidence Audnexus, or Whisper-verified boundaries may become active chapter truth.
 - 5D-3 processes at most one eligible job every 15 minutes and uses a disabled, backed-up, single-book canary before enabling recurring production work.
 

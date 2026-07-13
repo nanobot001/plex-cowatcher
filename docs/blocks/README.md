@@ -6,7 +6,7 @@ Blocks are numbered, bounded AI-buildable tickets for code, logic, docs, folder 
 
 The project is currently in the Phase 3 refinement set. A live Playwright review found that the completed 3-2f redesign did not meet its intended usability, bounded-rendering, or responsive outcome. The immediate next selected block is:
 
-- `block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md`
+- `block-3-2n-5d-3-durable-proof-worker-and-rollout.md` - resume recurring-worker rollout.
 
 Phase 3 builds on the completed playback-intelligence foundation with domain-specific refinement, richer operator ergonomics, and reporting.
 Blocks 3-2a through 3-2e form one sequential dashboard implementation path:
@@ -49,12 +49,14 @@ Corrective sequence:
 26. `block-3-2n-5d-automatic-audiobook-chapter-proof-handoff.md` - umbrella only; do not implement directly.
    1. `block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md` - implemented and verified.
    2. `block-3-2n-5d-2-trusted-external-proof-adapter.md` - implemented and verified.
-   3. `block-3-2n-5d-3-durable-proof-worker-and-rollout.md`
-27. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
+   3. `block-3-2n-5d-2a-embedded-chapter-timeline-normalization.md` - implemented, verified, and passed the corrected Eric canary.
+   4. `block-3-2n-5d-3-durable-proof-worker-and-rollout.md` - implementation and canary verified; recurring enablement remains pending.
+27. `block-3-2n-6c-visible-progress-and-enriched-detail.md` - implemented and verified.
+28. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
 
 Do not implement a later corrective block until the previous block's exit gate is recorded as passing. A later block must not conceal, waive, or silently absorb a failed earlier acceptance criterion.
 
-The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n is implemented through 3-2n-5d-2. The remaining audiobook automation work is 3-2n-5d-3, followed by the 3-2o accessibility and regression gate.
+The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n code is implemented through 3-2n-5d-3, and corrective 5D-2A plus the disabled Eric canary passed. Resume the explicit 5D-3 recurring-worker rollout before the umbrella exit gate and 3-2o.
 
 ## Umbrella Specifications
 
@@ -101,7 +103,8 @@ The full 3-2m sequence is implemented and verified: household profiles, person p
 - `block-3-2n-5d-automatic-audiobook-chapter-proof-handoff.md` - planned umbrella.
 - `block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md` - implemented historical reference.
 - `block-3-2n-5d-2-trusted-external-proof-adapter.md` - implemented historical reference.
-- `block-3-2n-5d-3-durable-proof-worker-and-rollout.md`
+- `block-3-2n-5d-2a-embedded-chapter-timeline-normalization.md` - implemented historical reference.
+- `block-3-2n-5d-3-durable-proof-worker-and-rollout.md` - implementation and canary verified; recurring enablement pending.
 
 Completed blocks remain as historical references. Verify current behavior from code and current docs, not from older block assumptions.
 
