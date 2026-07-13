@@ -6,11 +6,12 @@ Current state:
 - Blocks 3-2n-5d-1, 3-2n-5d-2, and the code portion of 3-2n-5d-3 are implemented and passed `npm run verify:block`.
 - The production SQLite database was backed up, the trusted adapter was configured, and automatic proof remains disabled.
 - The first live canary targeted audiobook ID 34 (`Eric`) and exposed an embedded end-metadata normalization gap. Block 3-2n-5d-2A corrected it and passed `npm run verify:block` with 103 service tests and 36 dashboard regressions.
-- The corrected disabled Eric canary succeeded with 57 active revision-matched embedded chapters. A second disabled canary proved the current Warbreaker edition with 62 chapters and 8 completed chapters.
-- Block 3-2n-6C now renders Warbreaker as `8 of 62 chapters · 13%` and expands Progress into a larger enriched modal with real source, plays, observed time, latest activity, and participants. The block and live dashboard gates passed. Automatic proof remains disabled.
+- The corrected disabled Eric canary succeeded with 57 active revision-matched embedded chapters. A second disabled canary proved the current Warbreaker edition with 62 chapters and current playback at Chapter 24 (36%).
+- Block 3-2n-6C now renders Warbreaker as `24 of 62 chapters · 36%`; the expanded modal marks Chapters 1-23 as completed/repeated, Chapter 24 as the current partial chapter, and Chapters 25-62 as unknown. The corrective block and live dashboard gates passed. Automatic proof remains disabled.
 
 Next step:
 - Resume the explicit recurring-worker enablement portion of **Block 3-2n-5d-3: Durable Proof Worker And Rollout** (`docs/blocks/block-3-2n-5d-3-durable-proof-worker-and-rollout.md`). Review the remaining pending and unsupported jobs, then enable only with an explicit rollout decision and rerun the live smoke gate.
+- After that rollout gate passes, implement the planned **Block 3-2n-6D** children in order, beginning with **6D-1: Bounded Resume Transcription Contract** (`docs/blocks/block-3-2n-6d-1-bounded-resume-transcription-contract.md`). The umbrella is `docs/blocks/block-3-2n-6d-audiobook-resume-context.md`, and the pre-implementation review is `docs/process/block-3-2n-6d-design-review.md`. The first release provides a private stopping-point excerpt plus chapter/position context; a true paraphrased summary remains a separately gated model/provider decision because Whisper alone cannot generate one.
 
 ## 2026-07-11
 

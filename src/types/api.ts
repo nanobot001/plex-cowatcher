@@ -218,6 +218,8 @@ export interface DashboardProgressGroup {
   progressSource?: ProgressSource;
   progressSourceVerified?: boolean;
   hasVerifiedChapters?: boolean;
+  currentChapterIndex?: number | null;
+  currentProgressPercent?: number | null;
   totalKnown: boolean;
   totalItems: number | null;
   distinctItems: number;
@@ -295,6 +297,8 @@ export interface ProgressHierarchyExpansion {
   progressSource?: ProgressSource;
   progressSourceVerified?: boolean;
   hasVerifiedChapters?: boolean;
+  currentChapterIndex?: number | null;
+  currentProgressPercent?: number | null;
   totalKnown: boolean;
   totalItems: number | null;
   distinctItems: number;
