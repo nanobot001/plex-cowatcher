@@ -11,6 +11,7 @@ Current state:
 
 Next step:
 - Resume the explicit recurring-worker enablement portion of **Block 3-2n-5d-3: Durable Proof Worker And Rollout** (`docs/blocks/block-3-2n-5d-3-durable-proof-worker-and-rollout.md`). Review the remaining pending and unsupported jobs, then enable only with an explicit rollout decision and rerun the live smoke gate.
+- After that rollout gate passes, implement the planned **Block 3-2n-6D** children in order, beginning with **6D-1: Bounded Resume Transcription Contract** (`docs/blocks/block-3-2n-6d-1-bounded-resume-transcription-contract.md`). The umbrella is `docs/blocks/block-3-2n-6d-audiobook-resume-context.md`, and the pre-implementation review is `docs/process/block-3-2n-6d-design-review.md`. The first release provides a private stopping-point excerpt plus chapter/position context; a true paraphrased summary remains a separately gated model/provider decision because Whisper alone cannot generate one.
 
 ## 2026-07-11
 
