@@ -6,10 +6,11 @@ Current state:
 - Blocks 3-2n-5d-1, 3-2n-5d-2, and the code portion of 3-2n-5d-3 are implemented and passed `npm run verify:block`.
 - The production SQLite database was backed up, the trusted adapter was configured, and automatic proof remains disabled.
 - The first live canary targeted audiobook ID 34 (`Eric`) and exposed an embedded end-metadata normalization gap. Block 3-2n-5d-2A corrected it and passed `npm run verify:block` with 103 service tests and 36 dashboard regressions.
-- The corrected disabled canary succeeded with 57 active revision-matched embedded chapters, verified chapter Progress, path-safe audits, and a passing `npm run verify:live-dashboard`. Automatic proof remains disabled.
+- The corrected disabled Eric canary succeeded with 57 active revision-matched embedded chapters. A second disabled canary proved the current Warbreaker edition with 62 chapters and 8 completed chapters.
+- Block 3-2n-6C now renders Warbreaker as `8 of 62 chapters · 13%` and expands Progress into a larger enriched modal with real source, plays, observed time, latest activity, and participants. The block and live dashboard gates passed. Automatic proof remains disabled.
 
 Next step:
-- Resume the explicit recurring-worker enablement portion of **Block 3-2n-5d-3: Durable Proof Worker And Rollout** (`docs/blocks/block-3-2n-5d-3-durable-proof-worker-and-rollout.md`). Review the 54 pending and 15 unsupported jobs, then enable only with an explicit rollout decision and rerun the live smoke gate.
+- Resume the explicit recurring-worker enablement portion of **Block 3-2n-5d-3: Durable Proof Worker And Rollout** (`docs/blocks/block-3-2n-5d-3-durable-proof-worker-and-rollout.md`). Review the remaining pending and unsupported jobs, then enable only with an explicit rollout decision and rerun the live smoke gate.
 
 ## 2026-07-11
 

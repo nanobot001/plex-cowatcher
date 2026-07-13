@@ -56,7 +56,7 @@ export function registerWebRoutes(router: Router): void {
           <div id="progress-content"></div>
         </dialog>
       </div>
-      <script src="/static/dashboard.js?v=3-2m-4"></script>
+      <script src="/static/dashboard.js?v=3-2n-6c"></script>
     `));
   });
 
@@ -722,7 +722,7 @@ function renderPage(title: string, body: string): string {
       <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
       <link rel="apple-touch-icon" href="/static/icon.svg">
       <title>${title} - Plex Co-Watch Sync</title>
-      <link rel="stylesheet" href="/static/styles.css">
+      <link rel="stylesheet" href="/static/styles.css?v=3-2n-6c">
       <script>
         if ('serviceWorker' in navigator) {
           window.addEventListener('load', () => {

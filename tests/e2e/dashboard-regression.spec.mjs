@@ -496,6 +496,18 @@ test("Progress hierarchy expands lazily, caches responses, and preserves route s
   const progressDialog = page.locator("#progress-dialog");
   await expect(progressDialog).toBeVisible();
   await expect(page.locator("#detail-dialog")).not.toBeVisible();
+  const dialogBox = await progressDialog.boundingBox();
+  const viewport = page.viewportSize();
+  expect(dialogBox).not.toBeNull();
+  if (viewport.width >= 1025) {
+    expect(dialogBox.width).toBeGreaterThanOrEqual(1000);
+    expect(dialogBox.width).toBeLessThanOrEqual(viewport.width * 0.95);
+  } else {
+    expect(dialogBox.width).toBeGreaterThanOrEqual(viewport.width - 2);
+  }
+  await expect(progressDialog.getByTestId("progress-dialog-summary")).toContainText("Overall progress");
+  await expect(progressDialog.getByTestId("progress-dialog-summary")).toContainText("Source");
+  await expect(progressDialog.getByTestId("progress-dialog-summary")).toContainText("Latest activity");
   await expect(progressDialog.getByTestId("progress-season").first()).toContainText("Season 1");
   await expect(progressDialog.getByTestId("progress-episode").filter({ hasText: "Confirmed Episode" }).first()).toBeVisible();
   await expect.poll(() => expansionRequests.length).toBe(1);
@@ -522,6 +534,8 @@ test("Progress hierarchy expands lazily, caches responses, and preserves route s
   await expect(audiobookCard).toBeVisible();
   // Its cached proof belongs to an older media revision, so the safe track/file fallback is durable UI behavior.
   await expect(audiobookCard.locator(".progress-card-source")).toContainText("Plex track/file evidence");
+  await expect(audiobookCard.getByTestId("progress-summary")).toContainText("total unknown");
+  await expect(audiobookCard.getByTestId("progress-summary")).not.toContainText("%");
   await audiobookCard.click();
   await expect(progressDialog).toBeVisible();
   await expect(progressDialog.getByTestId("progress-chapter").filter({ hasText: "Chapter 1" }).first()).toBeVisible();
@@ -531,8 +545,18 @@ test("Progress hierarchy expands lazily, caches responses, and preserves route s
   const verifiedAudiobookCard = cardFor("Verified Fixture Audiobook");
   await expect(verifiedAudiobookCard).toBeVisible();
   await expect(verifiedAudiobookCard.locator(".progress-card-source")).toContainText("Verified audiobook chapters");
+  await expect(verifiedAudiobookCard.getByTestId("progress-summary")).toContainText("1 of 3 chapters · 33%");
+  await expect(verifiedAudiobookCard.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "33");
   await verifiedAudiobookCard.click();
   await expect(progressDialog).toBeVisible();
+  const verifiedOverview = progressDialog.getByTestId("progress-dialog-summary");
+  await expect(verifiedOverview).toContainText("1 of 3 chapters · 33%");
+  await expect(verifiedOverview).toContainText("Verified audiobook chapters");
+  await expect(verifiedOverview).toContainText("Plays");
+  await expect(verifiedOverview).toContainText("Observed");
+  await expect(verifiedOverview.getByTestId("progress-dialog-plays")).toHaveText("1");
+  await expect(verifiedOverview.getByTestId("progress-dialog-people")).toContainText("Tony");
+  await expect(verifiedOverview.getByTestId("progress-dialog-people")).not.toContainText("Hidden");
   await expect(progressDialog.getByTestId("progress-chapter").filter({ hasText: "Verified Chapter 1" }).first()).toContainText("watched");
   await expect(progressDialog.getByTestId("progress-chapter").filter({ hasText: "Verified Chapter 2" }).first()).toContainText("partial");
 

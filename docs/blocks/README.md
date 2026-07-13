@@ -51,7 +51,8 @@ Corrective sequence:
    2. `block-3-2n-5d-2-trusted-external-proof-adapter.md` - implemented and verified.
    3. `block-3-2n-5d-2a-embedded-chapter-timeline-normalization.md` - implemented, verified, and passed the corrected Eric canary.
    4. `block-3-2n-5d-3-durable-proof-worker-and-rollout.md` - implementation and canary verified; recurring enablement remains pending.
-27. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
+27. `block-3-2n-6c-visible-progress-and-enriched-detail.md` - implemented and verified.
+28. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
 
 Do not implement a later corrective block until the previous block's exit gate is recorded as passing. A later block must not conceal, waive, or silently absorb a failed earlier acceptance criterion.
 
