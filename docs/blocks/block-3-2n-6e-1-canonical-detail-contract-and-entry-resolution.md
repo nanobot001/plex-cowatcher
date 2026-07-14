@@ -1,8 +1,9 @@
 # Block 3-2n-6E-1: Canonical Detail Contract And Entry Resolution
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: First child of 3-2n-6E. Establish one additive, typed, bounded detail identity/read contract before changing visible modal behavior.
+> Status: Implemented on 2026-07-13.
+> Result: Implemented with limitations.
+> Verification: `npm run verify:block` - passed (104 service/integration tests, 36 dashboard regression tests, tool-contract verification).
+> Notes: Added typed canonical identity resolution, bounded workspace and lazy hierarchy read routes, raw/Progress selector parity fixtures, privacy-safe absence handling, and the additive localhost tool-surface contract. Visible modal callers remain unchanged for 6E-2/6E-3; the base people summary is bounded to the existing detail activity sample until shared presenters consume the contract.
 
 ## Goal
 

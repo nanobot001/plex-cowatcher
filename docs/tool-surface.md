@@ -71,7 +71,8 @@ Error shape:
 
 Block 3-2 adds localhost browser endpoints that reuse the shared state and service layer:
 
-- GET /api/dashboard/overview, /activity, /timeline, /media, /continue-consuming, /people, /cowatch-pairings, /cowatch-reviews, /operations, /progress, /cowatching, /prompts, and /detail/:ratingKey are public_read within the localhost boundary.
+- GET /api/dashboard/overview, /activity, /timeline, /media, /continue-consuming, /people, /cowatch-pairings, /cowatch-reviews, /operations, /progress, /cowatching, /prompts, /detail/:ratingKey, /detail-workspace/:detailKey, and /detail-workspace/:detailKey/hierarchy are public_read within the localhost boundary.
+- `/api/dashboard/detail-workspace/:detailKey` accepts canonical detail keys plus current raw rating keys and Progress group keys; its hierarchy child route is lazy and category-discriminated. These additive routes do not create a new published `project.*` tool.
 - GET /api/artwork/:ratingKey is a token-safe Plex image proxy. It never returns an authenticated upstream URL and falls back to the local icon.
 - GET /api/dashboard/export.csv is a transient public_read stream. It does not retain files and excludes credentials, private paths, Discord IDs, and adapter metadata.
 - POST /api/dashboard/prompts/:id/dismiss and /reprompt are write_action routes. They require an explicit confirm=true body, validate lifecycle eligibility, are safe to retry, and record applied or skipped audit events.

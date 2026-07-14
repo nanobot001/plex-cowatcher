@@ -52,6 +52,11 @@ export function buildRouter(
     }
     next(error);
   };
+  const sendDetailWorkspaceResult = (result: { ok: boolean; errorCode?: string }, res: express.Response) => {
+    if (result.ok) return res.json(result);
+    const status = result.errorCode === "DETAIL_NOT_FOUND" ? 404 : result.errorCode === "DETAIL_AMBIGUOUS" ? 409 : 400;
+    return res.status(status).json({ ok: false, errorCode: result.errorCode, message: "Detail workspace could not be resolved." });
+  };
   const artworkUrlCache = new Map<string, string>();
   const discordReviewAvailable = options.discordReviewAvailable ?? appConfig.DISCORD_ENABLED;
 
@@ -227,6 +232,18 @@ export function buildRouter(
       });
       const status = result.ok ? 200 : result.errorCode === "COWATCH_CANDIDATE_NOT_FOUND" ? 404 : 400;
       res.status(status).json(result);
+    } catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/detail-workspace/:detailKey/hierarchy", (req, res, next) => {
+    try {
+      const selector = decodeURIComponent(req.params.detailKey);
+      return sendDetailWorkspaceResult(dashboardService.getDetailWorkspaceHierarchy(selector), res);
+    } catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/detail-workspace/:detailKey", (req, res, next) => {
+    try {
+      const selector = decodeURIComponent(req.params.detailKey);
+      return sendDetailWorkspaceResult(dashboardService.getDetailWorkspace(selector), res);
     } catch (e) { next(e); }
   });
   router.get("/api/dashboard/detail/:ratingKey", (req, res, next) => {

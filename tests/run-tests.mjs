@@ -2745,6 +2745,58 @@ test("dashboard poster cards retain one accessible viewer badge without duplicat
   assert.doesNotMatch(dashboardSource, /\$\{libraryArt\(cw\)\}[\s\S]*\$\{watchedBy\(cw\)\}/);
 });
 
+test("dashboard detail workspace resolves raw and progress selectors to canonical identities", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const users = Object.fromEntries(db.prepare("SELECT id, plex_username FROM users").all().map((user) => [user.plex_username, user.id]));
+    const now = "2026-07-10T12:00:00.000Z";
+    db.prepare(`INSERT INTO content_catalog (rating_key, media_type, title, library_title, leaf_count, source_provenance, refreshed_at)
+      VALUES ('movie-1', 'movie', 'Same Movie', 'Movies', 1, 'fixture', ?)`).run(now);
+    db.prepare(`INSERT INTO content_catalog (rating_key, media_type, title, library_title, leaf_count, source_provenance, refreshed_at)
+      VALUES ('show-1', 'show', 'Same Series', 'TV Shows', 2, 'fixture', ?)`).run(now);
+    db.prepare(`INSERT INTO content_catalog (rating_key, media_type, title, library_title, grandparent_rating_key, grandparent_title, source_provenance, refreshed_at)
+      VALUES ('episode-1', 'episode', 'Episode 1', 'TV Shows', 'show-1', 'Same Series', 'fixture', ?)`).run(now);
+    db.prepare(`INSERT INTO audiobook_books (id, folder_key, title, subtitle, chapter_count, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES (10, 'same-book-folder', 'Same Audiobook', 'A bounded subtitle', 2, 'plex', 'enriched', ?, ?)`).run(now, now);
+    db.prepare(`INSERT INTO content_catalog (rating_key, media_type, title, library_title, parent_rating_key, audiobook_id, source_provenance, refreshed_at)
+      VALUES ('track-1', 'track', 'Chapter 1', 'Audiobooks', 'parent-1', 10, 'fixture', ?)`).run(now);
+    const insertObservation = db.prepare(`INSERT INTO playback_observations
+      (user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, percent_complete, duration, completed, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    insertObservation.run(users.Tony, "movie-1", null, "movie", "Movies", "Same Movie", null, now, 100, 600000, 1, now, now);
+    insertObservation.run(users.Tony, "episode-1", "show-1", "episode", "TV Shows", "Episode 1", "Same Series", now, 50, 600000, 0, now, now);
+    insertObservation.run(users.Tony, "track-1", null, "track", "Audiobooks", "Chapter 1", null, now, 50, 600000, 0, now, now);
+
+    const service = new DashboardService(db);
+    assert.equal(service.resolveDetailIdentity("movie-1").identity.detailKey, "movie:movie-1");
+    assert.equal(service.resolveDetailIdentity("movie:Movies:movie-1").identity.detailKey, "movie:movie-1");
+    assert.equal(service.resolveDetailIdentity("series:tv:TV Shows:show-1").identity.detailKey, "series:tv:show-1");
+    assert.equal(service.resolveDetailIdentity("episode-1").identity.detailKey, "series:tv:show-1");
+    assert.equal(service.resolveDetailIdentity("audiobook:Audiobooks:10").identity.detailKey, "audiobook:10");
+    assert.equal(service.resolveDetailIdentity("track-1").identity.detailKey, "audiobook:10");
+    assert.equal(service.resolveDetailIdentity("parent-1").identity.detailKey, "audiobook:10");
+
+    const movie = service.getDetailWorkspace("movie-1");
+    assert.equal(movie.ok, true);
+    assert.equal(movie.data.detailKey, "movie:movie-1");
+    assert.equal(movie.data.title, "Same Movie");
+    assert.equal(movie.data.progressSummary.completedItems, 1);
+    assert.equal(movie.data.hierarchy.available, true);
+    assert.equal(Object.hasOwn(movie.data, "plays"), false);
+
+    const audiobook = service.getDetailWorkspace("audiobook:10");
+    assert.equal(audiobook.ok, true);
+    assert.equal(audiobook.data.category, "audiobook");
+    assert.equal(audiobook.data.progressSummary.totalItems, 2);
+
+    db.prepare(`INSERT INTO content_catalog (rating_key, media_type, title, library_title, source_provenance, refreshed_at)
+      VALUES ('hidden-movie', 'movie', 'Hidden Movie', 'Movies', 'fixture', ?)`).run(now);
+    insertObservation.run(users.Disabled, "hidden-movie", null, "movie", "Movies", "Hidden Movie", null, now, 100, 600000, 1, now, now);
+    assert.equal(service.resolveDetailIdentity("hidden-movie").ok, false);
+    assert.equal(service.resolveDetailIdentity("hidden-movie").errorCode, "DETAIL_NOT_FOUND");
+  });
+});
+
 test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed prompt actions", async () => {
   await withTestDb(async (db) => {
     seedUsers(db);
@@ -2801,6 +2853,14 @@ test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed promp
       assert.equal(detail.data.item.title,"HTTP Movie");
       assert.equal(detail.data.repeatCount,0);
       assert.equal(typeof detail.data.timingMs,"number");
+      const workspace = await (await fetch(base+"/api/dashboard/detail-workspace/"+encodeURIComponent("movie:movie-http"))).json();
+      assert.equal(workspace.ok,true);
+      assert.equal(workspace.data.detailKey,"movie:movie-http");
+      assert.equal(workspace.data.title,"HTTP Movie");
+      assert.equal(workspace.data.hierarchy.available,true);
+      const rawWorkspace = await (await fetch(base+"/api/dashboard/detail-workspace/movie-http")).json();
+      assert.equal(rawWorkspace.ok,true);
+      assert.equal(rawWorkspace.data.detailKey,workspace.data.detailKey);
       const people = await (await fetch(base+"/api/dashboard/people?period=7d")).json();
       assert.equal(people.ok,true);
       assert.equal(people.data.window.period,"7d");

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Db } from "../db/database.js";
-import type { DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket, ProgressHierarchyExpansion, ProgressNodeState, ProgressNodeStateSource } from "../types/api.js";
+import type { DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket, ProgressHierarchyExpansion, ProgressNodeState, ProgressNodeStateSource, DashboardDetailIdentity, DashboardDetailIdentityInput, DashboardDetailResolution, DashboardDetailWorkspaceResult, DashboardDetailWorkspaceHierarchyResult } from "../types/api.js";
 import { CowatchingIntelligenceService } from "./cowatchingIntelligenceService.js";
 import { CowatchAdjudicationService } from "./cowatchAdjudicationService.js";
 
@@ -197,6 +197,20 @@ function explorerGroupKey(item: DashboardActivityItem): string {
   return `other:${library}:${item.ratingKey}`;
 }
 
+function isSafeDetailSegment(value: string): boolean {
+  return value.length > 0 && value.length <= 200 && !/[\s/:?#]/.test(value);
+}
+
+function detailIdentityKey(identity: DashboardDetailIdentityInput): string {
+  if (identity.kind === "movie") return `movie:${identity.ratingKey}`;
+  if (identity.kind === "audiobook") return `audiobook:${identity.audiobookId}`;
+  return `series:${identity.category}:${identity.grandparentRatingKey}`;
+}
+
+function withDetailKey(identity: DashboardDetailIdentityInput): DashboardDetailIdentity {
+  return { ...identity, detailKey: detailIdentityKey(identity) } as DashboardDetailIdentity;
+}
+
 function parseConfirmedParticipants(value: unknown): Array<{ userId: number; displayName: string }> {
   if (typeof value !== "string" || !value) return [];
   try {
@@ -336,6 +350,260 @@ export class DashboardService {
   constructor(private readonly db: Db) {
     this.cowatchingService = new CowatchingIntelligenceService(db);
     this.adjudicationService = new CowatchAdjudicationService(db);
+  }
+
+  resolveDetailIdentity(input: string): DashboardDetailResolution {
+    const selector = typeof input === "string" ? input.trim() : "";
+    if (!selector || selector.length > 300) return { ok: false, errorCode: "DETAIL_INVALID" };
+
+    const canonical = this.parseCanonicalDetailKey(selector);
+    if (canonical) return this.validateDetailIdentity(canonical, selector);
+
+    const progressKey = this.parseProgressGroupKey(selector);
+    if (progressKey) return this.validateDetailIdentity(progressKey, selector);
+
+    const identities = new Map<string, DashboardDetailIdentity>();
+    const catalogRows = this.db.prepare(`
+      SELECT rating_key, media_type, library_title, grandparent_rating_key, audiobook_id
+      FROM content_catalog
+      WHERE rating_key = ? OR parent_rating_key = ? OR grandparent_rating_key = ?
+    `).all(selector, selector, selector) as any[];
+    for (const row of catalogRows) this.addRawDetailCandidate(identities, row, selector);
+
+    const observationRows = this.db.prepare(`
+      SELECT po.rating_key, po.media_type, po.library_name AS library_title,
+        po.grandparent_rating_key, po.parent_rating_key, cat.audiobook_id
+      FROM playback_observations po
+      LEFT JOIN content_catalog cat ON cat.rating_key = po.rating_key
+      WHERE po.rating_key = ? OR po.parent_rating_key = ? OR po.grandparent_rating_key = ?
+    `).all(selector, selector, selector) as any[];
+    for (const row of observationRows) this.addRawDetailCandidate(identities, row, selector);
+
+    if (identities.size === 0) return { ok: false, errorCode: "DETAIL_NOT_FOUND" };
+    if (identities.size > 1) return { ok: false, errorCode: "DETAIL_AMBIGUOUS" };
+    return this.validateDetailIdentity([...identities.values()][0], selector);
+  }
+
+  getDetailWorkspace(input: string): DashboardDetailWorkspaceResult {
+    const timed = withTiming<DashboardDetailWorkspaceResult>(() => {
+      const resolution = this.resolveDetailIdentity(input);
+      if (!resolution.ok) return resolution;
+      const identity = resolution.identity;
+      const metadata = this.getDetailWorkspaceMetadata(identity);
+      if (!metadata) return { ok: false, errorCode: "DETAIL_NOT_FOUND" as const };
+
+      const activityFilter = this.detailActivityFilter(identity);
+      const activity = this.getActivity({ ...activityFilter, limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
+      const aggregate = this.db.prepare(`
+        SELECT COUNT(*) AS plays,
+          SUM(CASE WHEN po.completed = 1 THEN 1 ELSE 0 END) AS completed_plays,
+          COUNT(DISTINCT CASE WHEN po.completed = 1 THEN po.rating_key END) AS completed_items,
+          MAX(po.watched_at) AS latest_watched_at,
+          COALESCE(SUM(COALESCE(po.duration, 0)), 0) AS observed_duration
+        FROM playback_observations po
+        LEFT JOIN content_catalog cat ON cat.rating_key = po.rating_key
+        JOIN users u ON u.id = po.user_id
+        WHERE COALESCE(u.dashboard_shown, u.enabled) = 1 AND ${this.detailIdentityWhere(identity)}
+      `).get(...this.detailIdentityArgs(identity)) as any;
+      const latest = this.db.prepare(`
+        SELECT po.percent_complete AS percentComplete
+        FROM playback_observations po
+        LEFT JOIN content_catalog cat ON cat.rating_key = po.rating_key
+        JOIN users u ON u.id = po.user_id
+        WHERE COALESCE(u.dashboard_shown, u.enabled) = 1 AND ${this.detailIdentityWhere(identity)}
+        ORDER BY po.watched_at DESC, po.id DESC LIMIT 1
+      `).get(...this.detailIdentityArgs(identity)) as any;
+
+      const people = [...new Set(activity.flatMap((item) => item.displayNames?.length ? item.displayNames : [item.displayName]))]
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
+        .map((displayName) => ({ displayName }));
+      const progress = this.getDetailProgressSummary(identity, metadata, Number(aggregate?.completed_items ?? 0), latest?.percentComplete);
+
+      return {
+        ok: true,
+        data: {
+          detailKey: identity.detailKey,
+          identity,
+          title: metadata.title,
+          subtitle: metadata.subtitle,
+          category: identity.category,
+          artworkUrl: metadata.artworkUrl,
+          people,
+          playbackSummary: {
+            plays: Number(aggregate?.plays ?? 0),
+            completedPlays: Number(aggregate?.completed_plays ?? 0),
+            latestWatchedAt: aggregate?.latest_watched_at ?? null,
+            observedMinutes: Math.round(Number(aggregate?.observed_duration ?? 0) / 60000)
+          },
+          progressSummary: progress,
+          hierarchy: {
+            available: true,
+            route: `/api/dashboard/detail-workspace/${encodeURIComponent(identity.detailKey)}/hierarchy`
+          },
+          timingMs: 0
+        }
+      };
+    });
+    if (!timed.value.ok) return timed.value;
+    return { ok: true, data: { ...timed.value.data, timingMs: timed.timingMs } };
+  }
+
+  getDetailWorkspaceHierarchy(input: string): DashboardDetailWorkspaceHierarchyResult {
+    const timed = withTiming<DashboardDetailWorkspaceHierarchyResult>(() => {
+      const resolution = this.resolveDetailIdentity(input);
+      if (!resolution.ok) return resolution;
+      const identity = resolution.identity;
+      const expansion = this.getProgressExpansion(this.legacyProgressGroupKey(identity));
+      if (!expansion) return { ok: false, errorCode: "DETAIL_NOT_FOUND" as const };
+      return {
+        ok: true,
+        data: {
+          detailKey: identity.detailKey,
+          identity,
+          category: identity.category,
+          hierarchy: expansion.hierarchy,
+          timingMs: 0
+        }
+      };
+    });
+    if (!timed.value.ok) return timed.value;
+    return { ok: true, data: { ...timed.value.data, timingMs: timed.timingMs } };
+  }
+
+  private parseCanonicalDetailKey(selector: string): DashboardDetailIdentity | null {
+    let match = selector.match(/^movie:([^:]+)$/);
+    if (match && isSafeDetailSegment(match[1])) return withDetailKey({ kind: "movie", category: "movie", ratingKey: match[1] });
+    match = selector.match(/^series:(tv|classic_tv|anime):([^:]+)$/);
+    if (match && isSafeDetailSegment(match[2])) return withDetailKey({ kind: "series", category: match[1] as DashboardCategory & ("tv" | "classic_tv" | "anime"), grandparentRatingKey: match[2] });
+    match = selector.match(/^audiobook:(\d+)$/);
+    if (match) return withDetailKey({ kind: "audiobook", category: "audiobook", audiobookId: Number(match[1]) });
+    return null;
+  }
+
+  private parseProgressGroupKey(selector: string): DashboardDetailIdentity | null {
+    let match = selector.match(/^movie:(.+):([^:]+)$/);
+    if (match && isSafeDetailSegment(match[2])) return withDetailKey({ kind: "movie", category: "movie", ratingKey: match[2] });
+    match = selector.match(/^series:(tv|classic_tv|anime):(.+):([^:]+)$/);
+    if (match && isSafeDetailSegment(match[3])) return withDetailKey({ kind: "series", category: match[1] as DashboardCategory & ("tv" | "classic_tv" | "anime"), grandparentRatingKey: match[3] });
+    match = selector.match(/^audiobook:(.+):(\d+)$/);
+    if (match) return withDetailKey({ kind: "audiobook", category: "audiobook", audiobookId: Number(match[2]) });
+    return null;
+  }
+
+  private addRawDetailCandidate(target: Map<string, DashboardDetailIdentity>, row: any, rawRatingKey: string): void {
+    const category = deriveDashboardCategory(String(row.media_type ?? ""), row.library_title).category;
+    let identity: DashboardDetailIdentity | null = null;
+    if (category === "movie") {
+      identity = withDetailKey({ kind: "movie", category: "movie", ratingKey: rawRatingKey });
+    } else if (category === "audiobook" && Number.isInteger(Number(row.audiobook_id))) {
+      identity = withDetailKey({ kind: "audiobook", category: "audiobook", audiobookId: Number(row.audiobook_id) });
+    } else if ((category === "tv" || category === "classic_tv" || category === "anime") && row.grandparent_rating_key) {
+      identity = withDetailKey({ kind: "series", category, grandparentRatingKey: String(row.grandparent_rating_key) });
+    } else if ((category === "tv" || category === "classic_tv" || category === "anime") && String(row.media_type).toLowerCase() === "show") {
+      identity = withDetailKey({ kind: "series", category, grandparentRatingKey: rawRatingKey });
+    }
+    if (identity) target.set(identity.detailKey, identity);
+  }
+
+  private validateDetailIdentity(identity: DashboardDetailIdentity, input: string): DashboardDetailResolution {
+    const records = this.db.prepare(`SELECT COUNT(*) AS count FROM (
+      SELECT rating_key FROM content_catalog WHERE ${this.identityRecordWhere(identity)}
+      UNION
+      SELECT po.rating_key FROM playback_observations po LEFT JOIN content_catalog cat ON cat.rating_key = po.rating_key WHERE ${this.identityRecordWhere(identity, "po", "cat")}
+    )`).get(...this.identityRecordArgs(identity), ...this.identityRecordArgs(identity)) as any;
+    if (Number(records?.count ?? 0) === 0) return { ok: false, errorCode: "DETAIL_NOT_FOUND" };
+
+    const visibility = this.db.prepare(`
+      SELECT COUNT(*) AS total,
+        SUM(CASE WHEN COALESCE(u.dashboard_shown, u.enabled) = 1 THEN 1 ELSE 0 END) AS visible
+      FROM playback_observations po
+      LEFT JOIN content_catalog cat ON cat.rating_key = po.rating_key
+      LEFT JOIN users u ON u.id = po.user_id
+      WHERE ${this.detailIdentityWhere(identity)}
+    `).get(...this.detailIdentityArgs(identity)) as any;
+    if (Number(visibility?.total ?? 0) > 0 && Number(visibility?.visible ?? 0) === 0) return { ok: false, errorCode: "DETAIL_NOT_FOUND" };
+    return { ok: true, identity, input };
+  }
+
+  private identityRecordWhere(identity: DashboardDetailIdentity, poAlias = "content_catalog", catAlias = "content_catalog"): string {
+    if (identity.kind === "movie") return `${poAlias}.rating_key = ?`;
+    if (identity.kind === "series") return `(${poAlias}.rating_key = ? OR ${poAlias}.grandparent_rating_key = ?)`;
+    return `${catAlias}.audiobook_id = ?`;
+  }
+
+  private identityRecordArgs(identity: DashboardDetailIdentity): any[] {
+    if (identity.kind === "movie") return [identity.ratingKey];
+    if (identity.kind === "series") return [identity.grandparentRatingKey, identity.grandparentRatingKey];
+    return [identity.audiobookId];
+  }
+
+  private detailIdentityWhere(identity: DashboardDetailIdentity): string {
+    return this.identityRecordWhere(identity, "po", "cat");
+  }
+
+  private detailIdentityArgs(identity: DashboardDetailIdentity): any[] {
+    return this.identityRecordArgs(identity);
+  }
+
+  private detailActivityFilter(identity: DashboardDetailIdentity): Record<string, unknown> {
+    if (identity.kind === "movie") return { ratingKey: identity.ratingKey };
+    if (identity.kind === "series") return { grandparentRatingKey: identity.grandparentRatingKey };
+    return { audiobookId: identity.audiobookId };
+  }
+
+  private getDetailWorkspaceMetadata(identity: DashboardDetailIdentity): { title: string; subtitle: string | null; artworkUrl: string } | null {
+    if (identity.kind === "audiobook") {
+      const book = this.db.prepare(`SELECT title, subtitle FROM audiobook_books WHERE id = ?`).get(identity.audiobookId) as any;
+      if (!book) return null;
+      return { title: book.title, subtitle: book.subtitle ?? null, artworkUrl: `/api/artwork/${encodeURIComponent(identity.detailKey)}` };
+    }
+    const key = identity.kind === "movie" ? identity.ratingKey : identity.grandparentRatingKey;
+    const catalog = this.db.prepare(`
+      SELECT title, library_title, grandparent_title
+      FROM content_catalog
+      WHERE rating_key = ? OR grandparent_rating_key = ?
+      ORDER BY CASE WHEN rating_key = ? THEN 0 ELSE 1 END, rating_key
+      LIMIT 1
+    `).get(key, key, key) as any;
+    if (catalog) return { title: catalog.title || catalog.grandparent_title || key, subtitle: catalog.library_title ?? null, artworkUrl: `/api/artwork/${encodeURIComponent(identity.detailKey.replace(/^series:[^:]+:/, ""))}` };
+    const observation = this.db.prepare(`SELECT title, show_title, library_name FROM playback_observations WHERE rating_key = ? OR grandparent_rating_key = ? ORDER BY watched_at DESC LIMIT 1`).get(key, key) as any;
+    if (!observation) return null;
+    return { title: identity.kind === "series" ? (observation.show_title || observation.title) : observation.title, subtitle: observation.library_name ?? null, artworkUrl: `/api/artwork/${encodeURIComponent(key)}` };
+  }
+
+  private getDetailProgressSummary(identity: DashboardDetailIdentity, metadata: any, completedItems: number, latestPercent: unknown) {
+    let unit: "episode" | "movie" | "track" | "chapter" = identity.kind === "movie" ? "movie" : identity.kind === "series" ? "episode" : "track";
+    let source: "plex" | "audiobook_tool" = identity.kind === "audiobook" ? "plex" : "plex";
+    let sourceVerified = identity.kind !== "audiobook";
+    let totalItems: number | null = identity.kind === "movie" ? 1 : null;
+    if (identity.kind === "series") {
+      const row = this.db.prepare(`SELECT leaf_count FROM content_catalog WHERE rating_key = ? LIMIT 1`).get(identity.grandparentRatingKey) as any;
+      totalItems = row?.leaf_count > 0 ? row.leaf_count : null;
+    } else if (identity.kind === "audiobook") {
+      const verified = this.getActiveAudiobookChapterSource(identity.audiobookId) !== null;
+      if (verified) {
+        unit = "chapter";
+        source = "audiobook_tool";
+        sourceVerified = true;
+        const row = this.db.prepare(`SELECT COUNT(*) AS count FROM audiobook_chapters WHERE audiobook_id = ?`).get(identity.audiobookId) as any;
+        totalItems = Number(row?.count ?? 0) || null;
+      } else {
+        const row = this.db.prepare(`SELECT chapter_count FROM audiobook_books WHERE id = ?`).get(identity.audiobookId) as any;
+        totalItems = row?.chapter_count > 0 ? row.chapter_count : null;
+      }
+    }
+    const percent = latestPercent == null ? null : Math.max(0, Math.min(100, Math.round(Number(latestPercent))));
+    return { unit, source, sourceVerified, completedItems, currentPercent: Number.isFinite(percent as number) ? percent : null, totalItems };
+  }
+
+  private legacyProgressGroupKey(identity: DashboardDetailIdentity): string {
+    if (identity.kind === "audiobook") return `audiobook:Audiobooks:${identity.audiobookId}`;
+    const key = identity.kind === "movie" ? identity.ratingKey : identity.grandparentRatingKey;
+    const row = this.db.prepare(`SELECT library_title FROM content_catalog WHERE rating_key = ? LIMIT 1`).get(key) as any;
+    const library = row?.library_title || (identity.kind === "movie" ? "Movies" : "TV Shows");
+    if (identity.kind === "movie") return `movie:${library}:${key}`;
+    return `series:${identity.category}:${library}:${key}`;
   }
 
   getActivity(input: unknown): { items: DashboardActivityItem[]; total: number; limit: number; offset: number } {

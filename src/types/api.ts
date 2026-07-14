@@ -56,6 +56,67 @@ export interface HealthResponse {
 export type DashboardLayout = "overview" | "timeline" | "explorer" | "people" | "progress";
 export type DashboardCategory = "movie" | "tv" | "classic_tv" | "anime" | "audiobook";
 
+export type DashboardDetailIdentityInput =
+  | { kind: "movie"; category: "movie"; ratingKey: string }
+  | { kind: "series"; category: "tv" | "classic_tv" | "anime"; grandparentRatingKey: string }
+  | { kind: "audiobook"; category: "audiobook"; audiobookId: number };
+
+export type DashboardDetailIdentity =
+  | { kind: "movie"; category: "movie"; ratingKey: string; detailKey: string }
+  | { kind: "series"; category: "tv" | "classic_tv" | "anime"; grandparentRatingKey: string; detailKey: string }
+  | { kind: "audiobook"; category: "audiobook"; audiobookId: number; detailKey: string };
+
+export type DashboardDetailErrorCode = "DETAIL_NOT_FOUND" | "DETAIL_AMBIGUOUS" | "DETAIL_INVALID" | "DETAIL_UNSUPPORTED";
+
+export type DashboardDetailResolution =
+  | { ok: true; identity: DashboardDetailIdentity; input: string }
+  | { ok: false; errorCode: DashboardDetailErrorCode };
+
+export interface DashboardDetailWorkspaceResponse {
+  detailKey: string;
+  identity: DashboardDetailIdentity;
+  title: string;
+  subtitle: string | null;
+  category: DashboardCategory;
+  artworkUrl: string;
+  people: Array<{ displayName: string }>;
+  playbackSummary: {
+    plays: number;
+    completedPlays: number;
+    latestWatchedAt: string | null;
+    observedMinutes: number;
+  };
+  progressSummary: {
+    unit: ProgressUnit;
+    source: ProgressSource;
+    sourceVerified: boolean;
+    completedItems: number;
+    currentPercent: number | null;
+    totalItems: number | null;
+  };
+  hierarchy: {
+    available: boolean;
+    route: string;
+  };
+  timingMs: number;
+}
+
+export interface DashboardDetailWorkspaceHierarchyResponse {
+  detailKey: string;
+  identity: DashboardDetailIdentity;
+  category: DashboardCategory;
+  hierarchy: ProgressHierarchyExpansion["hierarchy"];
+  timingMs: number;
+}
+
+export type DashboardDetailWorkspaceResult =
+  | { ok: true; data: DashboardDetailWorkspaceResponse }
+  | { ok: false; errorCode: DashboardDetailErrorCode };
+
+export type DashboardDetailWorkspaceHierarchyResult =
+  | { ok: true; data: DashboardDetailWorkspaceHierarchyResponse }
+  | { ok: false; errorCode: DashboardDetailErrorCode };
+
 export type ProgressUnit = "episode" | "movie" | "track" | "chapter" | "book" | "unknown";
 export type ProgressSource = "plex" | "audiobook_tool" | "unknown";
 export type ProgressNodeState = "watched" | "partial" | "repeated" | "unknown" | "source_uncertain";
