@@ -46,6 +46,7 @@ Let a listener reopen an audiobook and immediately see whose position is shown, 
 ## Dependencies
 
 - Block 3-2n-5d-3 must finish its explicit recurring-worker rollout gate first because the corrective sequence remains ordered.
+- Block 3-2n-6E-3 must establish the universal detail workspace and shared Audiobook presenter before 6D implementation begins; 6D-4 must extend that presenter rather than target a Progress-only modal.
 - Existing immutable audiobook media revisions and private manifest items from Blocks 5D-1 through 5D-3.
 - Existing verified chapter mapping and current-position behavior from Blocks 3-2n-5B and 3-2n-6C.
 - A usable local Python 3.12+, ffmpeg, `faster-whisper`, and preinstalled model runtime in the separate `audiobook` project; 6D-1 must verify rather than assume this dependency.
@@ -57,7 +58,7 @@ Let a listener reopen an audiobook and immediately see whose position is shown, 
 - The resulting modal shows current position and a short stopping-point excerpt without a duplicate right-column overall-progress strip.
 - Disabled, unavailable, stale, silent, unsupported, and failed processing all preserve normal audiobook progress and modal behavior.
 - No public response, event, job row, or log exposes a private media path, temporary clip path, full transcript, model cache path, or raw child stderr.
-- Existing `inspect`, `validate`, `resolve`, chapter proof, ingestion, Progress routing, non-audiobook modals, and PM2 single-process operation remain compatible.
+- Existing `inspect`, `validate`, `resolve`, chapter proof, ingestion, canonical detail routing, non-audiobook presenters, and PM2 single-process operation remain compatible.
 - `npm run verify:block` passes for every CoWatcher child before it is marked implemented; deployed dashboard work also passes `npm run verify:live-dashboard`.
 
 ## Review Authority

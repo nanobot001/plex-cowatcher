@@ -29,7 +29,7 @@ The current stack can plausibly produce a short verbatim stopping-point excerpt.
 | Performance | Existing chapter Whisper uses `base`/CPU/int8 but beam size 5 and does not prove low-priority execution; ffmpeg extraction and cold model loading can also spike. | New command constrains ffmpeg and Whisper to one thread, applies below-normal priority before loading/extraction, uses low-search decoding and a 60-second clip, and records OS-observed cold-start resources. |
 | Testability | Real Whisper output is nondeterministic and expensive for the block gate. | Fake model/adapter/clock for deterministic gates; real user-approved canary is separate and opt-in. |
 | Reversibility | Coupling resume work to proof enablement could make rollback unsafe. | Separate flags/tables/runtime; disabling resume leaves ingestion, chapter truth, and modal fallback intact. |
-| Sequencing | UI could be built against imagined fields, or worker against an unstable external command. | Hard order 6D-1 through 6D-4; umbrella is never implemented directly. |
+| Sequencing | UI could be built against imagined fields, worker against an unstable external command, or resume UI into the obsolete Progress-only modal. | Complete 6E-1 through 6E-3 first, then hard order 6D-1 through 6D-4; umbrellas are never implemented directly. |
 | Maintainability | Adding transcript behavior to `AudiobookProofAdapter` would mix domains. | 6D-2 owns a dedicated resume adapter; narrowly shared process runner only with proof regression coverage. |
 | Overengineering | A local LLM, active-session API, generic transcription platform, or multi-file translator would multiply dependencies. | Excluded from the first sequence; the useful excerpt ships without them. |
 
@@ -115,12 +115,13 @@ The current stack can plausibly produce a short verbatim stopping-point excerpt.
 ## Sequencing And Exit Decisions
 
 1. Finish the existing 5D-3 recurring-worker rollout gate.
-2. Implement 6D-1 in the `audiobook` repository and its CoWatcher fixtures; verify both repositories independently.
-3. Review measured runtime, CPU, peak working set, cleanup, and command contract. Stop if the single-thread/below-normal/local-only policy is not real.
-4. Implement 6D-2 adapter/state with fake-process and fake-clock coverage; do not connect automatic execution.
-5. Implement 6D-3 stop ingestion/worker/operations, then run one backed-up explicit canary while the dashboard remains usable.
-6. Implement 6D-4 only against persisted fixture/state proven by 6D-3.
-7. Run the mandatory deterministic block gate for every child and the live dashboard gate after deployed dashboard/runtime changes.
+2. Implement 6E-1 through 6E-3 so one canonical detail workspace and shared Audiobook presenter exist before resume UI work.
+3. Implement 6D-1 in the `audiobook` repository and its CoWatcher fixtures; verify both repositories independently.
+4. Review measured runtime, CPU, peak working set, cleanup, and command contract. Stop if the single-thread/below-normal/local-only policy is not real.
+5. Implement 6D-2 adapter/state with fake-process and fake-clock coverage; do not connect automatic execution.
+6. Implement 6D-3 stop ingestion/worker/operations, then run one backed-up explicit canary while the dashboard remains usable.
+7. Implement 6D-4 only against persisted fixture/state proven by 6D-3 and the shared Audiobook presenter proven by 6E-3.
+8. Run the mandatory deterministic block gate for every child and the live dashboard gate after deployed dashboard/runtime changes.
 
 ## Deferred Opportunities Requiring New Tickets
 

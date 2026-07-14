@@ -11,7 +11,8 @@ Current state:
 
 Next step:
 - Resume the explicit recurring-worker enablement portion of **Block 3-2n-5d-3: Durable Proof Worker And Rollout** (`docs/blocks/block-3-2n-5d-3-durable-proof-worker-and-rollout.md`). Review the remaining pending and unsupported jobs, then enable only with an explicit rollout decision and rerun the live smoke gate.
-- After that rollout gate passes, implement the planned **Block 3-2n-6D** children in order, beginning with **6D-1: Bounded Resume Transcription Contract** (`docs/blocks/block-3-2n-6d-1-bounded-resume-transcription-contract.md`). The umbrella is `docs/blocks/block-3-2n-6d-audiobook-resume-context.md`, and the pre-implementation review is `docs/process/block-3-2n-6d-design-review.md`. The first release provides a private stopping-point excerpt plus chapter/position context; a true paraphrased summary remains a separately gated model/provider decision because Whisper alone cannot generate one.
+- After that rollout gate passes, implement **Block 3-2n-6E** children 6E-1 through 6E-3 first, beginning with **6E-1: Canonical Detail Contract And Entry Resolution** (`docs/blocks/block-3-2n-6e-1-canonical-detail-contract-and-entry-resolution.md`). The umbrella is `docs/blocks/block-3-2n-6e-universal-detail-workspace-alignment.md`, and the review is `docs/process/block-3-2n-6e-design-review.md`.
+- After 6E-3 passes, implement the planned **Block 3-2n-6D** children in order, beginning with **6D-1: Bounded Resume Transcription Contract** (`docs/blocks/block-3-2n-6d-1-bounded-resume-transcription-contract.md`). The umbrella is `docs/blocks/block-3-2n-6d-audiobook-resume-context.md`, and the pre-implementation review is `docs/process/block-3-2n-6d-design-review.md`. 6D-4 extends the shared 6E Audiobook presenter. The first release provides a private stopping-point excerpt plus chapter/position context; a true paraphrased summary remains a separately gated model/provider decision because Whisper alone cannot generate one.
 
 ## 2026-07-11
 
@@ -20,7 +21,7 @@ Current state:
 - Automatic audiobook discovery now runs independently under PM2, reconciles rich Plex metadata, persists restart/cooldown state, and emits one outbox event per stable media revision. A live 960-track scan succeeded, and its immediate rerun was idempotent.
 
 Next step:
-- Implement **Block 3-2n-5d-1: Revision Manifest And Safe Cache Activation** (`docs/blocks/block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md`), then 5D-2 and 5D-3 before 3-2o. The original 5D file is now an umbrella only.
+- Implement **Block 3-2n-5d-1: Revision Manifest And Safe Cache Activation** (`docs/blocks/completed/block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md`), then 5D-2 and 5D-3 before 3-2o. The original 5D file is now an umbrella only.
 
 ## 2026-07-09
 
@@ -28,32 +29,32 @@ Current state:
 - Block 3-2n-5 (Audiobook Progress Source Honesty) is completed and verified. The dashboard endpoints and UI now explicitly expose progress unit, label, and source metadata, and set `totalKnown = false` for unverified audiobooks to avoid rendering incorrect percentages.
 - Block 3-2n-5a (Audiobook Chapter Import and Cache) is completed and verified. We created SQLite schemas for chapter sources and boundaries, implemented the CLI import command with dry-run support, and updated dashboard endpoints to expose verified chapter availability.
 - Block 3-2n-5b (True Audiobook Chapter Progress) is completed and verified. Progress now maps playback offsets and book-completion evidence onto cached verified audiobook chapter boundaries, while unverified audiobooks stay on source-honest Plex track/file fallback copy.
-- We identified a real audiobook automation gap: the current service runtime only processes qualifying webhook items opportunistically and does not reliably perform whole-library audiobook discovery unless the scan CLI is called externally. Planned follow-up block `block-3-2n-5c-reliable-audiobook-discovery-automation.md` now captures the fix.
+- We identified a real audiobook automation gap: the current service runtime only processes qualifying webhook items opportunistically and does not reliably perform whole-library audiobook discovery unless the scan CLI is called externally. The completed follow-up block `completed/block-3-2n-5c-reliable-audiobook-discovery-automation.md` captures the fix.
 - We also split the second missing step into `block-3-2n-5d-automatic-audiobook-chapter-proof-handoff.md`: once discovery is reliable, unresolved audiobooks should automatically trigger the separate `audiobook` project once, cache verified chapters locally, and let future Plex listening offsets reuse that cache.
 - Verification passed: `npm run verify:block` (79/79 service tests, 30/30 Playwright E2E tests, dashboard syntax, and tool contracts).
 
 Next step:
-- Implement **Block 3-2n-6: Progress Evidence Map Polish** (`docs/blocks/block-3-2n-6-progress-evidence-map-polish.md`) before starting 3-2o.
+- Implement **Block 3-2n-6: Progress Evidence Map Polish** (`docs/blocks/completed/block-3-2n-6-progress-evidence-map-polish.md`) before starting 3-2o.
 
 ## 2026-07-08
 
 Current state:
-- Block 3-2n-4 (Progress Hierarchy UI & Regression) is completed and verified. Progress cards now lazily expand one URL-restorable hierarchy at a time, cache fetched expansion responses, preserve filters/pagination/history state, keep Movies non-expandable, and drill through to the shared detail workspace.
+- Block 3-2n-4 (Progress Hierarchy UI & Regression) is completed and verified. Progress cards now lazily expand one URL-restorable hierarchy at a time, cache fetched expansion responses, preserve filters/pagination/history state, keep Movies non-expandable, and drill through to the shared detail workspace. See `docs/blocks/completed/block-3-2n-4-progress-hierarchy-ui-regression.md`.
 - The deterministic dashboard fixture now covers TV, Classic TV, Anime, Audiobook, and Movie Progress behavior.
 - Verification passed: `npm run verify:block` (77/77 service tests, 30/30 Playwright E2E tests, dashboard syntax, and tool contracts).
 - Follow-up planning identified that the 3-2n-4 outcome is technically safe but not yet acceptable for audiobook correctness or Progress readability. Source review corrected the next step: current audiobook totals are linked Plex track/file evidence, not verified chapter truth, so Progress must first expose source honesty before any true chapter progress or dot-map polish.
 
 Next step:
-- Implement **Block 3-2n-5: Audiobook Progress Source Honesty** (`docs/blocks/block-3-2n-5-audiobook-progress-contract.md`), then **Block 3-2n-5a: Audiobook Chapter Import And Cache** (`docs/blocks/block-3-2n-5a-audiobook-chapter-import-cache.md`), then **Block 3-2n-5b: True Audiobook Chapter Progress** (`docs/blocks/block-3-2n-5b-true-audiobook-chapter-progress.md`), then **Block 3-2n-6: Progress Evidence Map Polish** (`docs/blocks/block-3-2n-6-progress-evidence-map-polish.md`) before starting 3-2o.
+- Implement **Block 3-2n-5: Audiobook Progress Source Honesty** (`docs/blocks/completed/block-3-2n-5-audiobook-progress-contract.md`), then **Block 3-2n-5a: Audiobook Chapter Import And Cache** (`docs/blocks/completed/block-3-2n-5a-audiobook-chapter-import-cache.md`), then **Block 3-2n-5b: True Audiobook Chapter Progress** (`docs/blocks/completed/block-3-2n-5b-true-audiobook-chapter-progress.md`), then **Block 3-2n-6: Progress Evidence Map Polish** (`docs/blocks/completed/block-3-2n-6-progress-evidence-map-polish.md`) before starting 3-2o.
 
 ## 2026-07-06
 
 Current state:
-- Block 3-2n-1, Block 3-2n-2, and Block 3-2n-3 (Progress Lazy Hierarchy Endpoints) are completed and verified. The backend features a dedicated read-only expansion endpoint `/api/dashboard/progress/expand/:groupKey` with optimized queries using database indexes on content catalog lookups.
+- Block 3-2n-1, Block 3-2n-2, and Block 3-2n-3 (Progress Lazy Hierarchy Endpoints) are completed and verified. The backend features a dedicated read-only expansion endpoint `/api/dashboard/progress/expand/:groupKey` with optimized queries using database indexes on content catalog lookups. See the completed block records under `docs/blocks/completed/`.
 - Verification passed: `npm run verify:block` (77/77 unit tests, 28/28 Playwright E2E tests, syntax and tool contracts).
 
 Next step:
-- Implement **Block 3-2n-4: Progress Hierarchy UI & Regression** (`docs/blocks/block-3-2n-4-progress-hierarchy-ui-regression.md`).
+- Implement **Block 3-2n-4: Progress Hierarchy UI & Regression** (`docs/blocks/completed/block-3-2n-4-progress-hierarchy-ui-regression.md`).
 
 ## 2026-07-05
 
@@ -71,18 +72,18 @@ Current state:
 - Block 3-2n was reviewed for risk, drift, dependencies, and opportunities, then split into four smaller implementation blocks: 3-2n-1 through 3-2n-4.
 
 Next step:
-- Implement **Block 3-2n-1: Progress Read Model Contract** (`docs/blocks/block-3-2n-1-progress-read-model-contract.md`).
+- Implement **Block 3-2n-1: Progress Read Model Contract** (`docs/blocks/completed/block-3-2n-1-progress-read-model-contract.md`).
 
 ## 2026-07-04
 
 Current state:
-- Block 3-2j-1 (Co-Watch Evidence Semantics) is completed, committed, and pushed to `main`.
+- Block 3-2j-1 (Co-Watch Evidence Semantics) is completed, committed, and pushed to `main`; see `docs/blocks/completed/block-3-2j-1-cowatch-evidence-semantics.md`.
 - The dashboard successfully distinguishes between `Together` (human confirmed), `Likely together` (start time aligned and overlapped plays), and `Watched by` (default fallback and library summaries).
 - Aggregated Media Explorer cards filter names by selected user and default to `"Watched by"` instead of claiming simultaneity.
 - Verification passed: `npm run verify:block` (65/65 unit, 6/6 E2E Playwright tests, syntax and tool verifications).
 
 Next step:
-- Implement **Block 3-2k: Rich Media Detail Workspace** (`docs/blocks/block-3-2k-rich-media-detail-workspace.md`).
+- Implement **Block 3-2k: Rich Media Detail Workspace** (`docs/blocks/completed/block-3-2k-rich-media-detail-workspace.md`).
 
 Do-not-forget checks:
 - Keep the 3-2 corrective blocks sequential.
@@ -100,7 +101,7 @@ Current state:
 - Block 3-2j-1 is next to make `Watched by`, `Together`, and `Likely together` authoritative before 3-2k consumes relationship evidence.
 
 Next step:
-- Implement **Block 3-2j-1: Co-Watch Evidence Semantics** (`docs/blocks/block-3-2j-1-cowatch-evidence-semantics.md`) before 3-2k.
+- Implement **Block 3-2j-1: Co-Watch Evidence Semantics** (`docs/blocks/completed/block-3-2j-1-cowatch-evidence-semantics.md`) before 3-2k.
 
 Do-not-forget checks:
 - Keep the 3-2 corrective blocks sequential.

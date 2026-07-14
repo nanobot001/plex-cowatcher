@@ -18,10 +18,10 @@ Implement the outcome through these ordered sub-blocks:
 2. `block-3-2n-2-progress-workspace-shell.md`
 3. `block-3-2n-3-progress-lazy-hierarchy-endpoints.md`
 4. `block-3-2n-4-progress-hierarchy-ui-regression.md`
-5. `block-3-2n-5-audiobook-progress-contract.md`
-6. `block-3-2n-5a-audiobook-chapter-import-cache.md`
-7. `block-3-2n-5b-true-audiobook-chapter-progress.md`
-8. `block-3-2n-6-progress-evidence-map-polish.md`
+5. `completed/block-3-2n-5-audiobook-progress-contract.md`
+6. `completed/block-3-2n-5a-audiobook-chapter-import-cache.md`
+7. `completed/block-3-2n-5b-true-audiobook-chapter-progress.md`
+8. `completed/block-3-2n-6-progress-evidence-map-polish.md`
 
 ## Dependencies And Entry Gate
 

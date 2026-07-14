@@ -167,12 +167,16 @@ The corrective sequence is mandatory and ordered:
     3. **3-2n-5d-2A - Embedded Chapter Timeline Normalization:** Implemented 2026-07-12. Normalize valid embedded starts into duration-bounded ranges; the corrected Eric canary activated 57 revision-matched embedded chapters.
     4. **3-2n-5d-3 - Durable Proof Worker And Rollout:** Bounded restart-safe jobs, operations, and canary verification are complete; recurring PM2 enablement remains pending.
 27. **3-2n-6C - Visible Progress And Enriched Detail:** Implemented 2026-07-12. Progress cards expose explicit completed/total/percentage summaries, and the larger lazy modal adds source, activity, and participant context without weakening unknown-total honesty.
-28. **3-2n-6D - Whisper-Assisted Audiobook Resume Context:** Planned umbrella. Convert source-backed audiobook history stops into private bounded transcript context and a useful resume modal; do not implement the umbrella directly.
+28. **3-2n-6E - Universal Detail Workspace Alignment:** Planned umbrella inserted before 6D implementation to correct the separate Overview/Progress detail paths while preserving the already-published 6D numbering; do not implement the umbrella directly.
+    1. **3-2n-6E-1 - Canonical Detail Contract And Entry Resolution:** Add one typed identity resolver and bounded additive workspace read contract while preserving current UI/endpoints.
+    2. **3-2n-6E-2 - Shared Detail Shell And Category Presenters:** Build one content-first accessible shell, explicit media-category presenters, and migrate non-Progress callers.
+    3. **3-2n-6E-3 - Progress Migration And Cross-Surface Regression:** Move Progress onto the shared workspace, retire its duplicate dialog path, preserve legacy URLs, and lock parity/regression coverage.
+29. **3-2n-6D - Whisper-Assisted Audiobook Resume Context:** Planned umbrella. Convert source-backed audiobook history stops into private bounded transcript context and a useful resume modal after 6E establishes the shared Audiobook presenter; do not implement the umbrella directly.
     1. **3-2n-6D-1 - Bounded Resume Transcription Contract:** Add and verify a tool-agnostic read-only `transcribe-window` JSON command in the separate `audiobook` project, plus sanitized CoWatcher fixtures.
     2. **3-2n-6D-2 - Trusted Resume Adapter And State:** Validate the external transcript contract and add revision-safe durable jobs/results without connecting automatic execution.
     3. **3-2n-6D-3 - Stable-Stop Worker And Rollout:** Preserve explicit Tautulli stop evidence, coalesce candidates, run one bounded background job, expose safe operations, and verify resource behavior with a canary.
     4. **3-2n-6D-4 - Audiobook Resume Modal:** Replace the default chapter wall with listener-attributed position, completed stopping-point excerpt, compact chapter map, up-next, and optional complete-list disclosure.
-29. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
+30. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
 
 Each block, including every 3-2m sub-block, must pass its own exit gate before the next begins. Block 3-3 is paused until 3-2o completes.
 

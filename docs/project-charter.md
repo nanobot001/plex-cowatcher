@@ -107,8 +107,8 @@ When a block creates durable project knowledge, update the relevant docs area so
 - Block index: `docs/blocks/README.md`
 - Roadmap: `docs/roadmap.md`
 - Project definition block: `docs/blocks/completed/block-00-project-definition.md`
-- Next MVP block: `docs/blocks/block-1-4-plex-watched-state-verification.md`
-- Phase 2 starts after Phase 1 acceptance with `docs/blocks/block-2-1-rich-playback-evidence-capture.md`.
+- Next MVP block: `docs/blocks/completed/block-1-4-plex-watched-state-verification.md`
+- Phase 2 starts after Phase 1 acceptance with `docs/blocks/completed/block-2-1-rich-playback-evidence-capture.md`.
 
 ## Document Map
 

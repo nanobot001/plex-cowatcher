@@ -8,10 +8,15 @@
 
 Replace the audiobook modal's default wall of chapter rows with a concise, attributed answer to “where was I?”: current chapter, within-chapter position, a short stopping-point excerpt when safely available, a compact chapter map, and what comes next.
 
+## Dependencies And Entry Gate
+
+- Blocks 6D-1 through 6D-3 are implemented and verified, including persisted revision-valid fixture/state.
+- Block 6E-3 is implemented and verified. This block extends the shared canonical Audiobook presenter and one physical detail dialog; it must not recreate a Progress-only route, dialog, shell, or hierarchy renderer.
+
 ## Scope
 
-- Change only the audiobook branch of the Progress detail modal. Preserve TV, Classic TV, Anime, Movie, and shared media-detail behavior.
-- Extend the lazy Progress read model with a bounded per-visible-listener resume projection sourced only from active 6D-3 results matching the current audiobook media revision.
+- Change only the Audiobook presenter inside the shared canonical detail workspace. Preserve TV, Classic TV, Anime, Movie, and every entry surface's shared shell behavior.
+- Extend the canonical lazy Audiobook detail projection with a bounded per-visible-listener resume projection sourced only from active 6D-3 results matching the current audiobook media revision.
 - Exclude hidden listeners and stale/superseded/failed jobs. Return excerpt content only through the localhost dashboard boundary; never add it to generic activity, audit, health, export, or tool-status responses.
 - When multiple visible listeners have different positions, expose an accessible listener selector. Default to the dashboard person filter when present, otherwise the listener with the newest valid position; always show whose context is active.
 - Make the right column use this order:
@@ -25,7 +30,7 @@ Replace the audiobook modal's default wall of chapter rows with a concise, attri
 - Do not show `Fill in summary later`, an empty resume card, persistent processing spinner, raw job state, model errors, paths, or diagnostics. Pending/unavailable/failed context falls back to the current-position workspace.
 - Preserve source honesty. Unverified audiobooks keep track/file fallback and do not fabricate chapter numbers, within-chapter percentages, chapter maps, or `Up next` chapters.
 - Render the full list only after disclosure. Keep one intended modal scroll region, fixed/sticky desktop artwork/reference content, content-first height, thin scrollbar, balanced padding, and no horizontal overflow.
-- Preserve focus trapping, close restoration, keyboard interaction, URL restoration, lazy fetch/caching, Back/Forward, and existing modal route semantics.
+- Preserve focus trapping, close restoration, keyboard interaction, canonical/legacy URL restoration, lazy fetch/caching, Back/Forward, and shared modal route semantics across every entry surface.
 - Extend deterministic fixtures/regressions with ready, unavailable, stale-revision, multiple-listener, hidden-listener, final-chapter, and unverified-audiobook cases.
 
 ## Out Of Scope
@@ -72,7 +77,7 @@ Replace the audiobook modal's default wall of chapter rows with a concise, attri
 - Unverified audiobooks retain honest track/file fallback with no fabricated excerpt, map, within-chapter percentage, or next chapter.
 - Transcript strings containing tags, entities, URLs, Markdown, or instruction-like content render only as inert text.
 - At 320px, 390px, 768px, and 1440px, there is no horizontal overflow, duplicate nested scroll, cramped padding, or excessive empty space.
-- Existing lazy loading, cache, routing, Back/Forward, focus, and non-audiobook modal tests remain compatible.
+- Existing lazy loading, cache, routing, Back/Forward, focus, cross-surface parity, and non-audiobook presenter tests remain compatible.
 - `npm run verify:block` passes before implementation status changes.
 - After rebuild/restart, `npm run verify:live-dashboard` passes.
 

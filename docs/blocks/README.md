@@ -39,29 +39,33 @@ Corrective sequence:
 16. `completed/block-3-2n-2-progress-workspace-shell.md`
 17. `completed/block-3-2n-3-progress-lazy-hierarchy-endpoints.md`
 18. `completed/block-3-2n-4-progress-hierarchy-ui-regression.md`
-19. `block-3-2n-5-audiobook-progress-contract.md` - implemented historical reference.
-20. `block-3-2n-5a-audiobook-chapter-import-cache.md` - implemented historical reference.
-21. `block-3-2n-5b-true-audiobook-chapter-progress.md` - implemented historical reference.
-22. `block-3-2n-6-progress-evidence-map-polish.md` - implemented historical reference.
-23. `block-3-2n-6a-progress-watcher-coverage-and-workspace-width.md` - implemented historical reference.
-24. `block-3-2n-6b-overview-session-feed-deduplication.md` - implemented historical reference.
-25. `block-3-2n-5c-reliable-audiobook-discovery-automation.md` - implemented historical reference.
+19. `completed/block-3-2n-5-audiobook-progress-contract.md` - implemented historical reference.
+20. `completed/block-3-2n-5a-audiobook-chapter-import-cache.md` - implemented historical reference.
+21. `completed/block-3-2n-5b-true-audiobook-chapter-progress.md` - implemented historical reference.
+22. `completed/block-3-2n-6-progress-evidence-map-polish.md` - implemented historical reference.
+23. `completed/block-3-2n-6a-progress-watcher-coverage-and-workspace-width.md` - implemented historical reference.
+24. `completed/block-3-2n-6b-overview-session-feed-deduplication.md` - implemented historical reference.
+25. `completed/block-3-2n-5c-reliable-audiobook-discovery-automation.md` - implemented historical reference.
 26. `block-3-2n-5d-automatic-audiobook-chapter-proof-handoff.md` - umbrella only; do not implement directly.
-   1. `block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md` - implemented and verified.
-   2. `block-3-2n-5d-2-trusted-external-proof-adapter.md` - implemented and verified.
-   3. `block-3-2n-5d-2a-embedded-chapter-timeline-normalization.md` - implemented, verified, and passed the corrected Eric canary.
+   1. `completed/block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md` - implemented and verified.
+   2. `completed/block-3-2n-5d-2-trusted-external-proof-adapter.md` - implemented and verified.
+   3. `completed/block-3-2n-5d-2a-embedded-chapter-timeline-normalization.md` - implemented, verified, and passed the corrected Eric canary.
    4. `block-3-2n-5d-3-durable-proof-worker-and-rollout.md` - implementation and canary verified; recurring enablement remains pending.
-27. `block-3-2n-6c-visible-progress-and-enriched-detail.md` - implemented and verified.
-28. `block-3-2n-6d-audiobook-resume-context.md` - planned umbrella; do not implement directly. Turn source-backed audiobook history stops into private bounded transcript context and a useful resume modal.
+27. `completed/block-3-2n-6c-visible-progress-and-enriched-detail.md` - implemented and verified.
+28. `block-3-2n-6e-universal-detail-workspace-alignment.md` - planned umbrella; do not implement directly. Restore one canonical detail identity, read contract, shell, and route across every dashboard entry surface before adding resume UI.
+   1. `block-3-2n-6e-1-canonical-detail-contract-and-entry-resolution.md` - add the canonical detail identity/resolver and bounded additive workspace read contract without visible UI changes.
+   2. `block-3-2n-6e-2-shared-detail-shell-and-category-presenters.md` - build the shared shell/category presenters and migrate non-Progress detail callers.
+   3. `block-3-2n-6e-3-progress-migration-and-regression.md` - migrate Progress, retire the duplicate dialog, and lock cross-surface parity.
+29. `block-3-2n-6d-audiobook-resume-context.md` - planned umbrella; do not implement directly. Turn source-backed audiobook history stops into private bounded transcript context and a useful resume modal after 6E establishes the shared Audiobook presenter.
    1. `block-3-2n-6d-1-bounded-resume-transcription-contract.md` - add and verify the separate `audiobook` project's bounded read-only transcription command.
    2. `block-3-2n-6d-2-trusted-resume-adapter-and-state.md` - add CoWatcher's bounded trusted adapter and revision-safe durable job/result state without automatic execution.
    3. `block-3-2n-6d-3-stable-stop-worker-and-rollout.md` - connect source stop evidence to a disabled one-job worker, safe operations, and explicit resource canary.
    4. `block-3-2n-6d-4-audiobook-resume-modal.md` - present attributed current position, stopping-point excerpt, compact chapter map, up-next, and optional full-list views.
-29. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
+30. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
 
 Do not implement a later corrective block until the previous block's exit gate is recorded as passing. A later block must not conceal, waive, or silently absorb a failed earlier acceptance criterion.
 
-The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n code is implemented through 3-2n-5d-3, and corrective 5D-2A plus the disabled Eric canary passed. Resume the explicit 5D-3 recurring-worker rollout, then implement 6D-1 through 6D-4 in order before the 3-2n umbrella exit gate and 3-2o. The pre-implementation review is `docs/process/block-3-2n-6d-design-review.md`.
+The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n code is implemented through 3-2n-5d-3, and corrective 5D-2A plus the disabled Eric canary passed. Resume the explicit 5D-3 recurring-worker rollout, then implement 6E-1 through 6E-3 before 6D-1 through 6D-4 and 3-2o. The pre-implementation reviews are `docs/process/block-3-2n-6e-design-review.md` and `docs/process/block-3-2n-6d-design-review.md`.
 
 ## Umbrella Specifications
 
@@ -77,12 +81,12 @@ The full 3-2m sequence is implemented and verified: household profiles, person p
 - `completed/block-1-4-plex-watched-state-verification.md`
 - `completed/block-1-5-preview-first-history-copy.md`
 - `block-1-6-mvp-operations-and-acceptance.md`
-- `block-2-1-rich-playback-evidence-capture.md`
-- `block-2-2-content-metadata-catalog.md`
-- `block-2-3-watch-history-query-api.md`
-- `block-2-4-watch-progress-summaries.md`
-- `block-2-5-viewing-session-reconstruction.md`
-- `block-2-6-cowatching-intelligence.md`
+- `completed/block-2-1-rich-playback-evidence-capture.md`
+- `completed/block-2-2-content-metadata-catalog.md`
+- `completed/block-2-3-watch-history-query-api.md`
+- `completed/block-2-4-watch-progress-summaries.md`
+- `completed/block-2-5-viewing-session-reconstruction.md`
+- `completed/block-2-6-cowatching-intelligence.md`
 - `completed/block-3-1-audiobook-differentiation.md`
 - `completed/block-3-2a-dashboard-mvp-foundation.md`
 - `completed/block-3-2b-activity-timeline-layout-system.md`
@@ -104,11 +108,11 @@ The full 3-2m sequence is implemented and verified: household profiles, person p
 
 - `completed/block-3-4-hierarchical-audiobook-series-modeling.md`
 - `completed/block-3-5-proactive-audiobook-scanner.md`
-- `block-3-2n-5c-reliable-audiobook-discovery-automation.md` - implemented historical reference.
+- `completed/block-3-2n-5c-reliable-audiobook-discovery-automation.md` - implemented historical reference.
 - `block-3-2n-5d-automatic-audiobook-chapter-proof-handoff.md` - planned umbrella.
-- `block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md` - implemented historical reference.
-- `block-3-2n-5d-2-trusted-external-proof-adapter.md` - implemented historical reference.
-- `block-3-2n-5d-2a-embedded-chapter-timeline-normalization.md` - implemented historical reference.
+- `completed/block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md` - implemented historical reference.
+- `completed/block-3-2n-5d-2-trusted-external-proof-adapter.md` - implemented historical reference.
+- `completed/block-3-2n-5d-2a-embedded-chapter-timeline-normalization.md` - implemented historical reference.
 - `block-3-2n-5d-3-durable-proof-worker-and-rollout.md` - implementation and canary verified; recurring enablement pending.
 
 Completed blocks remain as historical references. Verify current behavior from code and current docs, not from older block assumptions.

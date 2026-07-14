@@ -6,9 +6,9 @@
 
 ## Child Block Sequence
 
-1. `block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md`
-2. `block-3-2n-5d-2-trusted-external-proof-adapter.md`
-3. `block-3-2n-5d-2a-embedded-chapter-timeline-normalization.md`
+1. `completed/block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md`
+2. `completed/block-3-2n-5d-2-trusted-external-proof-adapter.md`
+3. `completed/block-3-2n-5d-2a-embedded-chapter-timeline-normalization.md`
 4. `block-3-2n-5d-3-durable-proof-worker-and-rollout.md`
 
 The umbrella is complete only after all child blocks pass `npm run verify:block`; 5D-2A also requires the corrected disabled Eric canary, and 5D-3 retains ownership of recurring-worker enablement and the final `npm run verify:live-dashboard` rollout gate.
@@ -70,8 +70,8 @@ Make verified audiobook chapter proof happen automatically after dependable disc
 ## Dependency Plan
 
 - Depends on Block 3-2n-5c for reliable service-local audiobook discovery.
-- Reuse the chapter-cache/import contract from `block-3-2n-5a-audiobook-chapter-import-cache.md`.
-- Feed the cached verified boundaries already consumed by `block-3-2n-5b-true-audiobook-chapter-progress.md`.
+- Reuse the chapter-cache/import contract from `completed/block-3-2n-5a-audiobook-chapter-import-cache.md`.
+- Feed the cached verified boundaries already consumed by `completed/block-3-2n-5b-true-audiobook-chapter-progress.md`.
 - Extend the cache schema so chapter rows belong to a source revision; source records retain media fingerprint, duration, chapter digest, contract/resolver version, safe warnings, and activation/invalidation status.
 
 ## Likely Files Or Areas

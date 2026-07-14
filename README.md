@@ -138,7 +138,7 @@ This posts to the configured Discord channel. Keep `PLEX_MUTATION_MODE=mock` unt
 - `docs/project-charter.md` defines the project purpose, goals, success criteria, and document map.
 - `docs/blocks/` contains AI-buildable tickets for scoped implementation work.
 - `docs/continue-here.md` captures the current handoff state.
-- Current dashboard corrective work has completed through `3-2n-6b`. It resumes with `docs/blocks/block-3-2n-5c-reliable-audiobook-discovery-automation.md`, then `3-2n-5d`, before the final `3-2o` accessibility/regression gate.
+- Current dashboard corrective work has completed through `3-2n-6c`. It resumes with `docs/blocks/block-3-2n-5d-3-durable-proof-worker-and-rollout.md` for the pending recurring-worker rollout, then 6E and 6D before the final `3-2o` accessibility/regression gate.
 
 ## Known Limitations
 
