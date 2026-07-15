@@ -3090,7 +3090,7 @@ body.detail-workspace-open {
 
 .detail-workspace-hero {
   position: relative;
-  min-height: 230px;
+  min-height: 260px;
   margin: -24px -24px 24px;
   overflow: hidden;
   border-bottom: 1px solid rgba(255,255,255,0.1);
@@ -3105,14 +3105,15 @@ body.detail-workspace-open {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: center;
-  opacity: 0.72;
+  object-position: center top;
+  opacity: 1;
+  filter: saturate(1.05) contrast(1.03);
 }
 
 .detail-workspace-hero-shade {
   position: absolute;
   inset: 0;
-  background: linear-gradient(90deg, rgba(5,10,16,0.94) 0%, rgba(5,10,16,0.76) 45%, rgba(5,10,16,0.28) 100%), linear-gradient(0deg, rgba(5,10,16,0.88), transparent 55%);
+  background: linear-gradient(90deg, rgba(5,10,16,0.62) 0%, rgba(5,10,16,0.24) 45%, rgba(5,10,16,0.04) 100%), linear-gradient(0deg, rgba(5,10,16,0.38), transparent 66%);
 }
 
 .detail-workspace-hero-content {
@@ -3122,8 +3123,8 @@ body.detail-workspace-open {
   flex-direction: column;
   align-items: flex-start;
   justify-content: flex-end;
-  min-height: 230px;
-  padding: 28px 32px;
+  min-height: 260px;
+  padding: 32px;
   box-sizing: border-box;
 }
 
@@ -3139,6 +3140,7 @@ body.detail-workspace-open {
   font-size: clamp(1.65rem, 4vw, 2.65rem);
   line-height: 1.08;
   text-wrap: balance;
+  text-shadow: 0 2px 18px rgba(0,0,0,0.48);
 }
 
 .detail-workspace-hero-content > p:not(.eyebrow) {
@@ -3348,6 +3350,152 @@ body.detail-workspace-open {
   display: grid;
   gap: 16px;
   min-width: 0;
+}
+
+.detail-movie-about {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid rgba(255,255,255,0.09);
+  border-radius: 16px;
+  background: rgba(255,255,255,0.025);
+  box-sizing: border-box;
+}
+
+.detail-movie-about h3 {
+  margin: 0 0 12px;
+  font-size: 1.1rem;
+}
+
+.detail-movie-history-table {
+  display: grid;
+  min-width: 0;
+  margin-top: 16px;
+}
+
+.detail-movie-history-row {
+  display: grid;
+  grid-template-columns: minmax(92px, auto) minmax(120px, 1fr) minmax(112px, auto) minmax(132px, auto);
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+  padding: 12px 4px;
+  border-top: 1px solid rgba(255,255,255,0.07);
+}
+
+.detail-movie-history-header {
+  padding-top: 0;
+  border-top: 0;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.detail-movie-history-row > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-movie-history-status {
+  justify-self: start;
+  padding: 4px 8px;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 999px;
+  font-size: 0.78rem;
+}
+
+.detail-movie-history-status.state-completed {
+  border-color: rgba(134,239,172,0.35);
+  color: #86efac;
+}
+
+.detail-movie-history-status.state-confirmed {
+  border-color: rgba(125,211,252,0.35);
+  color: #7dd3fc;
+}
+
+.detail-movie-history-evidence,
+.detail-movie-history-date {
+  color: var(--text-muted);
+  font-size: 0.84rem;
+}
+
+.detail-movie-history-more,
+.detail-movie-provenance {
+  margin-top: 14px;
+}
+
+.detail-movie-history-more > summary,
+.detail-movie-provenance > summary {
+  min-height: 44px;
+  padding: 10px 0;
+  color: #a5f3fc;
+  cursor: pointer;
+}
+
+.detail-movie-bounded-note,
+.detail-movie-empty,
+.detail-movie-profile-source {
+  margin: 14px 0 0;
+  font-size: 0.82rem;
+}
+
+.detail-movie-tagline {
+  margin: 0 0 12px;
+  color: #dbeafe;
+  font-style: italic;
+  line-height: 1.5;
+}
+
+.detail-movie-profile-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.detail-movie-profile-chips span {
+  max-width: 100%;
+  padding: 5px 9px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-movie-synopsis {
+  margin: 0;
+  line-height: 1.65;
+}
+
+.detail-movie-profile-facts {
+  display: grid;
+  gap: 0;
+  margin: 16px 0 0;
+}
+
+.detail-movie-profile-facts > div {
+  display: grid;
+  grid-template-columns: minmax(76px, auto) minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid rgba(255,255,255,0.07);
+}
+
+.detail-movie-profile-facts dt {
+  color: var(--text-muted);
+}
+
+.detail-movie-profile-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .detail-movie-record {
@@ -3671,23 +3819,23 @@ body.detail-workspace-open {
   }
 
   .detail-workspace-hero {
-    min-height: 190px;
+    min-height: 220px;
     margin: -16px -16px 16px;
   }
 
   .detail-workspace-hero-content {
-    min-height: 190px;
-    padding: 22px 20px;
+    min-height: 220px;
+    padding: 24px 20px;
   }
 
   .detail-workspace-hero-content h3 {
-    max-width: 72%;
+    max-width: 74%;
     font-size: clamp(1.35rem, 7vw, 2rem);
   }
 
   .detail-workspace-hero-content > p:not(.eyebrow),
   .detail-watcher-selection {
-    max-width: 72%;
+    max-width: 74%;
   }
 
   .detail-workspace-hero-cover {
@@ -3699,6 +3847,26 @@ body.detail-workspace-open {
 
   .detail-movie-stat-grid {
     grid-template-columns: 1fr;
+  }
+
+  .detail-movie-history-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px 12px;
+    align-items: start;
+  }
+
+  .detail-movie-history-header {
+    display: none;
+  }
+
+  .detail-movie-history-evidence,
+  .detail-movie-history-status {
+    justify-self: start;
+  }
+
+  .detail-movie-profile-facts > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
   }
 
   .detail-watcher-grid {

@@ -1,9 +1,9 @@
 # Block 3-2n-6E-2C: Canonical Artwork Freshness And Adoption
 
-> Status: Implemented on 2026-07-14 through child blocks 6E-2C1 and 6E-2C2.
-> Result: Implemented.
-> Verification: Both children passed `npm run verify:block`; the rebuilt and restarted production dashboard passed `npm run verify:live-dashboard`. Live canaries for Movie `63449`, Audiobook `73`, and Classic TV series `65354` each returned aligned canonical poster aliases, opaque private revisions, valid image bytes, and working backdrops.
-> Notes: Corrective parent after 3-2n-6E-2B. Visual presentation work remains separately scoped to 6E-2D.
+> Status: Implemented and verified through child blocks 6E-2C1, 6E-2C2, and 6E-2C3.
+> Result: Complete. Canonical artwork adoption and the corrective canonical Movie-history/enrichment extension have passed their deterministic and deployed gates.
+> Verification: All three children passed `npm run verify:block`; each deployed dashboard restart passed `npm run verify:live-dashboard`. The 6E-2C3 live Shang-Chi canary joined stale/current rating keys through exact GUID evidence and returned bounded source-backed profile enrichment.
+> Notes: Hero composition and Audiobook summary presentation remain separately scoped to 6E-2D.
 
 ## Goal
 
@@ -21,8 +21,9 @@ Establish one trustworthy private artwork contract across all Plex-backed media 
 
 1. `block-3-2n-6e-2c1-canonical-artwork-resolver-and-proxy-freshness.md`
 2. `block-3-2n-6e-2c2-dashboard-wide-artwork-adoption-and-compatibility.md`
+3. `block-3-2n-6e-2c3-canonical-movie-history-and-enriched-detail.md`
 
-Implement the children in order. This parent is complete only after both children pass `npm run verify:block` and the deployed dashboard passes `npm run verify:live-dashboard`.
+The artwork contract and expanded corrective sequence are complete and verified through 6E-2C3.
 
 ## Out Of Scope
 
@@ -34,4 +35,5 @@ Implement the children in order. This parent is complete only after both childre
 
 - 6E-2C1 records a passing mandatory block gate for canonical identity recovery, source authority, private proxy freshness, bounded caching, fallback honesty, and proxy safety.
 - 6E-2C2 records a passing mandatory block gate for dashboard-wide adoption, compatibility, cross-surface parity, and deterministic reload behavior.
+- 6E-2C3 records a passing mandatory block gate for canonical Movie history, viewing-day semantics, complete visible People attribution, a de-duplicated Movie presenter, and bounded tool-mediated enrichment.
 - The separate live dashboard smoke passes after the deployed service is rebuilt or restarted.

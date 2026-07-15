@@ -17,12 +17,15 @@ import { DashboardPreferenceService } from "../service/dashboardPreferenceServic
 import { CowatchAdjudicationService, type CowatchDecision } from "../service/cowatchAdjudicationService.js";
 import { AudiobookDiscoveryService } from "../service/audiobookDiscoveryService.js";
 import { ArtworkResolver, type ArtworkVariant } from "../service/artworkService.js";
+import { MovieProfileAdapter, type MovieProfileAdapterLike } from "../service/movieProfileAdapter.js";
+import { MovieProfileService } from "../service/movieProfileService.js";
 import { appConfig } from "../utils/config.js";
 import { parseDays } from "../utils/time.js";
 
 export type RouterOptions = {
   skipStartupUserSync?: boolean;
   discordReviewAvailable?: boolean;
+  movieProfileAdapter?: MovieProfileAdapterLike;
 };
 
 export function buildRouter(
@@ -44,6 +47,12 @@ export function buildRouter(
   const cowatchingIntelligenceService = new CowatchingIntelligenceService(db);
   const dashboardPreferences = new DashboardPreferenceService(db);
   const dashboardService = new DashboardService(db);
+  const movieProfileAdapter = options.movieProfileAdapter ?? new MovieProfileAdapter({
+    executablePath: appConfig.MEDIA_BOT_PROFILE_EXECUTABLE,
+    projectRoot: appConfig.MEDIA_BOT_PROFILE_ROOT,
+    pythonVersion: appConfig.MEDIA_BOT_PROFILE_PYTHON_VERSION
+  });
+  const movieProfiles = new MovieProfileService(db, movieProfileAdapter);
   const cowatchAdjudications = new CowatchAdjudicationService(db);
   const audiobookDiscovery = new AudiobookDiscoveryService(db, plex);
   const handleDashboardReadError = (error: unknown, res: express.Response, next: express.NextFunction) => {
@@ -239,6 +248,17 @@ export function buildRouter(
     try {
       const selector = decodeURIComponent(req.params.detailKey);
       return sendDetailWorkspaceResult(dashboardService.getDetailWorkspaceHierarchy(selector), res);
+    } catch (e) { next(e); }
+  });
+  router.get("/api/dashboard/detail-workspace/:detailKey/movie-profile", async (req, res, next) => {
+    try {
+      const selector = decodeURIComponent(req.params.detailKey);
+      const resolution = dashboardService.resolveDetailIdentity(selector);
+      if (!resolution.ok) return sendDetailWorkspaceResult(resolution, res);
+      if (resolution.identity.kind !== "movie") {
+        return res.status(400).json({ ok: false, errorCode: "DETAIL_UNSUPPORTED", message: "Movie profile enrichment is only available for Movie detail." });
+      }
+      return res.json({ ok: true, data: await movieProfiles.getProfile(resolution.identity) });
     } catch (e) { next(e); }
   });
   router.get("/api/dashboard/detail-workspace/:detailKey", (req, res, next) => {

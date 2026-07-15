@@ -1,8 +1,9 @@
 # Block 3-2n-6E-2D: Detail Presentation And Summary Parity
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Corrective child after 3-2n-6E-2C2. Make the shared hero readable and ensure Audiobook detail summaries agree with the verified expanded chapter hierarchy before 6E-3.
+> Status: Implemented and verified on 2026-07-15.
+> Result: Implemented.
+> Verification: `npm run verify:block` passed with 110/110 service tests and 51 passing dashboard regression cases plus one intentional skip. After PM2 restart, `npm run verify:live-dashboard` passed. The live verified Audiobook canary (`audiobook:73`) returned `34 of 62` chapters and the expanded hierarchy independently contained 34 watched/repeated chapters.
+> Notes: Reduced hero obstruction and improved focal positioning/responsive sizing across 320/390/768/1024/1440px coverage. The final live visual correction top-anchors the backdrop (`center top`), restores full artwork opacity, and keeps only a lighter left/bottom readability shade. Detail Audiobook summaries now reuse the verified chapter-progress snapshot used by hierarchy; unverified books retain explicit Plex track/file wording.
 
 ## Goal
 
@@ -11,7 +12,7 @@ Make detail presentation readable and semantically consistent: hero artwork shou
 ## Dependencies And Entry Gate
 
 - 6E-2A shared hero, poster, hierarchy, and one-scroll contracts are implemented.
-- 6E-2C1 and 6E-2C2 are implemented and verified, so source-resolution and cross-surface artwork failures are distinct from presentation defects.
+- 6E-2C1 and 6E-2C2 are implemented and verified, and 6E-2C3 has passed its canonical Movie history and presenter gate, so data-contract defects remain distinct from presentation defects.
 - Verified audiobook chapter mapping already supplies the expanded hierarchy’s read states and current position.
 
 ## Scope

@@ -72,6 +72,71 @@ export type DashboardDetailResolution =
   | { ok: true; identity: DashboardDetailIdentity; input: string }
   | { ok: false; errorCode: DashboardDetailErrorCode };
 
+export type DashboardMovieHistoryEvidenceKind = "direct_observation" | "attributed_confirmed";
+
+export interface DashboardMovieHistoryRow {
+  userId: number;
+  displayName: string;
+  localDate: string;
+  latestWatchedAt: string;
+  state: "completed" | "partial" | "confirmed";
+  strongestPercent: number | null;
+  observationCount: number;
+  evidenceKind: DashboardMovieHistoryEvidenceKind;
+}
+
+export interface DashboardMovieHistory {
+  canonicalGuid: string | null;
+  runtimeMinutes: number | null;
+  people: Array<{ id: number; displayName: string }>;
+  summary: {
+    rawObservationCount: number;
+    viewingDayCount: number;
+    completedViewingDayCount: number;
+    distinctViewerCount: number;
+    firstViewedAt: string | null;
+    latestViewedAt: string | null;
+  };
+  rows: DashboardMovieHistoryRow[];
+  rowsLimited: boolean;
+}
+
+export interface DashboardMovieProfile {
+  schemaVersion: 1;
+  title: string;
+  releaseYear: number | null;
+  releaseDate: string | null;
+  runtimeMinutes: number | null;
+  genres: string[];
+  directors: string[];
+  cast: string[];
+  studios: string[];
+  countries: string[];
+  contentRating: string | null;
+  tagline: string | null;
+  synopsis: string | null;
+  imdbId: string | null;
+  tmdbId: number | null;
+  brandTags: string[];
+  franchiseTags: string[];
+  universeTags: string[];
+  sourcePropertyTags: string[];
+  source: "media-bot";
+  refreshedAt: string | null;
+}
+
+export type DashboardMovieProfileUnavailableReason =
+  | "not_configured"
+  | "not_found"
+  | "ambiguous"
+  | "timeout"
+  | "invalid_response"
+  | "upstream_unavailable";
+
+export type DashboardMovieProfileReadResult =
+  | { status: "available"; profile: DashboardMovieProfile; cached: boolean }
+  | { status: "unavailable"; reason: DashboardMovieProfileUnavailableReason };
+
 export interface DashboardDetailWorkspaceResponse {
   detailKey: string;
   identity: DashboardDetailIdentity;
@@ -100,6 +165,10 @@ export interface DashboardDetailWorkspaceResponse {
   };
   hierarchy: {
     available: boolean;
+    route: string;
+  };
+  movieHistory?: DashboardMovieHistory;
+  movieProfile?: {
     route: string;
   };
   timingMs: number;

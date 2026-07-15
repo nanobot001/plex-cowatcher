@@ -367,10 +367,11 @@ test("shared detail shell renders explicit presenters for all dashboard categori
     await expect.poll(() => page.url()).toContain(`detail=${encodeURIComponent(item.detailKey)}`);
     await expect(dialog.getByTestId(`detail-presenter-${presenter}`)).toBeVisible();
     if (section === "movie") {
-      await expect(dialog.getByTestId("detail-movie-overview")).toBeVisible();
+      await expect(dialog.getByTestId("detail-movie-history")).toBeVisible();
+      await expect(dialog.getByTestId("detail-movie-about")).toBeVisible();
       await expect(dialog.getByTestId("detail-movie-evidence")).toBeVisible();
-      await expect(dialog.getByRole("progressbar", { name: /observed progress/i })).toBeVisible();
-      await expect(dialog.getByTestId("detail-movie-overview").locator(".detail-movie-facts")).toBeVisible();
+      await expect(dialog.getByRole("progressbar", { name: /observed progress/i })).toHaveCount(0);
+      await expect(dialog.getByTestId("detail-workspace-playback")).toHaveCount(0);
     }
     await expect(dialog.getByTestId("detail-workspace-category")).toHaveText(section === "classic_tv" ? "Classic TV" : section === "tv" ? "TV" : section === "movie" ? "Movies" : section === "anime" ? "Anime" : "Audiobooks");
     await dialog.locator(".dialog-close").click();
@@ -421,7 +422,21 @@ test("detail shell owns one scroller and stays content-first across required wid
         dialogOverflow: getComputedStyle(element).overflowY,
         scrollOwners,
         unusedRatio: Math.max(0, rect.bottom - bodyRect.bottom) / Math.max(1, rect.height),
-        referencePosition: getComputedStyle(reference).position
+        referencePosition: getComputedStyle(reference).position,
+        hero: (() => {
+          const hero = element.querySelector('[data-testid="detail-workspace-hero"]');
+          const heroTitle = element.querySelector('[data-testid="detail-workspace-hero-title"]');
+          const backdrop = element.querySelector('[data-detail-backdrop]');
+          const shade = element.querySelector('.detail-workspace-hero-shade');
+          return {
+            height: hero?.getBoundingClientRect().height ?? 0,
+            titleBottom: heroTitle?.getBoundingClientRect().bottom ?? 0,
+            bottom: hero?.getBoundingClientRect().bottom ?? 0,
+            backdropOpacity: backdrop ? getComputedStyle(backdrop).opacity : null,
+            backdropPosition: backdrop ? getComputedStyle(backdrop).objectPosition : null,
+            shade: shade ? getComputedStyle(shade).backgroundImage : null
+          };
+        })()
       };
     });
     expect(metrics.rect.left).toBeGreaterThanOrEqual(0);
@@ -434,9 +449,95 @@ test("detail shell owns one scroller and stays content-first across required wid
     expect(metrics.scrollOwners).toEqual(["detail-workspace-scroll"]);
     expect(metrics.unusedRatio).toBeLessThan(0.25);
     expect(metrics.referencePosition).toBe(width >= 768 ? "sticky" : "static");
+    expect(metrics.hero.height).toBeGreaterThanOrEqual(width <= 390 ? 220 : 260);
+    expect(metrics.hero.titleBottom).toBeLessThanOrEqual(metrics.hero.bottom + 0.5);
+    expect(metrics.hero.backdropOpacity).toBe("1");
+    expect(metrics.hero.backdropPosition).toContain("0%");
+    expect(metrics.hero.shade).toContain("0.62");
     await dialog.locator(".dialog-close").click();
     await expect(page.locator("#view-title")).toBeFocused();
   }
+});
+
+test("verified Audiobook detail summary matches the expanded chapter hierarchy", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Media Explorer" }).click();
+
+  const card = page.locator('[data-section="audiobook"]').getByTestId("library-card").filter({ hasText: "Verified Fixture Audiobook" }).first();
+  await expect(card).toBeVisible();
+  await card.click();
+
+  const dialog = page.locator("#detail-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByTestId("detail-workspace-progress")).toContainText("1 of 3 chapters · 50%");
+  await expect(dialog.getByTestId("detail-workspace-source")).toContainText("Verified audiobook chapters");
+  await expect(dialog.getByTestId("detail-presenter-audiobook")).toBeVisible();
+  await expect(dialog.getByTestId("detail-hierarchy-group").locator("summary")).toContainText("3 chapters");
+  await expect(dialog.getByTestId("detail-workspace-hierarchy")).toContainText("Verified Chapter 1");
+  await expect(dialog.getByTestId("detail-workspace-hierarchy")).toContainText("Verified Chapter 3");
+
+  const metrics = await dialog.evaluate(element => ({
+    documentWidth: document.documentElement.scrollWidth,
+    viewportWidth: document.documentElement.clientWidth,
+    scrollOwners: [...element.querySelectorAll("*")]
+      .filter(node => ["auto", "scroll"].includes(getComputedStyle(node).overflowY))
+      .map(node => node.getAttribute("data-testid") || node.className)
+  }));
+  expect(metrics.documentWidth).toBeLessThanOrEqual(metrics.viewportWidth);
+  expect(metrics.scrollOwners).toEqual(["detail-workspace-scroll"]);
+
+  await dialog.locator(".dialog-close").click();
+  const unverifiedCard = page.locator('[data-section="audiobook"]').getByTestId("library-card").filter({ hasText: "Fixture Audiobook" }).first();
+  await expect(unverifiedCard).toBeVisible();
+  await unverifiedCard.click();
+  await expect(dialog.getByTestId("detail-workspace-source")).toContainText("Plex track/file evidence");
+  await expect(dialog.getByTestId("detail-workspace-progress")).not.toContainText("chapters");
+});
+
+test("Movie detail groups canonical stale-key history and loads About independently", async ({ page }) => {
+  const baseResponse = await page.request.get("/api/dashboard/detail-workspace/" + encodeURIComponent("movie:57417"));
+  const baseBody = await baseResponse.json();
+  expect(baseBody.ok).toBeTruthy();
+  expect(baseBody.data.movieHistory.summary.rawObservationCount).toBe(3);
+  expect(baseBody.data.movieHistory.summary.viewingDayCount).toBe(3);
+  expect(baseBody.data.movieHistory.summary.completedViewingDayCount).toBe(2);
+  expect(baseBody.data.movieHistory.people.map(person => person.displayName)).toEqual(["Ace", "Justin", "Tony"]);
+  expect(JSON.stringify(baseBody)).not.toContain("Destin Daniel Cretton");
+
+  await page.goto(`/#overview?detail=${encodeURIComponent("movie:57417")}`);
+  const dialog = page.locator("#detail-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator("#detail-workspace-heading")).toHaveText("Shang-Chi and the Legend of the Ten Rings");
+  await expect(dialog.getByTestId("detail-movie-history-row")).toHaveCount(3);
+  await expect(dialog.getByTestId("detail-movie-history-row").filter({ hasText: "Ace" })).toContainText("2 observations");
+  await expect(dialog.getByTestId("detail-movie-history-row").filter({ hasText: "Justin" })).toContainText("Confirmed together");
+  await expect(dialog.getByTestId("detail-movie-history-row").filter({ hasText: "Tony" })).toContainText("2022-01-01");
+  await expect(dialog).not.toContainText("Secret");
+  await expect(dialog).not.toContainText("Observed time");
+  await expect(dialog.getByTestId("detail-workspace-playback")).toHaveCount(0);
+  await expect(dialog.getByTestId("detail-workspace-category")).toHaveCount(1);
+  await expect(dialog.getByTestId("detail-workspace-key")).toHaveCount(1);
+
+  const about = dialog.getByTestId("detail-movie-about");
+  await expect(about).toHaveAttribute("data-profile-state", "available");
+  await expect(about).toContainText("2021");
+  await expect(about).toContainText("132 min");
+  await expect(about).toContainText("PG-13");
+  await expect(about).toContainText("Destin Daniel Cretton");
+  await expect(about).toContainText("Marvel Studios");
+  await expect(about).toContainText("Marvel Cinematic Universe");
+  await expectNoVisualOverflow(page);
+});
+
+test("Movie history stays usable when lazy profile enrichment fails", async ({ page }) => {
+  await page.route(/\/api\/dashboard\/detail-workspace\/.+\/movie-profile$/, route => route.abort());
+  await page.goto(`/#overview?detail=${encodeURIComponent("movie:57417")}`);
+  const dialog = page.locator("#detail-dialog");
+  await expect(dialog.getByTestId("detail-movie-history")).toBeVisible();
+  await expect(dialog.getByTestId("detail-movie-history-row")).toHaveCount(3);
+  await expect(dialog.getByTestId("detail-movie-about")).toHaveAttribute("data-profile-state", "unavailable");
+  await expect(dialog.getByTestId("detail-movie-about-unavailable")).toBeVisible();
+  await expectNoVisualOverflow(page);
 });
 
 test("people separates included household identities and preserves profile navigation", async ({ page }) => {

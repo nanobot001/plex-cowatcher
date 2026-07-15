@@ -64,8 +64,8 @@ All dashboard and web UI changes must follow these layout and spacing principles
 ### Cards & Modals
 
 - **Content-first sizing**: Modals shrink to fit short content and grow (up to a max) for long content.
-- **Fixed reference elements**: In two-column detail layouts, the reference column (poster, artwork) stays fixed or sticky while the content column scrolls.
-- **Hierarchy placement**: TV season/chapter hierarchies belong in the poster column (left), not in the scrolling content column.
+- **Fixed reference elements**: In two-column detail layouts, the compact reference column (poster, artwork, summary metadata) stays fixed or sticky while the primary content column uses the shared modal scroller.
+- **Hierarchy placement**: Dense TV season/episode and audiobook chapter hierarchies belong in the wider primary content column on desktop. On narrow layouts they stack after the poster and compact summary rail.
 
 ### Responsive Behavior
 

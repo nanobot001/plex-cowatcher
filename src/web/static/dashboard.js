@@ -602,6 +602,9 @@ async function syncDetailFromURL() {
       const canonicalHash = "#" + state.layout + "?" + routeQuery();
       if (location.hash !== canonicalHash) history.replaceState({}, "", canonicalHash);
       renderDetailWorkspace(d, { status: d.category === "movie" ? "ready" : "loading", data: d.category === "movie" ? { hierarchy: { type: "movie" } } : null });
+      if (d.category === "movie" && d.movieProfile?.route) {
+        void loadMovieProfile(d, signal);
+      }
       if (d.category !== "movie" && d.hierarchy?.available) {
         void loadDetailWorkspaceHierarchy(d, signal);
       }
@@ -1028,6 +1031,62 @@ function renderMovieDetailPresenter(workspace) {
   </div>`;
 }
 
+function renderCanonicalMovieDetailPresenter(workspace) {
+  const history = workspace.movieHistory || { summary: {}, rows: [], people: [] };
+  const summary = history.summary || {};
+  const rows = Array.isArray(history.rows) ? history.rows : [];
+  const visibleRows = rows.slice(0, 8);
+  const extraRows = rows.slice(8);
+  const rowHtml = row => {
+    const status = row.state === "completed"
+      ? "Completed"
+      : row.state === "confirmed"
+        ? "Confirmed together"
+        : row.strongestPercent == null ? "Partial" : `${row.strongestPercent}% observed`;
+    const evidence = row.evidenceKind === "attributed_confirmed"
+      ? "Household confirmation"
+      : `${row.observationCount} ${row.observationCount === 1 ? "observation" : "observations"}`;
+    return `<div class="detail-movie-history-row" role="row" data-testid="detail-movie-history-row" data-evidence-kind="${esc(row.evidenceKind)}">
+      <span role="cell" class="detail-movie-history-date">${esc(row.localDate)}</span>
+      <strong role="cell" class="detail-movie-history-person">${esc(row.displayName)}</strong>
+      <span role="cell" class="detail-movie-history-status state-${esc(row.state)}">${esc(status)}</span>
+      <span role="cell" class="detail-movie-history-evidence">${esc(evidence)}</span>
+    </div>`;
+  };
+  const people = (history.people || []).map(person => person.displayName).filter(Boolean);
+  const boundedNote = history.rowsLimited
+    ? `<p class="text-muted detail-movie-bounded-note">Showing the ${rows.length} most recent viewing days from a bounded history read.</p>`
+    : "";
+  return `<div data-testid="detail-presenter-movie" class="detail-movie-presenter">
+    <section class="detail-movie-record" data-testid="detail-movie-history" aria-labelledby="detail-movie-history-heading">
+      <span class="eyebrow">Household record</span>
+      <h3 id="detail-movie-history-heading">Watch history</h3>
+      <p class="detail-movie-status"><strong>${esc(summary.viewingDayCount ?? 0)}</strong> viewing ${Number(summary.viewingDayCount) === 1 ? "day" : "days"} across <span data-testid="detail-people">${esc(people.length ? people.join(", ") : "no visible viewers")}</span>.</p>
+      <div class="detail-movie-history-table" role="table" aria-label="Movie viewing days">
+        <div class="detail-movie-history-row detail-movie-history-header" role="row">
+          <span role="columnheader">Date</span><span role="columnheader">Person</span><span role="columnheader">Status</span><span role="columnheader">Evidence</span>
+        </div>
+        ${visibleRows.length ? visibleRows.map(rowHtml).join("") : '<p class="text-muted detail-movie-empty">No visible household viewing days.</p>'}
+      </div>
+      ${extraRows.length ? `<details class="detail-movie-history-more"><summary>Show ${extraRows.length} older viewing ${extraRows.length === 1 ? "day" : "days"}</summary><div class="detail-movie-history-table" role="table">${extraRows.map(rowHtml).join("")}</div></details>` : ""}
+      ${boundedNote}
+    </section>
+    <section class="detail-movie-about" data-testid="detail-movie-about" data-profile-state="loading" aria-live="polite" aria-labelledby="detail-movie-about-heading">
+      <h3 id="detail-movie-about-heading">About this movie</h3>
+      <p class="text-muted" data-testid="detail-movie-about-loading">Loading source-backed movie facts...</p>
+    </section>
+    <details class="detail-evidence-section detail-movie-provenance" data-testid="detail-movie-evidence">
+      <summary>Evidence and identity</summary>
+      <p>${esc(summary.rawObservationCount ?? 0)} raw playback ${Number(summary.rawObservationCount) === 1 ? "observation" : "observations"} grouped into household-local viewing days. Same-title records are never merged; stale Plex keys qualify only through an exact non-empty GUID match.</p>
+      <dl class="detail-workspace-metadata">
+        <div><dt>First evidence</dt><dd>${esc(summary.firstViewedAt ? fmtDate(summary.firstViewedAt) : "Unavailable")}</dd></div>
+        <div><dt>Latest evidence</dt><dd>${esc(summary.latestViewedAt ? fmtDate(summary.latestViewedAt) : "Unavailable")}</dd></div>
+        <div><dt>Detail identity</dt><dd class="detail-workspace-key" data-testid="detail-workspace-key">${esc(workspace.detailKey)}</dd></div>
+      </dl>
+    </details>
+  </div>`;
+}
+
 function renderTvDetailPresenter(workspace, state) {
   return renderSeriesHierarchy(workspace, state, "tv", "Show hierarchy");
 }
@@ -1065,12 +1124,77 @@ function renderAudiobookDetailPresenter(workspace, state) {
 }
 
 function renderDetailCategoryPresenter(workspace, hierarchyState) {
-  if (workspace.category === "movie") return renderMovieDetailPresenter(workspace);
+  if (workspace.category === "movie") return renderCanonicalMovieDetailPresenter(workspace);
   if (workspace.category === "tv") return renderTvDetailPresenter(workspace, hierarchyState);
   if (workspace.category === "classic_tv") return renderClassicTvDetailPresenter(workspace, hierarchyState);
   if (workspace.category === "anime") return renderAnimeDetailPresenter(workspace, hierarchyState);
   if (workspace.category === "audiobook") return renderAudiobookDetailPresenter(workspace, hierarchyState);
   return '<section class="detail-hierarchy-section"><p class="text-muted">Unsupported media category.</p></section>';
+}
+
+function renderMovieProfileContent(result) {
+  if (!result || result.status !== "available" || !result.profile) {
+    return `<h3 id="detail-movie-about-heading">About this movie</h3><p class="text-muted" data-testid="detail-movie-about-unavailable">A source-backed profile is temporarily unavailable. Household history remains complete.</p>`;
+  }
+  const profile = result.profile;
+  const chips = [profile.releaseYear, profile.runtimeMinutes ? `${profile.runtimeMinutes} min` : null, profile.contentRating, ...(profile.genres || [])].filter(Boolean);
+  const context = [...(profile.brandTags || []), ...(profile.franchiseTags || []), ...(profile.universeTags || [])]
+    .filter((value, index, all) => all.indexOf(value) === index);
+  return `<h3 id="detail-movie-about-heading">About this movie</h3>
+    ${profile.tagline ? `<p class="detail-movie-tagline">${esc(profile.tagline)}</p>` : ""}
+    ${chips.length ? `<div class="detail-movie-profile-chips">${chips.map(chip => `<span>${esc(chip)}</span>`).join("")}</div>` : ""}
+    ${profile.synopsis ? `<p class="detail-movie-synopsis">${esc(profile.synopsis)}</p>` : ""}
+    <dl class="detail-movie-profile-facts">
+      ${profile.directors?.length ? `<div><dt>Director</dt><dd>${esc(profile.directors.join(", "))}</dd></div>` : ""}
+      ${profile.cast?.length ? `<div><dt>Cast</dt><dd>${esc(profile.cast.join(", "))}</dd></div>` : ""}
+      ${profile.studios?.length ? `<div><dt>Studio</dt><dd>${esc(profile.studios.join(", "))}</dd></div>` : ""}
+      ${context.length ? `<div><dt>Context</dt><dd>${esc(context.join(", "))}</dd></div>` : ""}
+    </dl>
+    <p class="detail-movie-profile-source">Source: media-bot${profile.refreshedAt ? ` Â· refreshed ${esc(fmtDate(profile.refreshedAt))}` : ""}</p>`;
+}
+
+function renderMovieDetailRail(workspace) {
+  const history = workspace.movieHistory || { summary: {} };
+  const summary = history.summary || {};
+  const completed = Number(summary.completedViewingDayCount || 0);
+  const viewingDays = Number(summary.viewingDayCount || 0);
+  const status = completed > 0
+    ? `${completed} completed viewing ${completed === 1 ? "day" : "days"}`
+    : viewingDays > 0 ? `${viewingDays} viewing ${viewingDays === 1 ? "day" : "days"}` : "No visible viewing days";
+  const runtime = history.runtimeMinutes ? `${history.runtimeMinutes} min runtime` : "Runtime unavailable";
+  return `<div class="detail-workspace-rail detail-movie-rail">
+    <section class="detail-summary-card" data-testid="detail-workspace-progress" aria-label="Household Movie status">
+      <span class="eyebrow">Household status</span>
+      <strong>${esc(status)}</strong>
+      <span data-testid="detail-workspace-source">${esc(runtime)} Â· Plex playback evidence</span>
+    </section>
+  </div>`;
+}
+
+function renderDefaultDetailRail(workspace, people, playback, progress) {
+  return `<div class="detail-workspace-rail">
+    <div class="detail-workspace-summary-grid">
+      <section class="detail-summary-card" data-testid="detail-workspace-progress" aria-label="Progress summary">
+        <span class="eyebrow">Progress</span>
+        <strong>${esc(detailProgressLabel(progress))}</strong>
+        <span data-testid="detail-workspace-source">${esc(detailSourceLabel(progress))}</span>
+      </section>
+      <section class="detail-summary-card" data-testid="detail-workspace-playback" aria-label="Playback summary">
+        <span class="eyebrow">Playback</span>
+        <strong>${esc(playback.plays)} plays Â· ${esc(playback.completedPlays)} completed</strong>
+        <span>${esc(fmtHourValue(playback.observedMinutes))} observed</span>
+      </section>
+    </div>
+    <dl class="detail-workspace-metadata">
+      <div><dt>People</dt><dd data-testid="detail-people">${esc(people || "No visible participants")}</dd></div>
+      <div><dt>Latest activity</dt><dd>${esc(fmtDate(playback.latestWatchedAt))}</dd></div>
+      <div><dt>Detail identity</dt><dd class="detail-workspace-key" data-testid="detail-workspace-key">${esc(workspace.detailKey)}</dd></div>
+    </dl>
+    <section class="detail-evidence-section" data-testid="detail-workspace-evidence">
+      <h3>Evidence</h3>
+      <p>Canonical progress and participant evidence. Hierarchy loads separately for only this title.</p>
+    </section>
+  </div>`;
 }
 
 function renderDetailWorkspace(workspace, hierarchyState) {
@@ -1091,8 +1215,8 @@ function renderDetailWorkspace(workspace, hierarchyState) {
       ${workspace.backdropUrl ? `<img class="detail-workspace-hero-backdrop" data-detail-backdrop src="${esc(workspace.backdropUrl)}" alt="" aria-hidden="true">` : ""}
       <div class="detail-workspace-hero-shade" aria-hidden="true"></div>
       <div class="detail-workspace-hero-content">
-        <p class="eyebrow">${esc(categoryLabel(workspace.category))}</p>
-        <h3>${esc(workspace.title)}</h3>
+        <p class="eyebrow" data-testid="detail-workspace-category">${esc(categoryLabel(workspace.category))}</p>
+        <h3 data-testid="detail-workspace-hero-title">${esc(workspace.title)}</h3>
         ${workspace.subtitle ? `<p>${esc(workspace.subtitle)}</p>` : ""}
         ${workspace.category === "audiobook" ? `<img class="detail-workspace-hero-cover" src="${esc(posterUrl)}" alt="" aria-hidden="true">` : ""}
         ${selectionHtml}
@@ -1103,7 +1227,7 @@ function renderDetailWorkspace(workspace, hierarchyState) {
         <div class="detail-workspace-artwork-frame">
           <img class="poster" data-testid="detail-workspace-artwork" src="${esc(posterUrl)}" alt="${esc(`${workspace.title} ${categoryLabel(workspace.category)} artwork`)}" onerror="this.src='/static/icon.svg';this.classList.add('artwork-fallback')">
         </div>
-        <div class="detail-workspace-rail">
+        ${workspace.category === "movie" ? renderMovieDetailRail(workspace) : `<div class="detail-workspace-rail">
           <div class="detail-workspace-summary-grid">
           <section class="detail-summary-card" data-testid="detail-workspace-progress" aria-label="Progress summary">
             <span class="eyebrow">Progress</span>
@@ -1119,14 +1243,13 @@ function renderDetailWorkspace(workspace, hierarchyState) {
           <dl class="detail-workspace-metadata">
           <div><dt>People</dt><dd data-testid="detail-people">${esc(people || "No visible participants")}</dd></div>
           <div><dt>Latest activity</dt><dd>${esc(fmtDate(playback.latestWatchedAt))}</dd></div>
-          <div><dt>Category</dt><dd data-testid="detail-workspace-category">${esc(categoryLabel(workspace.category))}</dd></div>
           <div><dt>Detail identity</dt><dd class="detail-workspace-key" data-testid="detail-workspace-key">${esc(workspace.detailKey)}</dd></div>
           </dl>
           <section class="detail-evidence-section" data-testid="detail-workspace-evidence">
             <h3>Evidence</h3>
             <p>Canonical progress and participant evidence. Hierarchy loads separately for only this title.</p>
           </section>
-        </div>
+        </div>`}
       </aside>
       <main class="detail-workspace-main" data-testid="detail-workspace-main">
         ${renderDetailCategoryPresenter(workspace, hierarchyState)}
@@ -1147,6 +1270,23 @@ function renderDetailWorkspace(workspace, hierarchyState) {
   }
   const firstWatcher = document.querySelector("[data-detail-watcher-lane]");
   if (firstWatcher) firstWatcher.setAttribute("tabindex", "0");
+}
+
+async function loadMovieProfile(workspace, signal) {
+  try {
+    const result = await fetchJson(workspace.movieProfile.route, { signal });
+    if (signal.aborted || activeDetailWorkspace?.detailKey !== workspace.detailKey) return;
+    const section = document.querySelector('[data-testid="detail-movie-about"]');
+    if (!section) return;
+    section.dataset.profileState = result?.status || "unavailable";
+    section.innerHTML = renderMovieProfileContent(result);
+  } catch {
+    if (signal.aborted || activeDetailWorkspace?.detailKey !== workspace.detailKey) return;
+    const section = document.querySelector('[data-testid="detail-movie-about"]');
+    if (!section) return;
+    section.dataset.profileState = "unavailable";
+    section.innerHTML = renderMovieProfileContent(null);
+  }
 }
 
 async function loadDetailWorkspaceHierarchy(workspace, signal) {

@@ -1,18 +1,22 @@
 # Continue Here
 
-## 2026-07-14
+## 2026-07-15
 
 Current state:
 - Block 3-2n-6E-1 is implemented and verified, providing the canonical detail identity, workspace read contract, and lazy hierarchy route.
 - Block 3-2n-6E-2 is implemented and verified. Every non-Progress detail caller now opens one URL-restorable `#detail-dialog` shell with explicit Movie, TV, Classic TV, Anime, and Audiobook presenters. A populated Classic TV review corrected the initial column hierarchy: the sticky left rail now holds artwork and compact summary metadata, while seasons/episodes/chapters use the wider primary column.
 - Block 3-2n-6E-2A is implemented and verified. The shared non-Progress detail workspace now has a full-width private Plex backdrop hero, an honest Audiobook gradient/square-cover fallback, and unlabeled stable-ID watcher lanes ordered like People with hover/focus evidence and cross-row selection. Progress remains isolated for 6E-3.
 - Block 3-2n-6E-2B is implemented and verified. Movie detail now uses the primary column for a source-backed viewing record with progress, playback, latest activity, visible participants, and evidence explanation instead of an empty hierarchy placeholder.
-- Block 3-2n-6E-2C is implemented and verified through 6E-2C1 and 6E-2C2. One canonical resolver now owns private poster/backdrop identity and revisioning, valid local Audiobook covers are authoritative, stale Plex keys recover through stable evidence, and every current dashboard artwork consumer uses the same descriptor while preserving `artworkUrl` as the exact `posterUrl` alias.
-- The final deterministic gate passed with 107 service/integration tests and 45 dashboard regression cases (plus one intentional narrow duplicate-project skip). After the production rebuild and PM2 restart, `npm run verify:live-dashboard` passed. Live Movie `63449`, Audiobook `73`, and Classic TV `65354` canaries each served aligned privately revisioned poster URLs, valid image bytes, and working backdrops.
+- Block 3-2n-6E-2C is fully implemented and verified through 6E-2C3. One canonical resolver owns private artwork identity and revisioning, and Movie detail now joins stale/current rating keys only through exact non-empty Plex GUID evidence, groups direct observations into household-local viewing days, and presents one bounded history surface.
+- Block 3-2n-6E-2C3 added a lazy public-read media-bot exact-profile boundary with indexed exact identity, schema validation, output/timeout limits, a 15-minute CoWatcher cache, request coalescing, and failure backoff. The Movie About section degrades independently and cannot delay or blank household history.
+- The final deterministic gate passed with 110 service/integration tests and 49 dashboard regression cases plus one intentional skip. The focused media-bot tool suite passed 81 tests, and ten warm exact-profile invocations measured p95 615 ms. After the production rebuild and PM2 restart, `npm run verify:live-dashboard` passed.
+- The live Shang-Chi canary confirmed one stale-key `23917` observation plus two current-key `57417` observations under one exact Plex GUID, producing three completed viewing days for Tony, Garner, and Dorothy. The lazy profile returned the allowlisted 2021, 132-minute, PG-13 Marvel Studios result with MCU context and no private fields.
+- Block 3-2n-6E-2D is implemented and verified. The shared detail hero now uses a lighter contrast treatment, top-anchored (`center top`) focal positioning, and responsive sizing across the required viewport matrix. Verified Audiobook detail summaries reuse the chapter-aware snapshot used by the expanded hierarchy, while unverified books retain explicit Plex track/file evidence.
+- The 6E-2D gate passed with 110 service tests and 51 dashboard regression cases plus one intentional skip. The live verified Audiobook canary `audiobook:73` returned `34 of 62` chapters and matched 34 watched/repeated chapters in the expanded hierarchy. Production was restarted and `npm run verify:live-dashboard` passed.
 - The 3-2n-5d-3 recurring-worker enablement decision remains separately pending; this detail-workspace work does not imply that automatic audiobook proof was enabled.
 
 Next step:
-- Implement **Block 3-2n-6E-2D: Detail Presentation And Summary Parity** (`docs/blocks/block-3-2n-6e-2d-detail-presentation-and-summary-parity.md`) next. Only after 6E-2D passes should 6E-3 migrate `progressDetail` and retire `#progress-dialog`.
+- Implement **Block 3-2n-6E-3: Progress Migration And Cross-Surface Regression** (`docs/blocks/block-3-2n-6e-3-progress-migration-and-regression.md`) next. Preserve the verified 6E-2D hero and Audiobook summary contracts while migrating `progressDetail` and retiring `#progress-dialog`.
 
 ## 2026-07-12
 
