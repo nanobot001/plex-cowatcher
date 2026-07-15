@@ -91,6 +91,70 @@ test("overview merges audiobook sessions when Plex changes the item key", async 
   expect(pageErrors).toEqual([]);
 });
 
+test("canonical artwork stays aligned across surfaces and refreshes after a known source change", async ({ page }) => {
+  const setCover = async (variant) => {
+    const response = await page.request.post("/__test/artwork/audiobook/20", { data: { variant } });
+    expect(response.ok()).toBeTruthy();
+  };
+  const loadedImageUrl = async (image) => {
+    await expect(image).toBeVisible();
+    await expect.poll(() => image.evaluate(node => node.complete && node.naturalWidth > 0)).toBeTruthy();
+    return image.evaluate(node => node.currentSrc);
+  };
+
+  await setCover("one");
+  try {
+    await page.goto("/#overview?");
+    const overviewCard = page.getByTestId("recent-playback-card").filter({ has: page.getByText("Fixture Audiobook", { exact: true }) }).first();
+    const overviewImage = overviewCard.locator("img.poster");
+    const initialPosterUrl = await overviewImage.getAttribute("src");
+    const initialResolvedUrl = await loadedImageUrl(overviewImage);
+    expect(initialPosterUrl).toMatch(/^\/api\/artwork\/audiobook%3A20\?variant=poster&v=[a-f0-9]{20}$/);
+    expect(initialResolvedUrl).toMatch(/\/api\/artwork\/audiobook%3A20\?variant=poster&v=[a-f0-9]{20}$/);
+
+    await overviewCard.click();
+    const dialog = page.locator("#detail-dialog");
+    const detailImage = dialog.getByTestId("detail-workspace-artwork");
+    await expect(detailImage).toHaveAttribute("src", initialPosterUrl);
+    expect(await loadedImageUrl(detailImage)).toBe(initialResolvedUrl);
+    await dialog.locator(".dialog-close").click();
+
+    await page.getByRole("button", { name: "Activity Timeline" }).click();
+    const timelineImage = page.locator(".activity-row").filter({ hasText: "Fixture Audiobook" }).first().locator("img.poster");
+    await expect(timelineImage).toHaveAttribute("src", initialPosterUrl);
+
+    await page.getByRole("button", { name: "Media Explorer" }).click();
+    const libraryImage = page.locator('[data-section="audiobook"]').getByTestId("library-card").filter({ hasText: "Fixture Audiobook" }).first().locator("img.poster");
+    await expect(libraryImage).toHaveAttribute("src", initialPosterUrl);
+
+    const progressBody = await (await page.request.get("/api/dashboard/progress")).json();
+    const progressItems = [
+      ...progressBody.data.recentlyActive.items,
+      ...progressBody.data.continue.items,
+      ...progressBody.data.recentlyCompleted.items
+    ];
+    const progressItem = progressItems.find(item => item.title === "Fixture Audiobook");
+    expect(progressItem).toBeTruthy();
+    expect(progressItem.artworkUrl).toBe(progressItem.posterUrl);
+    expect(progressItem.posterUrl).toBe(initialPosterUrl);
+
+    await setCover("two");
+    await page.goto("/#overview?");
+    await page.reload();
+    const refreshedCard = page.getByTestId("recent-playback-card").filter({ has: page.getByText("Fixture Audiobook", { exact: true }) }).first();
+    const refreshedImage = refreshedCard.locator("img.poster");
+    const refreshedPosterUrl = await refreshedImage.getAttribute("src");
+    const refreshedResolvedUrl = await loadedImageUrl(refreshedImage);
+    expect(refreshedPosterUrl).not.toBe(initialPosterUrl);
+    expect(refreshedResolvedUrl).not.toBe(initialResolvedUrl);
+
+    await refreshedCard.click();
+    await expect(dialog.getByTestId("detail-workspace-artwork")).toHaveAttribute("src", refreshedPosterUrl);
+  } finally {
+    await setCover("one");
+  }
+});
+
 test("overview hides metadata gaps because ingestion repairs them automatically", async ({ page }) => {
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -334,6 +398,10 @@ test("detail shell owns one scroller and stays content-first across required wid
   for (const width of [320, 390, 768, 1024, 1440]) {
     await page.setViewportSize({ width, height: 800 });
     await page.goto(`/#overview?detail=${encodeURIComponent("movie:movie-regression")}`);
+    // Later iterations can otherwise be hash-only same-document navigations
+    // after the prior dialog close. Reload to exercise the persisted URL
+    // contract consistently at every viewport.
+    await page.reload();
     const dialog = page.locator("#detail-dialog");
     await expect(dialog).toBeVisible();
     await expect(dialog.locator("#detail-workspace-heading")).toHaveText("Fixture Movie");

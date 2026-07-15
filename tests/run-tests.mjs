@@ -2459,6 +2459,17 @@ test("audiobook artwork falls back to a newer reconciled Plex sibling", async ()
       VALUES (?, 'audiobook', ?, ?, ?, ?)
     `).run("old-book-track", "Cosmere Warbreaker (Alyssa Bresnahan) (2015)", book.id, "plex", nowIso);
     db.prepare(`
+      INSERT INTO content_catalog
+        (rating_key, media_type, title, audiobook_id, source_provenance, refreshed_at)
+      VALUES (?, 'audiobook', ?, ?, ?, ?)
+    `).run(
+      "current-book-parent",
+      "Cosmere Warbreaker (Alyssa Bresnahan) (2015)",
+      book.id,
+      "plex",
+      new Date(Date.now() + 1000).toISOString()
+    );
+    db.prepare(`
       INSERT INTO playback_observations
         (user_id, rating_key, parent_rating_key, media_type, library_name, title, watched_at, completed, created_at, updated_at)
       VALUES (?, ?, ?, 'track', 'Audiobooks', ?, ?, 0, ?, ?)
@@ -2484,6 +2495,156 @@ test("audiobook artwork falls back to a newer reconciled Plex sibling", async ()
       const artwork = await fetch(`${base}/api/artwork/audiobook:${book.id}`);
       assert.equal(artwork.status, 200);
       assert.match(artwork.headers.get("content-type"), /image\/svg\+xml/);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
+test("artwork proxy refreshes an authoritative local audiobook cover without restart", async () => {
+  await withTestDb(async (db) => {
+    const nowIso = new Date().toISOString();
+    const firstCover = "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg"><text>FIRST COVER</text></svg>`);
+    const secondCover = "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg"><text>SECOND COVER</text></svg>`);
+    const result = db.prepare(`
+      INSERT INTO audiobook_books
+        (folder_key, title, authors_json, narrators_json, cover_url, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES (?, ?, '[]', '[]', ?, 'manual', 'enriched', ?, ?)
+    `).run("artwork-refresh-book", "Artwork Refresh Book", firstCover, nowIso, nowIso);
+    const audiobookId = Number(result.lastInsertRowid);
+
+    const { createApp } = await import("../dist/server/app.js");
+    const app = createApp(db, new MockPlexAdapter(), { skipStartupUserSync: true });
+    const server = await new Promise((resolve) => {
+      const instance = app.listen(0, "127.0.0.1", () => resolve(instance));
+    });
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const artworkUrl = `${base}/api/artwork/audiobook:${audiobookId}`;
+    try {
+      const first = await fetch(artworkUrl);
+      assert.equal(first.status, 200);
+      const firstFinalUrl = first.url;
+      assert.match(firstFinalUrl, /variant=poster&v=[a-f0-9]{20}$/);
+      assert.match(first.headers.get("cache-control"), /private.*immutable/);
+      assert.match(await first.text(), /FIRST COVER/);
+
+      db.prepare("UPDATE audiobook_books SET cover_url = ?, updated_at = ? WHERE id = ?")
+        .run(secondCover, new Date(Date.now() + 1000).toISOString(), audiobookId);
+
+      const second = await fetch(artworkUrl);
+      assert.equal(second.status, 200);
+      assert.notEqual(second.url, firstFinalUrl);
+      assert.match(await second.text(), /SECOND COVER/);
+
+      const legacy = await fetch(artworkUrl, { redirect: "manual" });
+      assert.equal(legacy.status, 307);
+      assert.equal(legacy.headers.get("cache-control"), "no-store");
+      assert.match(legacy.headers.get("location"), new RegExp(`^/api/artwork/audiobook%3A${audiobookId}\\?variant=poster&v=[a-f0-9]{20}$`));
+      assert.doesNotMatch(legacy.headers.get("location"), /data:|FIRST|SECOND/i);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
+test("artwork resolver recovers stale Plex identities by GUID and coalesces requests", async () => {
+  await withTestDb(async (db) => {
+    const nowIso = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, guid, media_type, title, source_provenance, refreshed_at)
+      VALUES ('stale-movie-art', 'plex://movie/stable', 'movie', 'Stale Movie Art', 'plex', ?)
+    `).run(nowIso);
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, guid, media_type, title, source_provenance, refreshed_at)
+      VALUES ('stale-show-art', 'plex://show/stable', 'show', 'Stale Show Art', 'plex', ?)
+    `).run(nowIso);
+
+    const calls = [];
+    const poster = "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg"><text>GUID POSTER</text></svg>`);
+    const backdrop = "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg"><text>GUID BACKDROP</text></svg>`);
+    class GuidRecoveringArtworkAdapter extends MockPlexAdapter {
+      async getRichMetadataByRatingKey(ratingKey, plexGuid) {
+        calls.push({ ratingKey, plexGuid });
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        const show = ratingKey === "stale-show-art";
+        return {
+          ratingKey: show ? "active-show-art" : "active-movie-art",
+          guid: plexGuid,
+          mediaType: show ? "show" : "movie",
+          title: show ? "Stale Show Art" : "Stale Movie Art",
+          genres: [],
+          thumb: poster,
+          art: backdrop
+        };
+      }
+    }
+
+    const { createApp } = await import("../dist/server/app.js");
+    const app = createApp(db, new GuidRecoveringArtworkAdapter(), { skipStartupUserSync: true });
+    const server = await new Promise((resolve) => {
+      const instance = app.listen(0, "127.0.0.1", () => resolve(instance));
+    });
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const movieResponses = await Promise.all(Array.from({ length: 6 }, () => fetch(`${base}/api/artwork/stale-movie-art`)));
+      assert.equal(movieResponses.every((response) => response.status === 200), true);
+      assert.equal(calls.filter((call) => call.ratingKey === "stale-movie-art").length, 1);
+      assert.deepEqual(calls.find((call) => call.ratingKey === "stale-movie-art"), {
+        ratingKey: "stale-movie-art",
+        plexGuid: "plex://movie/stable"
+      });
+      assert.match(await movieResponses[0].text(), /GUID POSTER/);
+
+      const backdropResponse = await fetch(`${base}/api/artwork/stale-movie-art?variant=backdrop`);
+      assert.equal(backdropResponse.status, 200);
+      assert.match(await backdropResponse.text(), /GUID BACKDROP/);
+
+      const showResponse = await fetch(`${base}/api/artwork/stale-show-art`);
+      assert.equal(showResponse.status, 200);
+      assert.deepEqual(calls.find((call) => call.ratingKey === "stale-show-art"), {
+        ratingKey: "stale-show-art",
+        plexGuid: "plex://show/stable"
+      });
+      assert.doesNotMatch(showResponse.url, /plex:\/\/|stable/i);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
+test("artwork proxy rejects unsafe local sources and never guesses audiobook siblings by title", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const nowIso = new Date().toISOString();
+    const result = db.prepare(`
+      INSERT INTO audiobook_books
+        (folder_key, title, authors_json, narrators_json, cover_url, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES ('unsafe-artwork-book', 'Duplicate Artwork Title', '[]', '[]', 'http://127.0.0.1:9/private-cover', 'manual', 'enriched', ?, ?)
+    `).run(nowIso, nowIso);
+    const audiobookId = Number(result.lastInsertRowid);
+    const user = db.prepare("SELECT id FROM users WHERE plex_username = 'Tony'").get();
+    db.prepare(`
+      INSERT INTO playback_observations
+        (user_id, rating_key, media_type, library_name, title, watched_at, completed, created_at, updated_at)
+      VALUES (?, 'unlinked-title-match', 'track', 'Audiobooks', 'Duplicate Artwork Title', ?, 0, ?, ?)
+    `).run(user.id, nowIso, nowIso, nowIso);
+
+    const { createApp } = await import("../dist/server/app.js");
+    const app = createApp(db, new MockPlexAdapter(), { skipStartupUserSync: true });
+    const server = await new Promise((resolve) => {
+      const instance = app.listen(0, "127.0.0.1", () => resolve(instance));
+    });
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const first = await fetch(`${base}/api/artwork/audiobook:${audiobookId}`, { redirect: "manual" });
+      assert.equal(first.status, 307);
+      const location = first.headers.get("location");
+      assert.match(location, /^\/api\/artwork\/audiobook%3A\d+\?variant=poster&v=[a-f0-9]{20}$/);
+      assert.doesNotMatch(location, /127\.0\.0\.1|private-cover|unlinked-title-match/i);
+
+      const final = await fetch(`${base}${location}`);
+      assert.equal(final.status, 404);
+      assert.equal(await final.text(), "");
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
@@ -2782,12 +2943,18 @@ test("dashboard detail workspace resolves raw and progress selectors to canonica
     assert.equal(movie.data.title, "Same Movie");
     assert.equal(movie.data.progressSummary.completedItems, 1);
     assert.equal(movie.data.hierarchy.available, true);
+    assert.equal(movie.data.artworkUrl, movie.data.posterUrl);
+    assert.match(movie.data.posterUrl, /^\/api\/artwork\/movie-1\?variant=poster&v=[a-f0-9]{20}$/);
+    assert.match(movie.data.backdropUrl, /^\/api\/artwork\/movie-1\?variant=backdrop&v=[a-f0-9]{20}$/);
+    assert.match(movie.data.artworkRevision, /^[a-f0-9]{20}$/);
     assert.equal(Object.hasOwn(movie.data, "plays"), false);
 
     const audiobook = service.getDetailWorkspace("audiobook:10");
     assert.equal(audiobook.ok, true);
     assert.equal(audiobook.data.category, "audiobook");
     assert.equal(audiobook.data.progressSummary.totalItems, 2);
+    assert.equal(audiobook.data.artworkUrl, audiobook.data.posterUrl);
+    assert.match(audiobook.data.posterUrl, /^\/api\/artwork\/audiobook%3A10\?variant=poster&v=[a-f0-9]{20}$/);
 
     db.prepare(`INSERT INTO content_catalog (rating_key, media_type, title, library_title, source_provenance, refreshed_at)
       VALUES ('hidden-movie', 'movie', 'Hidden Movie', 'Movies', 'fixture', ?)`).run(now);
@@ -2829,7 +2996,10 @@ test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed promp
       assert.equal(overview.ok,true);
       assert.equal(overview.data.totals.plays,1);
       assert.equal(typeof overview.data.timingMs,"number");
-      assert.equal(overview.data.activity.items[0].artworkUrl,"/api/artwork/movie-http");      const timeline = await (await fetch(base+"/api/dashboard/timeline")).json();
+      assert.equal(overview.data.activity.items[0].artworkUrl, overview.data.activity.items[0].posterUrl);
+      assert.match(overview.data.activity.items[0].posterUrl, /^\/api\/artwork\/movie-http\?variant=poster&v=[a-f0-9]{20}$/);
+      assert.match(overview.data.activity.items[0].artworkRevision, /^[a-f0-9]{20}$/);
+      const timeline = await (await fetch(base+"/api/dashboard/timeline")).json();
       assert.equal(timeline.ok,true);
       assert.equal(timeline.data.items.length,1);
       assert.equal(timeline.data.sessions.length,1);
@@ -2980,7 +3150,7 @@ test("artwork endpoint uses transcoding, caching headers, and optimizes loading"
       // 1. Fetch artwork for the first time
       const res1 = await originalFetch(base + "/api/artwork/transcode-test");
       assert.equal(res1.status, 200);
-      assert.equal(res1.headers.get("cache-control"), "public, max-age=604800, immutable");
+      assert.equal(res1.headers.get("cache-control"), "private, max-age=604800, immutable");
       
       // Verify the server fetched the transcoded Plex URL
       assert.ok(lastFetchedUrl);
@@ -2998,7 +3168,7 @@ test("artwork endpoint uses transcoding, caching headers, and optimizes loading"
       // 2. Fetch artwork for the second time (should hit in-memory cache)
       const res2 = await originalFetch(base + "/api/artwork/transcode-test");
       assert.equal(res2.status, 200);
-      assert.equal(res2.headers.get("cache-control"), "public, max-age=604800, immutable");
+      assert.equal(res2.headers.get("cache-control"), "private, max-age=604800, immutable");
 
       // Verify it still proxy fetched the image, but did NOT resolve metadata again
       assert.ok(lastFetchedUrl);
@@ -3150,7 +3320,8 @@ test("dashboard service progress contract verifies repeat plays, unknown totals,
     assert.equal(abGroup.totalItems, 15);
     assert.equal(abGroup.progressUnit, "track");
     // Artwork key must use canonical book identity
-    assert.equal(abGroup.artworkUrl, "/api/artwork/audiobook%3A10");
+    assert.equal(abGroup.artworkUrl, abGroup.posterUrl);
+    assert.match(abGroup.posterUrl, /^\/api\/artwork\/audiobook%3A10\?variant=poster&v=[a-f0-9]{20}$/);
   });
 
   tests.push({

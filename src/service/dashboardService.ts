@@ -3,6 +3,7 @@ import type { Db } from "../db/database.js";
 import type { DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket, ProgressHierarchyExpansion, ProgressNodeState, ProgressNodeStateSource, DashboardDetailIdentity, DashboardDetailIdentityInput, DashboardDetailResolution, DashboardDetailWorkspaceResult, DashboardDetailWorkspaceHierarchyResult } from "../types/api.js";
 import { CowatchingIntelligenceService } from "./cowatchingIntelligenceService.js";
 import { CowatchAdjudicationService } from "./cowatchAdjudicationService.js";
+import { buildDashboardArtworkDescriptor, type DashboardArtworkDescriptor } from "./artworkService.js";
 
 const HOUSEHOLD_CATEGORIES = ["movie", "tv", "classic_tv", "anime", "audiobook"] as const;
 const SUMMARY_SAMPLE_LIMIT = 500;
@@ -458,6 +459,7 @@ export class DashboardService {
           category: identity.category,
           artworkUrl: metadata.artworkUrl,
           posterUrl: metadata.posterUrl,
+          artworkRevision: metadata.artworkRevision,
           backdropUrl: metadata.backdropUrl,
           people: people.filter((person): person is DashboardWatcherPerson & { userId: number } => person.userId != null).map((person) => ({ id: person.userId, displayName: person.displayName })),
           watcherPeople: watcherPeople.filter((person): person is DashboardWatcherPerson & { userId: number } => person.userId != null).map((person) => ({ id: person.userId, displayName: person.displayName })),
@@ -583,15 +585,8 @@ export class DashboardService {
     return { audiobookId: identity.audiobookId };
   }
 
-  private getDetailWorkspaceMetadata(identity: DashboardDetailIdentity): { title: string; subtitle: string | null; artworkUrl: string; posterUrl: string; backdropUrl: string } | null {
-    const artworkRoutes = (key: string) => {
-      const encodedKey = encodeURIComponent(key);
-      return {
-        artworkUrl: `/api/artwork/${encodedKey}`,
-        posterUrl: `/api/artwork/${encodedKey}?variant=poster`,
-        backdropUrl: `/api/artwork/${encodedKey}?variant=backdrop`
-      };
-    };
+  private getDetailWorkspaceMetadata(identity: DashboardDetailIdentity): ({ title: string; subtitle: string | null } & DashboardArtworkDescriptor) | null {
+    const artworkRoutes = (key: string) => buildDashboardArtworkDescriptor(this.db, key);
     if (identity.kind === "audiobook") {
       const book = this.db.prepare(`SELECT title, subtitle FROM audiobook_books WHERE id = ?`).get(identity.audiobookId) as any;
       if (!book) return null;
@@ -605,7 +600,7 @@ export class DashboardService {
       ORDER BY CASE WHEN rating_key = ? THEN 0 ELSE 1 END, rating_key
       LIMIT 1
     `).get(key, key, key) as any;
-    if (catalog) return { title: catalog.title || catalog.grandparent_title || key, subtitle: catalog.library_title ?? null, ...artworkRoutes(identity.detailKey.replace(/^series:[^:]+:/, "")) };
+    if (catalog) return { title: catalog.title || catalog.grandparent_title || key, subtitle: catalog.library_title ?? null, ...artworkRoutes(key) };
     const observation = this.db.prepare(`SELECT title, show_title, library_name FROM playback_observations WHERE rating_key = ? OR grandparent_rating_key = ? ORDER BY watched_at DESC LIMIT 1`).get(key, key) as any;
     if (!observation) return null;
     return { title: identity.kind === "series" ? (observation.show_title || observation.title) : observation.title, subtitle: observation.library_name ?? null, ...artworkRoutes(identity.kind === "series" ? identity.detailKey.replace(/^series:[^:]+:/, "") : key) };
@@ -1108,7 +1103,7 @@ export class DashboardService {
           : (item.category === "tv" || item.category === "classic_tv" || item.category === "anime")
             ? item.grandparentRatingKey ?? item.ratingKey
             : item.ratingKey;
-        const group = groups.get(key) ?? { ...item, title, showTitle: undefined, displayTitle: title, groupKey: key, groupRatingKey, plays: 0, distinctItems: new Set<string>(), people: new Set<number>(), displayNames: new Set<string>(), latestWatchedAt: item.watchedAt, artworkUrl: this.resolveArtworkUrl(item, groupRatingKey), evidence: undefined };
+        const group = groups.get(key) ?? { ...item, title, showTitle: undefined, displayTitle: title, groupKey: key, groupRatingKey, plays: 0, distinctItems: new Set<string>(), people: new Set<number>(), displayNames: new Set<string>(), latestWatchedAt: item.watchedAt, ...this.resolveArtworkDescriptor(item, groupRatingKey), evidence: undefined };
       group.plays += 1;
       group.distinctItems.add(item.ratingKey);
       group.people.add(item.userId);
@@ -1856,6 +1851,8 @@ export class DashboardService {
         title: string;
         category: DashboardCategory;
         artworkUrl: string;
+        posterUrl: string;
+        artworkRevision: string;
         latestWatchedAt: string;
         plays: number;
         completedPlays: number;
@@ -1890,11 +1887,12 @@ export class DashboardService {
         const key = explorerGroupKey(item);
         const title = item.displayTitle ?? item.title;
 
-        const artworkUrl = item.category === "audiobook"
-          ? `/api/artwork/audiobook%3A${item.audiobookId ?? item.parentRatingKey ?? item.grandparentRatingKey ?? item.ratingKey}`
+        const artworkKey = item.category === "audiobook"
+          ? `audiobook:${item.audiobookId ?? item.parentRatingKey ?? item.grandparentRatingKey ?? item.ratingKey}`
           : (item.category === "tv" || item.category === "classic_tv" || item.category === "anime")
-            ? `/api/artwork/${encodeURIComponent(item.grandparentRatingKey ?? item.ratingKey)}`
-            : `/api/artwork/${encodeURIComponent(item.ratingKey)}`;
+            ? (item.grandparentRatingKey ?? item.ratingKey)
+            : item.ratingKey;
+        const artwork = buildDashboardArtworkDescriptor(this.db, artworkKey);
 
         let group = groups.get(key);
         if (!group) {
@@ -1902,7 +1900,9 @@ export class DashboardService {
             groupKey: key,
             title,
             category: item.category,
-            artworkUrl,
+            artworkUrl: artwork.artworkUrl,
+            posterUrl: artwork.posterUrl,
+            artworkRevision: artwork.artworkRevision,
             latestWatchedAt: item.watchedAt,
             plays: 0,
             completedPlays: 0,
@@ -2093,6 +2093,8 @@ export class DashboardService {
           title: g.title,
           category: g.category,
           artworkUrl: g.artworkUrl,
+          posterUrl: g.posterUrl,
+          artworkRevision: g.artworkRevision,
           latestWatchedAt: g.latestWatchedAt,
           progressUnit,
           progressUnitLabel,
@@ -2786,11 +2788,14 @@ export class DashboardService {
           }
         }
 
+        const artwork = buildDashboardArtworkDescriptor(this.db, grandparentRatingKey);
         const result: ProgressHierarchyExpansion = {
           groupKey,
           category,
           title: catalog.title,
-          artworkUrl: `/api/artwork/${encodeURIComponent(grandparentRatingKey)}`,
+          artworkUrl: artwork.artworkUrl,
+          posterUrl: artwork.posterUrl,
+          artworkRevision: artwork.artworkRevision,
           progressUnit: "episode",
           progressUnitLabel: "episodes",
           progressSource: "plex",
@@ -2851,11 +2856,14 @@ export class DashboardService {
         const totalKnown = hasVerifiedChapters;
         const totalItems = hasVerifiedChapters ? audiobookProgress.chapters.length : (audiobook.chapter_count || null);
 
+        const artwork = buildDashboardArtworkDescriptor(this.db, `audiobook:${audiobookId}`);
         const result: ProgressHierarchyExpansion = {
           groupKey,
           category: "audiobook",
           title: audiobook.title,
-          artworkUrl: `/api/artwork/audiobook%3A${audiobookId}`,
+          artworkUrl: artwork.artworkUrl,
+          posterUrl: artwork.posterUrl,
+          artworkRevision: artwork.artworkRevision,
           progressUnit,
           progressUnitLabel,
           progressSource,
@@ -2895,11 +2903,14 @@ export class DashboardService {
         }
         const people = [...peopleByName.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
 
+        const artwork = buildDashboardArtworkDescriptor(this.db, ratingKey);
         const result: ProgressHierarchyExpansion = {
           groupKey,
           category: "movie",
           title: catalog.title,
-          artworkUrl: `/api/artwork/${encodeURIComponent(ratingKey)}`,
+          artworkUrl: artwork.artworkUrl,
+          posterUrl: artwork.posterUrl,
+          artworkRevision: artwork.artworkRevision,
           progressUnit: "movie",
           progressUnitLabel: "movie",
           progressSource: "plex",
@@ -2927,6 +2938,7 @@ export class DashboardService {
     const category = deriveDashboardCategory(row.media_type, libraryName);
     if (!isHouseholdCategory(category.category)) return null as any;
     const artworkKey = this.resolveArtworkKey(row, category.category);
+    const artwork = buildDashboardArtworkDescriptor(this.db, artworkKey);
     const displayName = resolveDashboardAlias(row.dashboard_alias, row.plex_username);
     
     const cowatch = cowatchMap?.get(row.id);
@@ -2995,7 +3007,9 @@ export class DashboardService {
       viewOffset: row.view_offset ?? undefined,
       percentComplete: row.percent_complete ?? undefined, 
       completed: row.completed === 1, 
-      artworkUrl: `/api/artwork/${encodeURIComponent(artworkKey)}`, 
+      artworkUrl: artwork.artworkUrl,
+      posterUrl: artwork.posterUrl,
+      artworkRevision: artwork.artworkRevision,
       grandparentRatingKey: row.grandparent_rating_key ?? undefined, 
       parentRatingKey: row.parent_rating_key ?? undefined, 
       audiobookId: row.audiobook_id ?? undefined, 
@@ -3033,11 +3047,16 @@ export class DashboardService {
     return row.rating_key;
   }
 
-  private resolveArtworkUrl(item: DashboardActivityItem, fallbackKey: string): string {
+  private resolveArtworkDescriptor(item: DashboardActivityItem, fallbackKey: string): Pick<DashboardArtworkDescriptor, "artworkUrl" | "posterUrl" | "artworkRevision"> {
     const key = item.category === "audiobook"
       ? (item.audiobookId != null ? `audiobook:${item.audiobookId}` : fallbackKey)
       : fallbackKey;
-    return `/api/artwork/${encodeURIComponent(key)}`;
+    const descriptor = buildDashboardArtworkDescriptor(this.db, key);
+    return {
+      artworkUrl: descriptor.artworkUrl,
+      posterUrl: descriptor.posterUrl,
+      artworkRevision: descriptor.artworkRevision
+    };
   }
 
   private buildRecentPlaybackCards(items: DashboardActivityItem[], limit: number): DashboardActivityItem[] {

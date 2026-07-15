@@ -80,6 +80,7 @@ export interface DashboardDetailWorkspaceResponse {
   category: DashboardCategory;
   artworkUrl: string;
   posterUrl: string;
+  artworkRevision: string;
   backdropUrl: string | null;
   people: Array<{ id: number; displayName: string }>;
   watcherPeople: Array<{ id: number; displayName: string }>;
@@ -226,7 +227,8 @@ export interface DashboardActivityItem {
   title: string; showTitle?: string; mediaType: string; category: DashboardCategory;
   categoryLabel: string; categoryDerived: boolean; libraryName?: string; watchedAt: string;
   sessionStartAt?: string; sessionEndAt?: string;
-  duration?: number; viewOffset?: number; percentComplete?: number; completed: boolean; artworkUrl: string;
+  duration?: number; viewOffset?: number; percentComplete?: number; completed: boolean;
+  artworkUrl: string; posterUrl: string; artworkRevision: string;
   grandparentRatingKey?: string; parentRatingKey?: string; audiobookId?: number; audiobookTitle?: string;
   parentTitle?: string; grandparentTitle?: string;
   seasonNumber?: number; episodeNumber?: number;
@@ -278,6 +280,8 @@ export interface DashboardProgressGroup {
   title: string;
   category: DashboardCategory;
   artworkUrl: string;
+  posterUrl: string;
+  artworkRevision: string;
   latestWatchedAt: string;
   progressUnit?: ProgressUnit;
   progressUnitLabel?: string;
@@ -358,6 +362,8 @@ export interface ProgressHierarchyExpansion {
   category: DashboardCategory;
   title: string;
   artworkUrl: string;
+  posterUrl: string;
+  artworkRevision: string;
   progressUnit?: ProgressUnit;
   progressUnitLabel?: string;
   progressSource?: ProgressSource;

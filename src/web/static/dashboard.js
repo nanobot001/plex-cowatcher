@@ -32,7 +32,8 @@ const query=(extra={})=>{const p=new URLSearchParams();Object.entries({...state.
 const peopleQuery=(extra={})=>{const p=query(extra);p.delete("dateFrom");p.delete("dateTo");p.set("period",state.people.period||"30d");if(state.people.period==="custom"){if(state.people.dateFrom)p.set("dateFrom",state.people.dateFrom);if(state.people.dateTo)p.set("dateTo",state.people.dateTo);}return p;};
 const fetchJson=async (url,options={})=>{const r=await fetch(url,{cache:"no-store",...options});const j=await r.json();if(!r.ok||!j.ok){const error=new Error(j.message||"Panel could not load.");error.code=j.errorCode||"REQUEST_FAILED";throw error;}return j.data;};
 const evidence=x=>{const e=x.evidence||{};return '<div class="evidence"><span class="proof observed">Observed</span>'+(e.confirmed?'<span class="proof confirmed">Confirmed</span>':'')+(e.promptStatus?'<span class="proof">Prompt '+esc(e.promptStatus)+'</span>':'')+(e.plexSyncStatus?'<span class="proof synced">Plex '+esc(e.plexSyncStatus)+'</span>':'')+'</div>';};
-const art=x=>'<img class="poster" src="'+esc(x.artworkUrl)+'" alt="'+esc((x.displayTitle||x.title||x.showTitle||"Title")+" "+categoryLabel(x.category)+" artwork")+'" loading="lazy" onerror="this.src=\'/static/icon.svg\';this.classList.add(\'artwork-fallback\')">';
+const posterFor=x=>x?.posterUrl||x?.artworkUrl||"/static/icon.svg";
+const art=x=>'<img class="poster" src="'+esc(posterFor(x))+'" alt="'+esc((x.displayTitle||x.title||x.showTitle||"Title")+" "+categoryLabel(x.category)+" artwork")+'" loading="lazy" onerror="this.src=\'/static/icon.svg\';this.classList.add(\'artwork-fallback\')">';
 const mediaTitle=x=>esc(x.displayTitle||x.title||x.showTitle||"");
 const mediaBadge=x=>x.displayName?'<span class="media-badge">'+esc(x.displayName)+'</span>':'';
 const cardArt=x=>'<div class="poster-frame">'+art(x)+mediaBadge(x)+'</div>';
@@ -685,7 +686,7 @@ function renderDetailContent(d) {
 
   let artHtml = '';
   if (x.category === "audiobook" && a) {
-    artHtml = `<img class="poster" src="/api/artwork/${encodeURIComponent(x.ratingKey)}" alt="${esc(a.title)}" onerror="this.src='/api/artwork/${encodeURIComponent(x.parentRatingKey || x.ratingKey)}'">`;
+    artHtml = `<img class="poster" src="${esc(posterFor(x))}" alt="${esc(a.title)}" onerror="this.src='/static/icon.svg';this.classList.add('artwork-fallback')">`;
   } else {
     artHtml = art(x);
   }
@@ -853,7 +854,7 @@ function renderDetailWorkspaceLoading(item) {
   activeDetailWorkspace = null;
   dialog.removeAttribute("data-detail-key");
   setDetailWorkspaceHeader("Media detail", item?.displayTitle || item?.showTitle || item?.title || "Loading detail", "");
-  const artworkUrl = item?.artworkUrl;
+  const artworkUrl = item ? posterFor(item) : "";
   document.querySelector("#detail-content").innerHTML = `
     <div class="detail-workspace-grid detail-workspace-loading" data-testid="detail-workspace-loading">
       <aside class="detail-workspace-reference">
@@ -2143,6 +2144,8 @@ function progressDetailItem(expansion, node, kind) {
     category: expansion.category,
     categoryLabel: categoryLabel(expansion.category),
     artworkUrl: expansion.artworkUrl,
+    posterUrl: expansion.posterUrl,
+    artworkRevision: expansion.artworkRevision,
     duration: node.duration,
     mediaType: kind === "chapter" ? "track" : "episode",
     watchedAt: "",

@@ -16,6 +16,7 @@ import { DashboardService } from "../service/dashboardService.js";
 import { DashboardPreferenceService } from "../service/dashboardPreferenceService.js";
 import { CowatchAdjudicationService, type CowatchDecision } from "../service/cowatchAdjudicationService.js";
 import { AudiobookDiscoveryService } from "../service/audiobookDiscoveryService.js";
+import { ArtworkResolver, type ArtworkVariant } from "../service/artworkService.js";
 import { appConfig } from "../utils/config.js";
 import { parseDays } from "../utils/time.js";
 
@@ -57,7 +58,7 @@ export function buildRouter(
     const status = result.errorCode === "DETAIL_NOT_FOUND" ? 404 : result.errorCode === "DETAIL_AMBIGUOUS" ? 409 : 400;
     return res.status(status).json({ ok: false, errorCode: result.errorCode, message: "Detail workspace could not be resolved." });
   };
-  const artworkUrlCache = new Map<string, string>();
+  const artworkResolver = new ArtworkResolver(db, plex);
   const discordReviewAvailable = options.discordReviewAvailable ?? appConfig.DISCORD_ENABLED;
 
   if (!options.skipStartupUserSync) {
@@ -253,7 +254,10 @@ export function buildRouter(
   router.get("/api/artwork/:key", async (req, res, next) => {
     try {
       const variant = req.query.variant === "backdrop" ? "backdrop" : "poster";
-      await serveArtwork(req.params.key, res, variant);
+      const requestedRevision = typeof req.query.v === "string" && /^[a-f0-9]{12,64}$/i.test(req.query.v)
+        ? req.query.v
+        : null;
+      await serveArtwork(req.params.key, res, variant, requestedRevision);
     } catch (error) {
       next(error);
     }
@@ -495,141 +499,48 @@ export function buildRouter(
     }
   });
 
-  type ArtworkVariant = "poster" | "backdrop";
-
-  async function serveArtwork(rawKey: string, res: express.Response, variant: ArtworkVariant = "poster"): Promise<void> {
+  async function serveArtwork(
+    rawKey: string,
+    res: express.Response,
+    variant: ArtworkVariant = "poster",
+    requestedRevision: string | null = null
+  ): Promise<void> {
     const decodedKey = decodeURIComponent(rawKey);
-    const cacheKey = `${variant}:${decodedKey}`;
-
-    const cachedUrl = artworkUrlCache.get(cacheKey);
-    if (cachedUrl) {
-      await proxyArtworkSource(cachedUrl, res, variant);
+    if (!decodedKey || decodedKey.length > 512 || decodedKey.includes("\0")) {
+      res.status(400).end();
       return;
     }
 
-    const localSource = variant === "poster" ? await resolveLocalArtworkSource(decodedKey) : null;
-    if (localSource) {
-      artworkUrlCache.set(cacheKey, localSource);
-      await proxyArtworkSource(localSource, res, variant);
+    let resolution = await artworkResolver.resolve(decodedKey, variant);
+    if (!resolution) {
+      res.status(404).end();
       return;
     }
 
-    const remoteSource = await resolvePlexArtworkSource(decodedKey, variant);
-    if (remoteSource) {
-      artworkUrlCache.set(cacheKey, remoteSource);
-      await proxyArtworkSource(remoteSource, res, variant);
+    if (requestedRevision !== resolution.revision) {
+      redirectToArtworkRevision(decodedKey, variant, resolution.revision, res);
       return;
     }
 
-    const audiobookRatingKey = resolveAudiobookRatingKey(decodedKey);
-    if (audiobookRatingKey && audiobookRatingKey !== decodedKey) {
-      const fallbackCacheKey = `${variant}:${audiobookRatingKey}`;
-      const cachedFallback = artworkUrlCache.get(fallbackCacheKey);
-      if (cachedFallback) {
-        await proxyArtworkSource(cachedFallback, res, variant);
+    let fetched = await fetchArtworkSource(resolution.source, variant);
+    if (!fetched.ok && resolution.outcome === "local_cover") {
+      resolution = await artworkResolver.resolve(decodedKey, variant, { skipLocalCover: true });
+      if (resolution && requestedRevision !== resolution.revision) {
+        redirectToArtworkRevision(decodedKey, variant, resolution.revision, res);
         return;
       }
-      const fallbackRemoteSource = await resolvePlexArtworkSource(audiobookRatingKey, variant);
-      if (fallbackRemoteSource) {
-        artworkUrlCache.set(fallbackCacheKey, fallbackRemoteSource);
-        artworkUrlCache.set(cacheKey, fallbackRemoteSource);
-        await proxyArtworkSource(fallbackRemoteSource, res, variant);
-        return;
-      }
+      if (resolution) fetched = await fetchArtworkSource(resolution.source, variant);
     }
 
-    res.status(404).end();
-  }
-
-  async function resolveLocalArtworkSource(artworkKey: string): Promise<string | null> {
-    const catalogRow = db.prepare(`
-      SELECT rating_key, media_type, audiobook_id
-      FROM content_catalog
-      WHERE rating_key = ?
-    `).get(artworkKey) as { rating_key: string; media_type: string; audiobook_id: number | null } | undefined;
-
-    let audiobookId: number | null = null;
-    if (artworkKey.startsWith("audiobook:")) {
-      const raw = artworkKey.slice("audiobook:".length);
-      if (/^\d+$/.test(raw)) {
-        const directBook = db.prepare("SELECT cover_url FROM audiobook_books WHERE id = ?").get(Number(raw)) as { cover_url: string | null } | undefined;
-        if (directBook?.cover_url) return directBook.cover_url;
-        const catalogByRatingKey = db.prepare(`
-          SELECT audiobook_id
-          FROM content_catalog
-          WHERE rating_key = ?
-        `).get(raw) as { audiobook_id: number | null } | undefined;
-        audiobookId = catalogByRatingKey?.audiobook_id ?? null;
-      } else if (catalogRow?.audiobook_id) {
-        audiobookId = Number(catalogRow.audiobook_id);
-      }
-    } else if (catalogRow?.media_type === "audiobook" && catalogRow.audiobook_id != null) {
-      audiobookId = Number(catalogRow.audiobook_id);
+    if (!fetched.ok) {
+      res.status(fetched.status).end();
+      return;
     }
 
-    if (audiobookId != null) {
-      const book = db.prepare("SELECT cover_url FROM audiobook_books WHERE id = ?").get(audiobookId) as { cover_url: string | null } | undefined;
-      if (book?.cover_url) return book.cover_url;
-    }
-
-    return null;
-  }
-
-  function resolveAudiobookRatingKey(artworkKey: string): string | null {
-    if (!artworkKey.startsWith("audiobook:")) return null;
-    const raw = artworkKey.slice("audiobook:".length);
-    if (/^\d+$/.test(raw)) {
-      // A reconciled audiobook can have playback observations from a newer
-      // Plex rating key than the catalog row used to identify the book. Prefer
-      // that observed sibling for artwork so stale catalog keys do not produce
-      // a placeholder when the current Plex item still has a cover.
-      const observedArtworkKey = db.prepare(`
-        SELECT COALESCE(po.parent_rating_key, po.rating_key) AS rating_key
-        FROM playback_observations po
-        JOIN content_catalog linked ON linked.audiobook_id = ?
-        WHERE lower(po.media_type) IN ('audiobook', 'track')
-          AND po.title IS NOT NULL
-          AND lower(po.title) = lower(linked.title)
-          AND COALESCE(po.parent_rating_key, po.rating_key) IS NOT NULL
-        ORDER BY po.watched_at DESC, po.id DESC
-        LIMIT 1
-      `).get(Number(raw)) as { rating_key: string } | undefined;
-      if (observedArtworkKey?.rating_key) return observedArtworkKey.rating_key;
-
-      const catalogByAudiobookId = db.prepare(`
-        SELECT rating_key
-        FROM content_catalog
-        WHERE audiobook_id = ?
-        ORDER BY refreshed_at DESC
-        LIMIT 1
-      `).get(Number(raw)) as { rating_key: string } | undefined;
-      return catalogByAudiobookId?.rating_key ?? null;
-    }
-
-    const catalogRow = db.prepare(`
-      SELECT rating_key
-      FROM content_catalog
-      WHERE rating_key = ? AND audiobook_id IS NOT NULL
-    `).get(raw) as { rating_key: string } | undefined;
-    return catalogRow?.rating_key ?? null;
-  }
-
-  async function resolvePlexArtworkSource(artworkKey: string, variant: ArtworkVariant = "poster"): Promise<string | null> {
-    const key = artworkKey.startsWith("audiobook:") ? artworkKey.slice("audiobook:".length) : artworkKey;
-    let metadata: Awaited<ReturnType<PlexAdapter["getRichMetadataByRatingKey"]>> | null = null;
-
-    try {
-      metadata = await plex.getRichMetadataByRatingKey(key);
-    } catch (error) {
-      console.warn("Failed to resolve Plex artwork:", error instanceof Error ? error.message : error);
-      return null;
-    }
-
-    const source = variant === "backdrop"
-      ? metadata.art ?? metadata.parentArt ?? metadata.grandparentArt
-      : metadata.thumb ?? metadata.parentThumb ?? metadata.grandparentThumb;
-    if (!source) return null;
-    return normalizeArtworkSource(source, variant);
+    res.setHeader("Content-Type", fetched.contentType);
+    res.setHeader("Cache-Control", "private, max-age=604800, immutable");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.status(200).send(fetched.body);
   }
 
   function normalizeArtworkSource(source: string, variant: ArtworkVariant = "poster"): string {
@@ -648,23 +559,88 @@ export function buildRouter(
     return transcodeUrl.toString();
   }
 
-  async function proxyArtworkSource(sourceUrl: string, res: express.Response, variant: ArtworkVariant = "poster"): Promise<void> {
+  function redirectToArtworkRevision(
+    artworkKey: string,
+    variant: ArtworkVariant,
+    revision: string,
+    res: express.Response
+  ): void {
+    const location = `/api/artwork/${encodeURIComponent(artworkKey)}?variant=${variant}&v=${revision}`;
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Location", location);
+    res.status(307).end();
+  }
+
+  async function fetchArtworkSource(
+    sourceUrl: string,
+    variant: ArtworkVariant = "poster"
+  ): Promise<{ ok: true; contentType: string; body: Buffer } | { ok: false; status: number }> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
     try {
-      const response = await fetch(normalizeArtworkSource(sourceUrl, variant), { signal: controller.signal });
-      if (!response.ok) {
-        res.status(response.status === 404 ? 404 : 502).end();
-        return;
+      let currentUrl = normalizeArtworkSource(sourceUrl, variant);
+      for (let redirectCount = 0; redirectCount <= 3; redirectCount += 1) {
+        if (!isSafeArtworkFetchUrl(currentUrl)) return { ok: false, status: 404 };
+        const response = await fetch(currentUrl, { signal: controller.signal, redirect: "manual" });
+        if (response.status >= 300 && response.status < 400) {
+          const location = response.headers.get("location");
+          if (!location || redirectCount === 3) return { ok: false, status: 502 };
+          currentUrl = new URL(location, currentUrl).toString();
+          continue;
+        }
+        if (!response.ok) return { ok: false, status: response.status === 404 ? 404 : 502 };
+        const contentType = (response.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase();
+        if (!contentType.startsWith("image/")) return { ok: false, status: 502 };
+        const declaredLength = Number(response.headers.get("content-length") ?? 0);
+        if (Number.isFinite(declaredLength) && declaredLength > 10 * 1024 * 1024) return { ok: false, status: 502 };
+        const body = await readBoundedBody(response, 10 * 1024 * 1024);
+        if (!body) return { ok: false, status: 502 };
+        return { ok: true, contentType, body };
       }
-      const contentType = response.headers.get("content-type") || "image/jpeg";
-      const body = Buffer.from(await response.arrayBuffer());
-      res.setHeader("Content-Type", contentType);
-      res.setHeader("Cache-Control", "public, max-age=604800, immutable");
-      res.status(200).send(body);
+      return { ok: false, status: 502 };
+    } catch {
+      return { ok: false, status: 502 };
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  function isSafeArtworkFetchUrl(sourceUrl: string): boolean {
+    if (/^data:image\//i.test(sourceUrl)) return sourceUrl.length <= 14 * 1024 * 1024;
+    let parsed: URL;
+    try {
+      parsed = new URL(sourceUrl);
+    } catch {
+      return false;
+    }
+    const plexOrigin = new URL(appConfig.PLEX_BASE_URL).origin;
+    if (parsed.origin === plexOrigin) return parsed.protocol === "http:" || parsed.protocol === "https:";
+    if (parsed.protocol !== "https:") return false;
+    const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return false;
+    if (/^(?:127\.|10\.|192\.168\.|169\.254\.)/.test(host)) return false;
+    const private172 = host.match(/^172\.(\d+)\./);
+    if (private172 && Number(private172[1]) >= 16 && Number(private172[1]) <= 31) return false;
+    if (host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:")) return false;
+    return true;
+  }
+
+  async function readBoundedBody(response: Response, maxBytes: number): Promise<Buffer | null> {
+    if (!response.body) return Buffer.alloc(0);
+    const reader = response.body.getReader();
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(Buffer.from(value));
+    }
+    return Buffer.concat(chunks, total);
   }
 
   return router;

@@ -11,6 +11,9 @@ fs.mkdirSync(fixtureDir, { recursive: true });
 const db = openMigratedDatabase(path.join(fixtureDir, "fixture.sqlite"));
 const now = Date.now();
 const isoMinutesAgo = (minutes) => new Date(now - minutes * 60_000).toISOString();
+const artworkDataUrl = (label, color) => "data:image/svg+xml;utf8," + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900"><rect width="600" height="900" fill="${color}"/><text x="50%" y="50%" text-anchor="middle" fill="white">${label}</text></svg>`
+);
 
 const insertUser = db.prepare(`INSERT INTO users
   (plex_user_id,plex_username,display_name,dashboard_alias,dashboard_shown,is_source_user,is_typical_cowatcher,enabled,created_at,updated_at)
@@ -83,6 +86,8 @@ insertObservation.run(userIds.Alex, "review-movie", null, null, "movie", "Movies
 db.prepare(`INSERT INTO audiobook_books
   (id,folder_key,title,series_title,chapter_count,source_provenance,enrichment_status,created_at,updated_at)
   VALUES (20,'fixture-audiobook','Fixture Audiobook','Fixture Series',2,'fixture','enriched',?,?)`).run(isoMinutesAgo(5), isoMinutesAgo(5));
+db.prepare("UPDATE audiobook_books SET cover_url = ? WHERE id = 20")
+  .run(artworkDataUrl("FIXTURE COVER ONE", "#0f766e"));
 db.prepare(`INSERT INTO audiobook_books
   (id,folder_key,title,series_title,chapter_count,source_provenance,enrichment_status,created_at,updated_at)
   VALUES (21,'verified-fixture-audiobook','Verified Fixture Audiobook','Fixture Series',3,'fixture','enriched',?,?)`).run(isoMinutesAgo(5), isoMinutesAgo(5));
@@ -177,6 +182,20 @@ db.prepare(`INSERT INTO watch_events
 );
 
 const app = createApp(db, new MockPlexAdapter(), { skipStartupUserSync: true, discordReviewAvailable: true });
+app.post("/__test/artwork/audiobook/:id", (req, res) => {
+  const audiobookId = Number(req.params.id);
+  const variant = String(req.body?.variant || "two");
+  if (!Number.isInteger(audiobookId) || !["one", "two"].includes(variant)) {
+    res.status(400).json({ ok: false });
+    return;
+  }
+  const cover = variant === "one"
+    ? artworkDataUrl("FIXTURE COVER ONE", "#0f766e")
+    : artworkDataUrl("FIXTURE COVER TWO", "#7c3aed");
+  const result = db.prepare("UPDATE audiobook_books SET cover_url = ?, updated_at = ? WHERE id = ?")
+    .run(cover, new Date().toISOString(), audiobookId);
+  res.json({ ok: Number(result.changes) === 1, variant });
+});
 const server = app.listen(port, "127.0.0.1");
 export const ready = new Promise((resolve, reject) => {
   server.once("listening", resolve);
