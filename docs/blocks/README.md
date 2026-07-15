@@ -6,7 +6,7 @@ Blocks are numbered, bounded AI-buildable tickets for code, logic, docs, folder 
 
 The project is currently in the Phase 3 refinement set. A live Playwright review found that the completed 3-2f redesign did not meet its intended usability, bounded-rendering, or responsive outcome. The immediate next selected block is:
 
-- `block-3-2n-5d-3-durable-proof-worker-and-rollout.md` - resume recurring-worker rollout.
+- `block-3-2n-6e-2c1-canonical-artwork-resolver-and-proxy-freshness.md` - establish canonical media-wide identity recovery, authoritative Audiobook covers, revision-aware private proxying, and bounded safe fetch behavior. The separate 5D-3 recurring-worker enablement decision remains pending.
 
 Phase 3 builds on the completed playback-intelligence foundation with domain-specific refinement, richer operator ergonomics, and reporting.
 Blocks 3-2a through 3-2e form one sequential dashboard implementation path:
@@ -53,9 +53,16 @@ Corrective sequence:
    4. `block-3-2n-5d-3-durable-proof-worker-and-rollout.md` - implementation and canary verified; recurring enablement remains pending.
 27. `completed/block-3-2n-6c-visible-progress-and-enriched-detail.md` - implemented and verified.
 28. `block-3-2n-6e-universal-detail-workspace-alignment.md` - planned umbrella; do not implement directly. Restore one canonical detail identity, read contract, shell, and route across every dashboard entry surface before adding resume UI.
-   1. `block-3-2n-6e-1-canonical-detail-contract-and-entry-resolution.md` - add the canonical detail identity/resolver and bounded additive workspace read contract without visible UI changes.
-   2. `block-3-2n-6e-2-shared-detail-shell-and-category-presenters.md` - build the shared shell/category presenters and migrate non-Progress detail callers.
-   3. `block-3-2n-6e-3-progress-migration-and-regression.md` - migrate Progress, retire the duplicate dialog, and lock cross-surface parity.
+   1. `block-3-2n-6e-1-canonical-detail-contract-and-entry-resolution.md` - implemented and verified; adds the canonical detail identity/resolver and bounded additive workspace read contract.
+   2. `block-3-2n-6e-2-shared-detail-shell-and-category-presenters.md` - implemented and verified; all non-Progress callers use the shared shell and explicit category presenters.
+   3. `block-3-2n-6e-2a-rich-detail-hero-and-watcher-lanes.md` - implemented and verified; adds the rich detail hero, honest Audiobook fallback, ordered watcher lanes, and accessible evidence interaction.
+   4. `block-3-2n-6e-2b-movie-detail-presenter.md` - implemented and verified; fills the Movie primary column with source-backed viewing detail without changing Progress or artwork semantics.
+   5. `block-3-2n-6e-2c-artwork-freshness-and-stale-identity-recovery.md` - implemented and verified through 6E-2C3; canonical artwork adoption and the corrective Movie history/enrichment sequence are complete.
+      1. `block-3-2n-6e-2c1-canonical-artwork-resolver-and-proxy-freshness.md` - implemented and verified; adds canonical identity recovery, source authority, revision-aware private proxying, bounded caching, and proxy safety.
+      2. `block-3-2n-6e-2c2-dashboard-wide-artwork-adoption-and-compatibility.md` - implemented and verified; adopts the canonical descriptor across every current artwork consumer with compatibility and reload regression coverage.
+      3. `block-3-2n-6e-2c3-canonical-movie-history-and-enriched-detail.md` - implemented and verified; joins exact-GUID stale-key Movie history, uses viewing-day evidence, de-duplicates Movie detail, and adds bounded lazy About enrichment.
+   6. `block-3-2n-6e-2d-detail-presentation-and-summary-parity.md` - implemented and verified; improves hero readability/responsive crop safety and aligns verified Audiobook summaries with the expanded chapter state.
+   7. `block-3-2n-6e-3-progress-migration-and-regression.md` - next planned block; migrate Progress, retire the duplicate dialog, and lock cross-surface parity after 6E-2D.
 29. `block-3-2n-6d-audiobook-resume-context.md` - planned umbrella; do not implement directly. Turn source-backed audiobook history stops into private bounded transcript context and a useful resume modal after 6E establishes the shared Audiobook presenter.
    1. `block-3-2n-6d-1-bounded-resume-transcription-contract.md` - add and verify the separate `audiobook` project's bounded read-only transcription command.
    2. `block-3-2n-6d-2-trusted-resume-adapter-and-state.md` - add CoWatcher's bounded trusted adapter and revision-safe durable job/result state without automatic execution.
@@ -65,7 +72,7 @@ Corrective sequence:
 
 Do not implement a later corrective block until the previous block's exit gate is recorded as passing. A later block must not conceal, waive, or silently absorb a failed earlier acceptance criterion.
 
-The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n code is implemented through 3-2n-5d-3, and corrective 5D-2A plus the disabled Eric canary passed. Resume the explicit 5D-3 recurring-worker rollout, then implement 6E-1 through 6E-3 before 6D-1 through 6D-4 and 3-2o. The pre-implementation reviews are `docs/process/block-3-2n-6e-design-review.md` and `docs/process/block-3-2n-6d-design-review.md`.
+The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n code is implemented through 3-2n-5d-3, corrective 5D-2A plus the disabled Eric canary passed, and 6E-1/6E-2/6E-2A/6E-2B/6E-2C1/6E-2C2/6E-2C3/6E-2D are implemented and verified. Implement 6E-3 next before 6D-1 through 6D-4 and 3-2o. The explicit 5D-3 recurring-worker enablement decision remains pending. The pre-implementation reviews are `docs/process/block-3-2n-6e-design-review.md` and `docs/process/block-3-2n-6d-design-review.md`.
 
 ## Umbrella Specifications
 

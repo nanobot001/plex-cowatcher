@@ -11,6 +11,9 @@ fs.mkdirSync(fixtureDir, { recursive: true });
 const db = openMigratedDatabase(path.join(fixtureDir, "fixture.sqlite"));
 const now = Date.now();
 const isoMinutesAgo = (minutes) => new Date(now - minutes * 60_000).toISOString();
+const artworkDataUrl = (label, color) => "data:image/svg+xml;utf8," + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900"><rect width="600" height="900" fill="${color}"/><text x="50%" y="50%" text-anchor="middle" fill="white">${label}</text></svg>`
+);
 
 const insertUser = db.prepare(`INSERT INTO users
   (plex_user_id,plex_username,display_name,dashboard_alias,dashboard_shown,is_source_user,is_typical_cowatcher,enabled,created_at,updated_at)
@@ -83,6 +86,8 @@ insertObservation.run(userIds.Alex, "review-movie", null, null, "movie", "Movies
 db.prepare(`INSERT INTO audiobook_books
   (id,folder_key,title,series_title,chapter_count,source_provenance,enrichment_status,created_at,updated_at)
   VALUES (20,'fixture-audiobook','Fixture Audiobook','Fixture Series',2,'fixture','enriched',?,?)`).run(isoMinutesAgo(5), isoMinutesAgo(5));
+db.prepare("UPDATE audiobook_books SET cover_url = ? WHERE id = 20")
+  .run(artworkDataUrl("FIXTURE COVER ONE", "#0f766e"));
 db.prepare(`INSERT INTO audiobook_books
   (id,folder_key,title,series_title,chapter_count,source_provenance,enrichment_status,created_at,updated_at)
   VALUES (21,'verified-fixture-audiobook','Verified Fixture Audiobook','Fixture Series',3,'fixture','enriched',?,?)`).run(isoMinutesAgo(5), isoMinutesAgo(5));
@@ -160,6 +165,18 @@ db.prepare(`INSERT INTO content_catalog
 db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,source_provenance,refreshed_at)
   VALUES ('review-movie','movie','Review Movie',7200000,'1','Movies','[]','fixture',?)`).run(isoMinutesAgo(5));
+const shangChiGuid = "plex://movie/shang-chi-canonical";
+db.prepare(`INSERT INTO content_catalog
+  (rating_key,guid,media_type,title,duration,library_id,library_title,genres_json,source_provenance,refreshed_at)
+  VALUES ('57417',?,'movie','Shang-Chi and the Legend of the Ten Rings',7920000,'1','Movies','[]','fixture',?)`).run(shangChiGuid, isoMinutesAgo(5));
+const insertCanonicalMovieObservation = db.prepare(`INSERT INTO playback_observations
+  (user_id,rating_key,plex_guid,media_type,library_name,title,watched_at,watched_at_provenance,percent_complete,percent_complete_provenance,duration,completed,created_at,updated_at)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+insertCanonicalMovieObservation.run(userIds.Tony, "23917", shangChiGuid, "movie", "Movies", "Shang-Chi and the Legend of the Ten Rings", "2022-01-02T02:00:00.000Z", "fixture", 100, "fixture", 7920000, 1, isoMinutesAgo(5), isoMinutesAgo(5));
+insertCanonicalMovieObservation.run(userIds.Alex, "57417", shangChiGuid, "movie", "Movies", "Shang-Chi and the Legend of the Ten Rings", "2023-07-14T18:00:00.000Z", "fixture", 35, "fixture", 7920000, 0, isoMinutesAgo(5), isoMinutesAgo(5));
+insertCanonicalMovieObservation.run(userIds.Alex, "57417", shangChiGuid, "movie", "Movies", "Shang-Chi and the Legend of the Ten Rings", "2023-07-14T20:00:00.000Z", "fixture", 100, "fixture", 7920000, 1, isoMinutesAgo(5), isoMinutesAgo(5));
+insertCanonicalMovieObservation.run(userIds.Hidden, "57417", shangChiGuid, "movie", "Movies", "Shang-Chi and the Legend of the Ten Rings", "2023-07-14T21:00:00.000Z", "fixture", 100, "fixture", 7920000, 1, isoMinutesAgo(5), isoMinutesAgo(5));
+insertCanonicalMovieObservation.run(userIds.Tony, "same-title-other-guid", "plex://movie/not-shang-chi", "movie", "Movies", "Shang-Chi and the Legend of the Ten Rings", "2024-01-01T12:00:00.000Z", "fixture", 100, "fixture", 7920000, 1, isoMinutesAgo(5), isoMinutesAgo(5));
 
 const event = db.prepare(`INSERT INTO watch_events
   (source_user_id,rating_key,grandparent_rating_key,parent_rating_key,media_type,library_name,title,show_title,season_number,episode_number,watched_at,prompt_status,created_at,updated_at)
@@ -176,7 +193,60 @@ db.prepare(`INSERT INTO watch_events
   userIds.Tony, "movie-regression", "movie", "Movies", "Fixture Movie", movieWatchedAt, "pending", movieWatchedAt, movieWatchedAt
 );
 
-const app = createApp(db, new MockPlexAdapter(), { skipStartupUserSync: true, discordReviewAvailable: true });
+const shangChiEventAt = "2023-07-14T19:00:00.000Z";
+const shangChiEvent = db.prepare(`INSERT INTO watch_events
+  (source_user_id,rating_key,media_type,library_name,title,watched_at,prompt_status,created_at,updated_at)
+  VALUES (?,?,?,?,?,?,?,?,?)`).run(
+  userIds.Alex, "57417", "movie", "Movies", "Shang-Chi and the Legend of the Ten Rings", shangChiEventAt, "resolved", shangChiEventAt, shangChiEventAt
+);
+db.prepare(`INSERT INTO cowatch_confirmations
+  (watch_event_id,target_user_id,confirmation_method,status,plex_sync_status,created_at,updated_at)
+  VALUES (?,?,?,?,?,?,?)`).run(Number(shangChiEvent.lastInsertRowid), userIds.Justin, "fixture", "confirmed", "marked_watched", shangChiEventAt, shangChiEventAt);
+
+const movieProfileAdapter = {
+  fetchProfile: async () => ({
+    status: "available",
+    cached: false,
+    profile: {
+      schemaVersion: 1,
+      title: "Shang-Chi and the Legend of the Ten Rings",
+      releaseYear: 2021,
+      releaseDate: "2021-09-03",
+      runtimeMinutes: 132,
+      genres: ["Action", "Adventure", "Fantasy"],
+      directors: ["Destin Daniel Cretton"],
+      cast: ["Simu Liu", "Awkwafina", "Tony Leung"],
+      studios: ["Marvel Studios"],
+      countries: ["United States"],
+      contentRating: "PG-13",
+      tagline: "You can't outrun your destiny.",
+      synopsis: "Shang-Chi confronts the past he thought he left behind.",
+      imdbId: "tt3228774",
+      tmdbId: 566525,
+      brandTags: ["Marvel"],
+      franchiseTags: ["Shang-Chi"],
+      universeTags: ["Marvel Cinematic Universe"],
+      sourcePropertyTags: ["Marvel Comics"],
+      source: "media-bot",
+      refreshedAt: "2026-07-15T12:00:00Z"
+    }
+  })
+};
+const app = createApp(db, new MockPlexAdapter(), { skipStartupUserSync: true, discordReviewAvailable: true, movieProfileAdapter });
+app.post("/__test/artwork/audiobook/:id", (req, res) => {
+  const audiobookId = Number(req.params.id);
+  const variant = String(req.body?.variant || "two");
+  if (!Number.isInteger(audiobookId) || !["one", "two"].includes(variant)) {
+    res.status(400).json({ ok: false });
+    return;
+  }
+  const cover = variant === "one"
+    ? artworkDataUrl("FIXTURE COVER ONE", "#0f766e")
+    : artworkDataUrl("FIXTURE COVER TWO", "#7c3aed");
+  const result = db.prepare("UPDATE audiobook_books SET cover_url = ?, updated_at = ? WHERE id = ?")
+    .run(cover, new Date().toISOString(), audiobookId);
+  res.json({ ok: Number(result.changes) === 1, variant });
+});
 const server = app.listen(port, "127.0.0.1");
 export const ready = new Promise((resolve, reject) => {
   server.once("listening", resolve);

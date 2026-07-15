@@ -35,26 +35,38 @@ try {
       const card = cards.nth(index);
       const label = await card.getByTestId("viewer-badge").getAttribute("aria-label");
       if (!label?.includes(",")) continue;
+      const cardCategory = await card.getAttribute("data-cat");
       await card.click();
       const cleanLabel = label.replace(/^(Watched by|Together|Likely together) /, "");
+      const expectedNames = cleanLabel.split(",").map((name) => name.trim()).filter(Boolean);
       const detailPeople = page.getByTestId("detail-people");
       try {
         await page.waitForFunction(
-          ({ testId, expected }) => document.querySelector(`[data-testid="${testId}"]`)?.textContent?.trim() === expected,
-          { testId: "detail-people", expected: cleanLabel },
+          ({ testId, expected }) => {
+            const actual = (document.querySelector(`[data-testid="${testId}"]`)?.textContent || "")
+              .split(",")
+              .map((name) => name.trim())
+              .filter(Boolean);
+            return expected.every((name) => actual.includes(name));
+          },
+          { testId: "detail-people", expected: expectedNames },
           { timeout: 5_000 }
         );
       } catch {}
       const people = await detailPeople.innerText();
-      if (cleanLabel !== people) {
+      const peopleNames = people.split(",").map((name) => name.trim()).filter(Boolean);
+      const missingNames = expectedNames.filter((name) => !peopleNames.includes(name));
+      const detailCategory = await page.getByTestId("detail-workspace-body").getAttribute("data-category");
+      if (missingNames.length) {
         const encodedItem = await card.getAttribute("data-item");
         let context = "";
         try {
           const item = JSON.parse(decodeURIComponent(encodedItem || ""));
           context = ` for "${item.displayTitle || item.title}" (${item.ratingKey})`;
         } catch {}
-        failures.push(`${viewport.width}px detail people differ from card participants${context}: expected "${cleanLabel}", received "${people}"`);
+        failures.push(`${viewport.width}px canonical detail omitted card participants${context}: missing "${missingNames.join(", ")}", received "${people}"`);
       }
+      if (cardCategory !== detailCategory) failures.push(`${viewport.width}px canonical detail category differs from the entry card: expected "${cardCategory}", received "${detailCategory}"`);
       await page.locator("#detail-dialog").evaluate((dialog) => dialog.close());
       break;
     }

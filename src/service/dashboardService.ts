@@ -1,12 +1,15 @@
 import { z } from "zod";
 import type { Db } from "../db/database.js";
-import type { DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket, ProgressHierarchyExpansion, ProgressNodeState, ProgressNodeStateSource, DashboardDetailIdentity, DashboardDetailIdentityInput, DashboardDetailResolution, DashboardDetailWorkspaceResult, DashboardDetailWorkspaceHierarchyResult } from "../types/api.js";
+import type { DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket, ProgressHierarchyExpansion, ProgressNodeState, ProgressNodeStateSource, DashboardDetailIdentity, DashboardDetailIdentityInput, DashboardDetailResolution, DashboardDetailWorkspaceResult, DashboardDetailWorkspaceHierarchyResult, DashboardMovieHistory, DashboardMovieHistoryRow } from "../types/api.js";
 import { CowatchingIntelligenceService } from "./cowatchingIntelligenceService.js";
 import { CowatchAdjudicationService } from "./cowatchAdjudicationService.js";
+import { buildDashboardArtworkDescriptor, type DashboardArtworkDescriptor } from "./artworkService.js";
 
 const HOUSEHOLD_CATEGORIES = ["movie", "tv", "classic_tv", "anime", "audiobook"] as const;
 const SUMMARY_SAMPLE_LIMIT = 500;
 const DETAIL_SAMPLE_LIMIT = 200;
+const MOVIE_HISTORY_ROW_LIMIT = 100;
+const MOVIE_HISTORY_OBSERVATION_LIMIT = 2_000;
 const TIMELINE_DEFAULT_DAYS = 1;
 const TIMELINE_MAX_DAYS = 7;
 const OVERVIEW_CONTINUE_LIMIT = 3;
@@ -47,6 +50,8 @@ const timelineFilterSchema = filterSchema.extend({
 
 type DashboardDerivedCategory = DashboardCategory | "other";
 type PeoplePeriod = typeof PEOPLE_PERIODS[number];
+type DashboardWatcherPerson = { userId: number | null; displayName: string };
+export interface DashboardServiceOptions { timeZone?: string }
 type PeopleContribution = DashboardActivityItem & {
   contribution: "observed" | "attributed_confirmed_together";
   confirmedTogether: boolean;
@@ -77,7 +82,7 @@ type AudiobookChapterProgressSnapshot = {
     endOffsetMs?: number;
     duration: number;
     watchedStates: Record<string, ProgressNodeState>;
-    watcherEvidence: Array<{ displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number; stateSource?: ProgressNodeStateSource; partialPosition?: number }>;
+    watcherEvidence: Array<{ userId: number | null; displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number; stateSource?: ProgressNodeStateSource; partialPosition?: number }>;
     stateSources: Record<string, ProgressNodeStateSource>;
     partialPositions: Record<string, number>;
     sourceType?: "audiobook_tool";
@@ -209,6 +214,19 @@ function detailIdentityKey(identity: DashboardDetailIdentityInput): string {
 
 function withDetailKey(identity: DashboardDetailIdentityInput): DashboardDetailIdentity {
   return { ...identity, detailKey: detailIdentityKey(identity) } as DashboardDetailIdentity;
+}
+
+function activityDetailKey(category: DashboardCategory, ratingKey: string, grandparentRatingKey?: string | null, audiobookId?: number | null): string | undefined {
+  if (category === "movie" && isSafeDetailSegment(ratingKey)) {
+    return detailIdentityKey({ kind: "movie", category: "movie", ratingKey });
+  }
+  if ((category === "tv" || category === "classic_tv" || category === "anime") && grandparentRatingKey && isSafeDetailSegment(grandparentRatingKey)) {
+    return detailIdentityKey({ kind: "series", category, grandparentRatingKey });
+  }
+  if (category === "audiobook" && Number.isInteger(Number(audiobookId))) {
+    return detailIdentityKey({ kind: "audiobook", category: "audiobook", audiobookId: Number(audiobookId) });
+  }
+  return undefined;
 }
 
 function parseConfirmedParticipants(value: unknown): Array<{ userId: number; displayName: string }> {
@@ -346,10 +364,17 @@ export function deriveDashboardCategory(mediaType: string, libraryName?: string)
 export class DashboardService {
   private readonly cowatchingService: CowatchingIntelligenceService;
   private readonly adjudicationService: CowatchAdjudicationService;
+  private readonly householdDateFormatter: Intl.DateTimeFormat;
 
-  constructor(private readonly db: Db) {
+  constructor(private readonly db: Db, options: DashboardServiceOptions = {}) {
     this.cowatchingService = new CowatchingIntelligenceService(db);
     this.adjudicationService = new CowatchAdjudicationService(db);
+    this.householdDateFormatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: options.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    });
   }
 
   resolveDetailIdentity(input: string): DashboardDetailResolution {
@@ -392,8 +417,10 @@ export class DashboardService {
       const metadata = this.getDetailWorkspaceMetadata(identity);
       if (!metadata) return { ok: false, errorCode: "DETAIL_NOT_FOUND" as const };
 
-      const activityFilter = this.detailActivityFilter(identity);
-      const activity = this.getActivity({ ...activityFilter, limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
+      const movieHistory = identity.kind === "movie" ? this.getCanonicalMovieHistory(identity) : undefined;
+      const activity = identity.kind === "movie"
+        ? []
+        : this.getActivity({ ...this.detailActivityFilter(identity), limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
       const aggregate = this.db.prepare(`
         SELECT COUNT(*) AS plays,
           SUM(CASE WHEN po.completed = 1 THEN 1 ELSE 0 END) AS completed_plays,
@@ -414,11 +441,45 @@ export class DashboardService {
         ORDER BY po.watched_at DESC, po.id DESC LIMIT 1
       `).get(...this.detailIdentityArgs(identity)) as any;
 
-      const people = [...new Set(activity.flatMap((item) => item.displayNames?.length ? item.displayNames : [item.displayName]))]
-        .filter(Boolean)
-        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
-        .map((displayName) => ({ displayName }));
-      const progress = this.getDetailProgressSummary(identity, metadata, Number(aggregate?.completed_items ?? 0), latest?.percentComplete);
+      const watcherPeople = this.visibleDashboardPeople();
+      const audiobookProgress = identity.kind === "audiobook"
+        ? this.buildAudiobookHierarchy(
+          this.db.prepare(`
+            SELECT id, title, parent_series_title, subseries_title, series_title, chapter_count
+            FROM audiobook_books
+            WHERE id = ?
+          `).get(identity.audiobookId) as any,
+          activity,
+          watcherPeople
+        )
+        : null;
+      const peopleByName = new Map<string, DashboardWatcherPerson>();
+      if (movieHistory) {
+        for (const person of movieHistory.people) {
+          peopleByName.set(person.displayName, { userId: person.id, displayName: person.displayName });
+        }
+      } else {
+        for (const item of activity) {
+          const names = item.displayNames?.length ? item.displayNames : [item.displayName];
+          for (const displayName of names.filter(Boolean)) {
+            const visiblePerson = watcherPeople.find((person) => person.displayName === displayName);
+            if (visiblePerson) {
+              peopleByName.set(displayName, visiblePerson);
+            } else if (displayName === item.displayName) {
+              peopleByName.set(displayName, { userId: item.userId, displayName });
+            }
+          }
+        }
+      }
+      const peopleOrder = new Map(watcherPeople.map((person, index) => [person.displayName, index]));
+      const people = [...peopleByName.values()].sort((a, b) => {
+        const orderDelta = (peopleOrder.get(a.displayName) ?? Number.MAX_SAFE_INTEGER) - (peopleOrder.get(b.displayName) ?? Number.MAX_SAFE_INTEGER);
+        return orderDelta || a.displayName.localeCompare(b.displayName, undefined, { sensitivity: "base" });
+      });
+      const completedItems = movieHistory
+        ? (movieHistory.summary.completedViewingDayCount > 0 ? 1 : 0)
+        : Number(aggregate?.completed_items ?? 0);
+      const progress = this.getDetailProgressSummary(identity, metadata, completedItems, latest?.percentComplete, audiobookProgress);
 
       return {
         ok: true,
@@ -429,7 +490,11 @@ export class DashboardService {
           subtitle: metadata.subtitle,
           category: identity.category,
           artworkUrl: metadata.artworkUrl,
-          people,
+          posterUrl: metadata.posterUrl,
+          artworkRevision: metadata.artworkRevision,
+          backdropUrl: metadata.backdropUrl,
+          people: people.filter((person): person is DashboardWatcherPerson & { userId: number } => person.userId != null).map((person) => ({ id: person.userId, displayName: person.displayName })),
+          watcherPeople: watcherPeople.filter((person): person is DashboardWatcherPerson & { userId: number } => person.userId != null).map((person) => ({ id: person.userId, displayName: person.displayName })),
           playbackSummary: {
             plays: Number(aggregate?.plays ?? 0),
             completedPlays: Number(aggregate?.completed_plays ?? 0),
@@ -441,6 +506,10 @@ export class DashboardService {
             available: true,
             route: `/api/dashboard/detail-workspace/${encodeURIComponent(identity.detailKey)}/hierarchy`
           },
+          ...(movieHistory ? {
+            movieHistory,
+            movieProfile: { route: `/api/dashboard/detail-workspace/${encodeURIComponent(identity.detailKey)}/movie-profile` }
+          } : {}),
           timingMs: 0
         }
       };
@@ -539,10 +608,19 @@ export class DashboardService {
   }
 
   private detailIdentityWhere(identity: DashboardDetailIdentity): string {
+    if (identity.kind === "movie") {
+      return this.currentMovieGuid(identity.ratingKey)
+        ? "(po.rating_key = ? OR po.plex_guid = ?)"
+        : "po.rating_key = ?";
+    }
     return this.identityRecordWhere(identity, "po", "cat");
   }
 
   private detailIdentityArgs(identity: DashboardDetailIdentity): any[] {
+    if (identity.kind === "movie") {
+      const guid = this.currentMovieGuid(identity.ratingKey);
+      return guid ? [identity.ratingKey, guid] : [identity.ratingKey];
+    }
     return this.identityRecordArgs(identity);
   }
 
@@ -552,11 +630,150 @@ export class DashboardService {
     return { audiobookId: identity.audiobookId };
   }
 
-  private getDetailWorkspaceMetadata(identity: DashboardDetailIdentity): { title: string; subtitle: string | null; artworkUrl: string } | null {
+  private currentMovieGuid(ratingKey: string): string | null {
+    const row = this.db.prepare(`
+      SELECT guid
+      FROM content_catalog
+      WHERE rating_key = ? AND lower(media_type) = 'movie'
+      LIMIT 1
+    `).get(ratingKey) as any;
+    return typeof row?.guid === "string" && row.guid.trim() ? row.guid.trim() : null;
+  }
+
+  private householdLocalDate(value: string): string {
+    const parts = this.householdDateFormatter.formatToParts(new Date(value));
+    const year = parts.find((part) => part.type === "year")?.value ?? "0000";
+    const month = parts.find((part) => part.type === "month")?.value ?? "00";
+    const day = parts.find((part) => part.type === "day")?.value ?? "00";
+    return `${year}-${month}-${day}`;
+  }
+
+  private getCanonicalMovieHistory(identity: DashboardDetailIdentity & { kind: "movie" }): DashboardMovieHistory {
+    const canonicalGuid = this.currentMovieGuid(identity.ratingKey);
+    const directRows = this.db.prepare(`
+      SELECT po.id, po.user_id AS userId, po.rating_key AS ratingKey, po.watched_at AS watchedAt,
+        po.percent_complete AS percentComplete, po.completed,
+        COALESCE(NULLIF(u.dashboard_alias, ''), u.plex_username) AS displayName
+      FROM playback_observations po
+      JOIN users u ON u.id = po.user_id
+      LEFT JOIN content_catalog cat ON cat.rating_key = po.rating_key
+      WHERE COALESCE(u.dashboard_shown, u.enabled) = 1
+        AND ${this.detailIdentityWhere(identity)}
+      ORDER BY po.watched_at DESC, po.id DESC
+      LIMIT ?
+    `).all(...this.detailIdentityArgs(identity), MOVIE_HISTORY_OBSERVATION_LIMIT + 1) as any[];
+    const directLimited = directRows.length > MOVIE_HISTORY_OBSERVATION_LIMIT;
+    const observations = directRows.slice(0, MOVIE_HISTORY_OBSERVATION_LIMIT);
+    const groups = new Map<string, DashboardMovieHistoryRow>();
+    const eligibleRatingKeys = new Set<string>([identity.ratingKey]);
+    const evidenceTimestamps: string[] = [];
+
+    for (const row of observations) {
+      const userId = Number(row.userId);
+      if (!Number.isInteger(userId) || typeof row.watchedAt !== "string") continue;
+      eligibleRatingKeys.add(String(row.ratingKey));
+      evidenceTimestamps.push(row.watchedAt);
+      const localDate = this.householdLocalDate(row.watchedAt);
+      const key = `${userId}:${localDate}`;
+      const percentValue = row.percentComplete == null ? null : Number(row.percentComplete);
+      const percent = Number.isFinite(percentValue) ? Math.max(0, Math.min(100, Math.round(percentValue as number))) : null;
+      const existing = groups.get(key);
+      if (!existing) {
+        groups.set(key, {
+          userId,
+          displayName: String(row.displayName),
+          localDate,
+          latestWatchedAt: row.watchedAt,
+          state: Number(row.completed) === 1 ? "completed" : "partial",
+          strongestPercent: percent,
+          observationCount: 1,
+          evidenceKind: "direct_observation"
+        });
+        continue;
+      }
+      existing.observationCount += 1;
+      if (row.watchedAt > existing.latestWatchedAt) existing.latestWatchedAt = row.watchedAt;
+      if (Number(row.completed) === 1) existing.state = "completed";
+      if (percent != null && (existing.strongestPercent == null || percent > existing.strongestPercent)) existing.strongestPercent = percent;
+    }
+
+    const keys = [...eligibleRatingKeys].slice(0, 250);
+    if (keys.length) {
+      const placeholders = keys.map(() => "?").join(",");
+      const confirmedRows = this.db.prepare(`
+        SELECT cc.target_user_id AS userId, we.watched_at AS watchedAt,
+          COALESCE(NULLIF(u.dashboard_alias, ''), u.plex_username) AS displayName
+        FROM cowatch_confirmations cc
+        JOIN watch_events we ON we.id = cc.watch_event_id
+        JOIN users u ON u.id = cc.target_user_id
+        WHERE cc.status = 'confirmed'
+          AND COALESCE(u.dashboard_shown, u.enabled) = 1
+          AND we.rating_key IN (${placeholders})
+        ORDER BY we.watched_at DESC, cc.id DESC
+        LIMIT 1000
+      `).all(...keys) as any[];
+      for (const row of confirmedRows) {
+        const userId = Number(row.userId);
+        if (!Number.isInteger(userId) || typeof row.watchedAt !== "string") continue;
+        evidenceTimestamps.push(row.watchedAt);
+        const localDate = this.householdLocalDate(row.watchedAt);
+        const key = `${userId}:${localDate}`;
+        const existing = groups.get(key);
+        if (existing) {
+          if (existing.evidenceKind === "attributed_confirmed" && row.watchedAt > existing.latestWatchedAt) existing.latestWatchedAt = row.watchedAt;
+          continue;
+        }
+        groups.set(key, {
+          userId,
+          displayName: String(row.displayName),
+          localDate,
+          latestWatchedAt: row.watchedAt,
+          state: "confirmed",
+          strongestPercent: null,
+          observationCount: 0,
+          evidenceKind: "attributed_confirmed"
+        });
+      }
+    }
+
+    const peopleOrder = new Map(this.visibleDashboardPeople().map((person, index) => [person.userId, index]));
+    const allRows = [...groups.values()].sort((a, b) =>
+      b.localDate.localeCompare(a.localDate)
+      || (peopleOrder.get(a.userId) ?? Number.MAX_SAFE_INTEGER) - (peopleOrder.get(b.userId) ?? Number.MAX_SAFE_INTEGER)
+      || b.latestWatchedAt.localeCompare(a.latestWatchedAt)
+      || a.userId - b.userId
+    );
+    const peopleMap = new Map<number, string>();
+    for (const row of allRows) peopleMap.set(row.userId, row.displayName);
+    const people = [...peopleMap.entries()]
+      .map(([id, displayName]) => ({ id, displayName }))
+      .sort((a, b) => (peopleOrder.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (peopleOrder.get(b.id) ?? Number.MAX_SAFE_INTEGER) || a.displayName.localeCompare(b.displayName));
+    const timestamps = evidenceTimestamps.sort();
+    const catalog = this.db.prepare(`SELECT duration FROM content_catalog WHERE rating_key = ? LIMIT 1`).get(identity.ratingKey) as any;
+    const duration = Number(catalog?.duration);
+    return {
+      canonicalGuid,
+      runtimeMinutes: Number.isFinite(duration) && duration > 0 ? Math.round(duration / 60_000) : null,
+      people,
+      summary: {
+        rawObservationCount: observations.length,
+        viewingDayCount: allRows.length,
+        completedViewingDayCount: allRows.filter((row) => row.state === "completed").length,
+        distinctViewerCount: people.length,
+        firstViewedAt: timestamps[0] ?? null,
+        latestViewedAt: timestamps[timestamps.length - 1] ?? null
+      },
+      rows: allRows.slice(0, MOVIE_HISTORY_ROW_LIMIT),
+      rowsLimited: directLimited || allRows.length > MOVIE_HISTORY_ROW_LIMIT
+    };
+  }
+
+  private getDetailWorkspaceMetadata(identity: DashboardDetailIdentity): ({ title: string; subtitle: string | null } & DashboardArtworkDescriptor) | null {
+    const artworkRoutes = (key: string) => buildDashboardArtworkDescriptor(this.db, key);
     if (identity.kind === "audiobook") {
       const book = this.db.prepare(`SELECT title, subtitle FROM audiobook_books WHERE id = ?`).get(identity.audiobookId) as any;
       if (!book) return null;
-      return { title: book.title, subtitle: book.subtitle ?? null, artworkUrl: `/api/artwork/${encodeURIComponent(identity.detailKey)}` };
+      return { title: book.title, subtitle: book.subtitle ?? null, ...artworkRoutes(identity.detailKey) };
     }
     const key = identity.kind === "movie" ? identity.ratingKey : identity.grandparentRatingKey;
     const catalog = this.db.prepare(`
@@ -566,35 +783,46 @@ export class DashboardService {
       ORDER BY CASE WHEN rating_key = ? THEN 0 ELSE 1 END, rating_key
       LIMIT 1
     `).get(key, key, key) as any;
-    if (catalog) return { title: catalog.title || catalog.grandparent_title || key, subtitle: catalog.library_title ?? null, artworkUrl: `/api/artwork/${encodeURIComponent(identity.detailKey.replace(/^series:[^:]+:/, ""))}` };
+    if (catalog) return { title: catalog.title || catalog.grandparent_title || key, subtitle: catalog.library_title ?? null, ...artworkRoutes(key) };
     const observation = this.db.prepare(`SELECT title, show_title, library_name FROM playback_observations WHERE rating_key = ? OR grandparent_rating_key = ? ORDER BY watched_at DESC LIMIT 1`).get(key, key) as any;
     if (!observation) return null;
-    return { title: identity.kind === "series" ? (observation.show_title || observation.title) : observation.title, subtitle: observation.library_name ?? null, artworkUrl: `/api/artwork/${encodeURIComponent(key)}` };
+    return { title: identity.kind === "series" ? (observation.show_title || observation.title) : observation.title, subtitle: observation.library_name ?? null, ...artworkRoutes(identity.kind === "series" ? identity.detailKey.replace(/^series:[^:]+:/, "") : key) };
   }
 
-  private getDetailProgressSummary(identity: DashboardDetailIdentity, metadata: any, completedItems: number, latestPercent: unknown) {
+  private getDetailProgressSummary(
+    identity: DashboardDetailIdentity,
+    metadata: any,
+    completedItems: number,
+    latestPercent: unknown,
+    audiobookProgress: AudiobookChapterProgressSnapshot | null = null
+  ) {
     let unit: "episode" | "movie" | "track" | "chapter" = identity.kind === "movie" ? "movie" : identity.kind === "series" ? "episode" : "track";
     let source: "plex" | "audiobook_tool" = identity.kind === "audiobook" ? "plex" : "plex";
     let sourceVerified = identity.kind !== "audiobook";
     let totalItems: number | null = identity.kind === "movie" ? 1 : null;
+    let resolvedCompletedItems = completedItems;
+    let resolvedLatestPercent = latestPercent;
     if (identity.kind === "series") {
       const row = this.db.prepare(`SELECT leaf_count FROM content_catalog WHERE rating_key = ? LIMIT 1`).get(identity.grandparentRatingKey) as any;
       totalItems = row?.leaf_count > 0 ? row.leaf_count : null;
     } else if (identity.kind === "audiobook") {
-      const verified = this.getActiveAudiobookChapterSource(identity.audiobookId) !== null;
+      const verified = audiobookProgress?.hasVerifiedChapters ?? (this.getActiveAudiobookChapterSource(identity.audiobookId) !== null);
       if (verified) {
         unit = "chapter";
         source = "audiobook_tool";
         sourceVerified = true;
         const row = this.db.prepare(`SELECT COUNT(*) AS count FROM audiobook_chapters WHERE audiobook_id = ?`).get(identity.audiobookId) as any;
-        totalItems = Number(row?.count ?? 0) || null;
+        const chapterCount = audiobookProgress?.chapters.length ?? Number(row?.count ?? 0);
+        totalItems = chapterCount || null;
+        resolvedCompletedItems = audiobookProgress?.distinctCompleted ?? resolvedCompletedItems;
+        resolvedLatestPercent = audiobookProgress?.currentProgressPercent ?? resolvedLatestPercent;
       } else {
         const row = this.db.prepare(`SELECT chapter_count FROM audiobook_books WHERE id = ?`).get(identity.audiobookId) as any;
         totalItems = row?.chapter_count > 0 ? row.chapter_count : null;
       }
     }
-    const percent = latestPercent == null ? null : Math.max(0, Math.min(100, Math.round(Number(latestPercent))));
-    return { unit, source, sourceVerified, completedItems, currentPercent: Number.isFinite(percent as number) ? percent : null, totalItems };
+    const percent = resolvedLatestPercent == null ? null : Math.max(0, Math.min(100, Math.round(Number(resolvedLatestPercent))));
+    return { unit, source, sourceVerified, completedItems: resolvedCompletedItems, currentPercent: Number.isFinite(percent as number) ? percent : null, totalItems };
   }
 
   private legacyProgressGroupKey(identity: DashboardDetailIdentity): string {
@@ -1069,7 +1297,7 @@ export class DashboardService {
           : (item.category === "tv" || item.category === "classic_tv" || item.category === "anime")
             ? item.grandparentRatingKey ?? item.ratingKey
             : item.ratingKey;
-        const group = groups.get(key) ?? { ...item, title, showTitle: undefined, displayTitle: title, groupKey: key, groupRatingKey, plays: 0, distinctItems: new Set<string>(), people: new Set<number>(), displayNames: new Set<string>(), latestWatchedAt: item.watchedAt, artworkUrl: this.resolveArtworkUrl(item, groupRatingKey), evidence: undefined };
+        const group = groups.get(key) ?? { ...item, title, showTitle: undefined, displayTitle: title, groupKey: key, groupRatingKey, plays: 0, distinctItems: new Set<string>(), people: new Set<number>(), displayNames: new Set<string>(), latestWatchedAt: item.watchedAt, ...this.resolveArtworkDescriptor(item, groupRatingKey), evidence: undefined };
       group.plays += 1;
       group.distinctItems.add(item.ratingKey);
       group.people.add(item.userId);
@@ -1817,6 +2045,8 @@ export class DashboardService {
         title: string;
         category: DashboardCategory;
         artworkUrl: string;
+        posterUrl: string;
+        artworkRevision: string;
         latestWatchedAt: string;
         plays: number;
         completedPlays: number;
@@ -1851,11 +2081,12 @@ export class DashboardService {
         const key = explorerGroupKey(item);
         const title = item.displayTitle ?? item.title;
 
-        const artworkUrl = item.category === "audiobook"
-          ? `/api/artwork/audiobook%3A${item.audiobookId ?? item.parentRatingKey ?? item.grandparentRatingKey ?? item.ratingKey}`
+        const artworkKey = item.category === "audiobook"
+          ? `audiobook:${item.audiobookId ?? item.parentRatingKey ?? item.grandparentRatingKey ?? item.ratingKey}`
           : (item.category === "tv" || item.category === "classic_tv" || item.category === "anime")
-            ? `/api/artwork/${encodeURIComponent(item.grandparentRatingKey ?? item.ratingKey)}`
-            : `/api/artwork/${encodeURIComponent(item.ratingKey)}`;
+            ? (item.grandparentRatingKey ?? item.ratingKey)
+            : item.ratingKey;
+        const artwork = buildDashboardArtworkDescriptor(this.db, artworkKey);
 
         let group = groups.get(key);
         if (!group) {
@@ -1863,7 +2094,9 @@ export class DashboardService {
             groupKey: key,
             title,
             category: item.category,
-            artworkUrl,
+            artworkUrl: artwork.artworkUrl,
+            posterUrl: artwork.posterUrl,
+            artworkRevision: artwork.artworkRevision,
             latestWatchedAt: item.watchedAt,
             plays: 0,
             completedPlays: 0,
@@ -2054,6 +2287,8 @@ export class DashboardService {
           title: g.title,
           category: g.category,
           artworkUrl: g.artworkUrl,
+          posterUrl: g.posterUrl,
+          artworkRevision: g.artworkRevision,
           latestWatchedAt: g.latestWatchedAt,
           progressUnit,
           progressUnitLabel,
@@ -2334,21 +2569,22 @@ export class DashboardService {
     state: ProgressNodeState,
     plays: DashboardActivityItem[],
     stateSource?: ProgressNodeStateSource,
-    partialPosition?: number
+    partialPosition?: number,
+    userId: number | null = null
   ) {
     const latestObservedAt = plays.reduce<string | null>((latest, play) => !latest || play.watchedAt > latest ? play.watchedAt : latest, null);
-    return { displayName, state, latestObservedAt, watchCount: plays.length, stateSource, partialPosition };
+    return { userId, displayName, state, latestObservedAt, watchCount: plays.length, stateSource, partialPosition };
   }
 
-  private visibleDashboardPeople(): Array<{ displayName: string }> {
-    return this.db.prepare(`SELECT COALESCE(NULLIF(dashboard_alias,''), plex_username) displayName FROM users WHERE COALESCE(dashboard_shown, enabled)=1 ORDER BY displayName COLLATE NOCASE`).all() as Array<{ displayName: string }>;
+  private visibleDashboardPeople(): DashboardWatcherPerson[] {
+    return this.db.prepare(`SELECT id AS userId, COALESCE(NULLIF(dashboard_alias,''), plex_username) displayName FROM users WHERE COALESCE(dashboard_shown, enabled)=1 ORDER BY displayName COLLATE NOCASE, id`).all() as DashboardWatcherPerson[];
   }
 
   private buildTvHierarchy(
     showKey: string,
     showTitle: string,
     plays: DashboardActivityItem[],
-    people: Array<{ displayName: string }>
+    people: Array<{ displayName: string; userId?: number | null }>
   ) {
     const episodesCatalog = this.db.prepare(`
       SELECT rating_key, title, parent_title, parent_rating_key, leaf_count
@@ -2377,7 +2613,7 @@ export class DashboardService {
 
       const epPlays = episodePlays.get(ep.rating_key) || [];
       const watchedStates: { [displayName: string]: "watched" | "partial" | "repeated" | "unknown" } = {};
-      const watcherEvidence: Array<{ displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number }> = [];
+      const watcherEvidence: Array<{ userId: number | null; displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number }> = [];
 
       for (const person of people) {
         const userPlays = epPlays.filter(p => {
@@ -2391,7 +2627,7 @@ export class DashboardService {
         } else {
           watchedStates[person.displayName] = "repeated";
         }
-        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, watchedStates[person.displayName], userPlays));
+        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, watchedStates[person.displayName], userPlays, undefined, undefined, person.userId ?? null));
       }
 
       const seasonName = ep.parent_title || "Season 1";
@@ -2482,7 +2718,7 @@ export class DashboardService {
   private buildVerifiedAudiobookChapterProgress(
     audiobook: any,
     plays: DashboardActivityItem[],
-    people: Array<{ displayName: string }>,
+    people: Array<{ displayName: string; userId?: number | null }>,
     source: CachedAudiobookSource,
     cachedChapters: CachedAudiobookChapter[]
   ): AudiobookChapterProgressSnapshot {
@@ -2496,7 +2732,7 @@ export class DashboardService {
       const watchedStates: Record<string, ProgressNodeState> = {};
       const stateSources: Record<string, ProgressNodeStateSource> = {};
       const partialPositions: Record<string, number> = {};
-      const watcherEvidence: Array<{ displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number; stateSource?: ProgressNodeStateSource; partialPosition?: number }> = [];
+      const watcherEvidence: Array<{ userId: number | null; displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number; stateSource?: ProgressNodeStateSource; partialPosition?: number }> = [];
 
       for (const person of people) {
         const userPlays = plays.filter((play) => {
@@ -2550,7 +2786,7 @@ export class DashboardService {
         if (state === "partial" && mappedPartials.length > 0) {
           partialPositions[person.displayName] = Math.max(...mappedPartials);
         }
-        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, state, userPlays, stateSource, partialPositions[person.displayName]));
+        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, state, userPlays, stateSource, partialPositions[person.displayName], person.userId ?? null));
 
         if (state === "watched" || state === "repeated" || state === "partial") {
           touchedChapters.add(chapter.chapter_index);
@@ -2642,7 +2878,7 @@ export class DashboardService {
   private buildTrackFileAudiobookProgress(
     audiobook: any,
     plays: DashboardActivityItem[],
-    people: Array<{ displayName: string }>
+    people: Array<{ displayName: string; userId?: number | null }>
   ): AudiobookChapterProgressSnapshot {
     const chaptersCatalog = this.db.prepare(`
       SELECT rating_key, title, duration
@@ -2667,7 +2903,7 @@ export class DashboardService {
       const chPlays = chapterPlays.get(ch.rating_key) || [];
       const watchedStates: Record<string, ProgressNodeState> = {};
       const stateSources: Record<string, ProgressNodeStateSource> = {};
-      const watcherEvidence: Array<{ displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number; stateSource?: ProgressNodeStateSource }> = [];
+      const watcherEvidence: Array<{ userId: number | null; displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number; stateSource?: ProgressNodeStateSource }> = [];
 
       for (const person of people) {
         const userPlays = chPlays.filter(p => {
@@ -2682,7 +2918,7 @@ export class DashboardService {
         }
         watchedStates[person.displayName] = state;
         stateSources[person.displayName] = state === "unknown" ? "none" : "track_file";
-        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, state, userPlays, stateSources[person.displayName]));
+        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, state, userPlays, stateSources[person.displayName], undefined, person.userId ?? null));
 
         if (state === "watched" || state === "repeated" || state === "partial") touchedTracks.add(ch.rating_key);
         if (state === "watched" || state === "repeated") completedTracks.add(ch.rating_key);
@@ -2746,11 +2982,14 @@ export class DashboardService {
           }
         }
 
+        const artwork = buildDashboardArtworkDescriptor(this.db, grandparentRatingKey);
         const result: ProgressHierarchyExpansion = {
           groupKey,
           category,
           title: catalog.title,
-          artworkUrl: `/api/artwork/${encodeURIComponent(grandparentRatingKey)}`,
+          artworkUrl: artwork.artworkUrl,
+          posterUrl: artwork.posterUrl,
+          artworkRevision: artwork.artworkRevision,
           progressUnit: "episode",
           progressUnitLabel: "episodes",
           progressSource: "plex",
@@ -2811,11 +3050,14 @@ export class DashboardService {
         const totalKnown = hasVerifiedChapters;
         const totalItems = hasVerifiedChapters ? audiobookProgress.chapters.length : (audiobook.chapter_count || null);
 
+        const artwork = buildDashboardArtworkDescriptor(this.db, `audiobook:${audiobookId}`);
         const result: ProgressHierarchyExpansion = {
           groupKey,
           category: "audiobook",
           title: audiobook.title,
-          artworkUrl: `/api/artwork/audiobook%3A${audiobookId}`,
+          artworkUrl: artwork.artworkUrl,
+          posterUrl: artwork.posterUrl,
+          artworkRevision: artwork.artworkRevision,
           progressUnit,
           progressUnitLabel,
           progressSource,
@@ -2855,11 +3097,14 @@ export class DashboardService {
         }
         const people = [...peopleByName.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
 
+        const artwork = buildDashboardArtworkDescriptor(this.db, ratingKey);
         const result: ProgressHierarchyExpansion = {
           groupKey,
           category: "movie",
           title: catalog.title,
-          artworkUrl: `/api/artwork/${encodeURIComponent(ratingKey)}`,
+          artworkUrl: artwork.artworkUrl,
+          posterUrl: artwork.posterUrl,
+          artworkRevision: artwork.artworkRevision,
           progressUnit: "movie",
           progressUnitLabel: "movie",
           progressSource: "plex",
@@ -2887,6 +3132,7 @@ export class DashboardService {
     const category = deriveDashboardCategory(row.media_type, libraryName);
     if (!isHouseholdCategory(category.category)) return null as any;
     const artworkKey = this.resolveArtworkKey(row, category.category);
+    const artwork = buildDashboardArtworkDescriptor(this.db, artworkKey);
     const displayName = resolveDashboardAlias(row.dashboard_alias, row.plex_username);
     
     const cowatch = cowatchMap?.get(row.id);
@@ -2940,6 +3186,7 @@ export class DashboardService {
         parentTitle: row.catalog_parent_title ?? undefined
       }),
       ratingKey: row.rating_key, 
+      detailKey: activityDetailKey(category.category, row.rating_key, row.grandparent_rating_key, row.audiobook_id),
       title: row.title, 
       showTitle: row.show_title ?? undefined, 
       parentTitle: row.catalog_parent_title ?? undefined,
@@ -2954,7 +3201,9 @@ export class DashboardService {
       viewOffset: row.view_offset ?? undefined,
       percentComplete: row.percent_complete ?? undefined, 
       completed: row.completed === 1, 
-      artworkUrl: `/api/artwork/${encodeURIComponent(artworkKey)}`, 
+      artworkUrl: artwork.artworkUrl,
+      posterUrl: artwork.posterUrl,
+      artworkRevision: artwork.artworkRevision,
       grandparentRatingKey: row.grandparent_rating_key ?? undefined, 
       parentRatingKey: row.parent_rating_key ?? undefined, 
       audiobookId: row.audiobook_id ?? undefined, 
@@ -2992,11 +3241,16 @@ export class DashboardService {
     return row.rating_key;
   }
 
-  private resolveArtworkUrl(item: DashboardActivityItem, fallbackKey: string): string {
+  private resolveArtworkDescriptor(item: DashboardActivityItem, fallbackKey: string): Pick<DashboardArtworkDescriptor, "artworkUrl" | "posterUrl" | "artworkRevision"> {
     const key = item.category === "audiobook"
       ? (item.audiobookId != null ? `audiobook:${item.audiobookId}` : fallbackKey)
       : fallbackKey;
-    return `/api/artwork/${encodeURIComponent(key)}`;
+    const descriptor = buildDashboardArtworkDescriptor(this.db, key);
+    return {
+      artworkUrl: descriptor.artworkUrl,
+      posterUrl: descriptor.posterUrl,
+      artworkRevision: descriptor.artworkRevision
+    };
   }
 
   private buildRecentPlaybackCards(items: DashboardActivityItem[], limit: number): DashboardActivityItem[] {

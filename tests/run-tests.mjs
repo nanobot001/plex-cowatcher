@@ -30,6 +30,8 @@ import { AudiobookProofAdapter } from "../dist/service/audiobookProofAdapter.js"
 import { AudiobookProofRuntime, AudiobookProofWorkerService } from "../dist/service/audiobookProofWorkerService.js";
 import { HealthService } from "../dist/service/healthService.js";
 import { DashboardService, deriveDashboardCategory } from "../dist/service/dashboardService.js";
+import { MovieProfileAdapter } from "../dist/service/movieProfileAdapter.js";
+import { MovieProfileService } from "../dist/service/movieProfileService.js";
 import { DashboardPreferenceService } from "../dist/service/dashboardPreferenceService.js";
 import { CowatchAdjudicationService } from "../dist/service/cowatchAdjudicationService.js";
 import { buildCowatchReviewComponents, buildCowatchReviewEmbed } from "../dist/discord/prompts.js";
@@ -2459,6 +2461,17 @@ test("audiobook artwork falls back to a newer reconciled Plex sibling", async ()
       VALUES (?, 'audiobook', ?, ?, ?, ?)
     `).run("old-book-track", "Cosmere Warbreaker (Alyssa Bresnahan) (2015)", book.id, "plex", nowIso);
     db.prepare(`
+      INSERT INTO content_catalog
+        (rating_key, media_type, title, audiobook_id, source_provenance, refreshed_at)
+      VALUES (?, 'audiobook', ?, ?, ?, ?)
+    `).run(
+      "current-book-parent",
+      "Cosmere Warbreaker (Alyssa Bresnahan) (2015)",
+      book.id,
+      "plex",
+      new Date(Date.now() + 1000).toISOString()
+    );
+    db.prepare(`
       INSERT INTO playback_observations
         (user_id, rating_key, parent_rating_key, media_type, library_name, title, watched_at, completed, created_at, updated_at)
       VALUES (?, ?, ?, 'track', 'Audiobooks', ?, ?, 0, ?, ?)
@@ -2484,6 +2497,156 @@ test("audiobook artwork falls back to a newer reconciled Plex sibling", async ()
       const artwork = await fetch(`${base}/api/artwork/audiobook:${book.id}`);
       assert.equal(artwork.status, 200);
       assert.match(artwork.headers.get("content-type"), /image\/svg\+xml/);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
+test("artwork proxy refreshes an authoritative local audiobook cover without restart", async () => {
+  await withTestDb(async (db) => {
+    const nowIso = new Date().toISOString();
+    const firstCover = "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg"><text>FIRST COVER</text></svg>`);
+    const secondCover = "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg"><text>SECOND COVER</text></svg>`);
+    const result = db.prepare(`
+      INSERT INTO audiobook_books
+        (folder_key, title, authors_json, narrators_json, cover_url, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES (?, ?, '[]', '[]', ?, 'manual', 'enriched', ?, ?)
+    `).run("artwork-refresh-book", "Artwork Refresh Book", firstCover, nowIso, nowIso);
+    const audiobookId = Number(result.lastInsertRowid);
+
+    const { createApp } = await import("../dist/server/app.js");
+    const app = createApp(db, new MockPlexAdapter(), { skipStartupUserSync: true });
+    const server = await new Promise((resolve) => {
+      const instance = app.listen(0, "127.0.0.1", () => resolve(instance));
+    });
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const artworkUrl = `${base}/api/artwork/audiobook:${audiobookId}`;
+    try {
+      const first = await fetch(artworkUrl);
+      assert.equal(first.status, 200);
+      const firstFinalUrl = first.url;
+      assert.match(firstFinalUrl, /variant=poster&v=[a-f0-9]{20}$/);
+      assert.match(first.headers.get("cache-control"), /private.*immutable/);
+      assert.match(await first.text(), /FIRST COVER/);
+
+      db.prepare("UPDATE audiobook_books SET cover_url = ?, updated_at = ? WHERE id = ?")
+        .run(secondCover, new Date(Date.now() + 1000).toISOString(), audiobookId);
+
+      const second = await fetch(artworkUrl);
+      assert.equal(second.status, 200);
+      assert.notEqual(second.url, firstFinalUrl);
+      assert.match(await second.text(), /SECOND COVER/);
+
+      const legacy = await fetch(artworkUrl, { redirect: "manual" });
+      assert.equal(legacy.status, 307);
+      assert.equal(legacy.headers.get("cache-control"), "no-store");
+      assert.match(legacy.headers.get("location"), new RegExp(`^/api/artwork/audiobook%3A${audiobookId}\\?variant=poster&v=[a-f0-9]{20}$`));
+      assert.doesNotMatch(legacy.headers.get("location"), /data:|FIRST|SECOND/i);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
+test("artwork resolver recovers stale Plex identities by GUID and coalesces requests", async () => {
+  await withTestDb(async (db) => {
+    const nowIso = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, guid, media_type, title, source_provenance, refreshed_at)
+      VALUES ('stale-movie-art', 'plex://movie/stable', 'movie', 'Stale Movie Art', 'plex', ?)
+    `).run(nowIso);
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, guid, media_type, title, source_provenance, refreshed_at)
+      VALUES ('stale-show-art', 'plex://show/stable', 'show', 'Stale Show Art', 'plex', ?)
+    `).run(nowIso);
+
+    const calls = [];
+    const poster = "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg"><text>GUID POSTER</text></svg>`);
+    const backdrop = "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg"><text>GUID BACKDROP</text></svg>`);
+    class GuidRecoveringArtworkAdapter extends MockPlexAdapter {
+      async getRichMetadataByRatingKey(ratingKey, plexGuid) {
+        calls.push({ ratingKey, plexGuid });
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        const show = ratingKey === "stale-show-art";
+        return {
+          ratingKey: show ? "active-show-art" : "active-movie-art",
+          guid: plexGuid,
+          mediaType: show ? "show" : "movie",
+          title: show ? "Stale Show Art" : "Stale Movie Art",
+          genres: [],
+          thumb: poster,
+          art: backdrop
+        };
+      }
+    }
+
+    const { createApp } = await import("../dist/server/app.js");
+    const app = createApp(db, new GuidRecoveringArtworkAdapter(), { skipStartupUserSync: true });
+    const server = await new Promise((resolve) => {
+      const instance = app.listen(0, "127.0.0.1", () => resolve(instance));
+    });
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const movieResponses = await Promise.all(Array.from({ length: 6 }, () => fetch(`${base}/api/artwork/stale-movie-art`)));
+      assert.equal(movieResponses.every((response) => response.status === 200), true);
+      assert.equal(calls.filter((call) => call.ratingKey === "stale-movie-art").length, 1);
+      assert.deepEqual(calls.find((call) => call.ratingKey === "stale-movie-art"), {
+        ratingKey: "stale-movie-art",
+        plexGuid: "plex://movie/stable"
+      });
+      assert.match(await movieResponses[0].text(), /GUID POSTER/);
+
+      const backdropResponse = await fetch(`${base}/api/artwork/stale-movie-art?variant=backdrop`);
+      assert.equal(backdropResponse.status, 200);
+      assert.match(await backdropResponse.text(), /GUID BACKDROP/);
+
+      const showResponse = await fetch(`${base}/api/artwork/stale-show-art`);
+      assert.equal(showResponse.status, 200);
+      assert.deepEqual(calls.find((call) => call.ratingKey === "stale-show-art"), {
+        ratingKey: "stale-show-art",
+        plexGuid: "plex://show/stable"
+      });
+      assert.doesNotMatch(showResponse.url, /plex:\/\/|stable/i);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
+test("artwork proxy rejects unsafe local sources and never guesses audiobook siblings by title", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const nowIso = new Date().toISOString();
+    const result = db.prepare(`
+      INSERT INTO audiobook_books
+        (folder_key, title, authors_json, narrators_json, cover_url, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES ('unsafe-artwork-book', 'Duplicate Artwork Title', '[]', '[]', 'http://127.0.0.1:9/private-cover', 'manual', 'enriched', ?, ?)
+    `).run(nowIso, nowIso);
+    const audiobookId = Number(result.lastInsertRowid);
+    const user = db.prepare("SELECT id FROM users WHERE plex_username = 'Tony'").get();
+    db.prepare(`
+      INSERT INTO playback_observations
+        (user_id, rating_key, media_type, library_name, title, watched_at, completed, created_at, updated_at)
+      VALUES (?, 'unlinked-title-match', 'track', 'Audiobooks', 'Duplicate Artwork Title', ?, 0, ?, ?)
+    `).run(user.id, nowIso, nowIso, nowIso);
+
+    const { createApp } = await import("../dist/server/app.js");
+    const app = createApp(db, new MockPlexAdapter(), { skipStartupUserSync: true });
+    const server = await new Promise((resolve) => {
+      const instance = app.listen(0, "127.0.0.1", () => resolve(instance));
+    });
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const first = await fetch(`${base}/api/artwork/audiobook:${audiobookId}`, { redirect: "manual" });
+      assert.equal(first.status, 307);
+      const location = first.headers.get("location");
+      assert.match(location, /^\/api\/artwork\/audiobook%3A\d+\?variant=poster&v=[a-f0-9]{20}$/);
+      assert.doesNotMatch(location, /127\.0\.0\.1|private-cover|unlinked-title-match/i);
+
+      const final = await fetch(`${base}${location}`);
+      assert.equal(final.status, 404);
+      assert.equal(await final.text(), "");
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
@@ -2782,18 +2945,224 @@ test("dashboard detail workspace resolves raw and progress selectors to canonica
     assert.equal(movie.data.title, "Same Movie");
     assert.equal(movie.data.progressSummary.completedItems, 1);
     assert.equal(movie.data.hierarchy.available, true);
+    assert.equal(movie.data.artworkUrl, movie.data.posterUrl);
+    assert.match(movie.data.posterUrl, /^\/api\/artwork\/movie-1\?variant=poster&v=[a-f0-9]{20}$/);
+    assert.match(movie.data.backdropUrl, /^\/api\/artwork\/movie-1\?variant=backdrop&v=[a-f0-9]{20}$/);
+    assert.match(movie.data.artworkRevision, /^[a-f0-9]{20}$/);
     assert.equal(Object.hasOwn(movie.data, "plays"), false);
 
     const audiobook = service.getDetailWorkspace("audiobook:10");
     assert.equal(audiobook.ok, true);
     assert.equal(audiobook.data.category, "audiobook");
     assert.equal(audiobook.data.progressSummary.totalItems, 2);
+    assert.equal(audiobook.data.artworkUrl, audiobook.data.posterUrl);
+    assert.match(audiobook.data.posterUrl, /^\/api\/artwork\/audiobook%3A10\?variant=poster&v=[a-f0-9]{20}$/);
+
+    db.prepare(`INSERT INTO audiobook_books
+      (id,folder_key,title,chapter_count,source_provenance,enrichment_status,created_at,updated_at)
+      VALUES (11,'verified-detail-book','Verified Detail Audiobook',3,'fixture','enriched',?,?)`).run(now, now);
+    db.prepare(`INSERT INTO audiobook_chapter_sources
+      (audiobook_id,source_type,source_status,confidence,refreshed_at)
+      VALUES (11,'audiobook_tool','active',0.96,?)`).run(now);
+    for (const [chapterIndex, title, startOffset, endOffset] of [
+      [1, "Verified Detail Chapter 1", 0, 60000],
+      [2, "Verified Detail Chapter 2", 60000, 120000],
+      [3, "Verified Detail Chapter 3", 120000, 180000]
+    ]) {
+      db.prepare(`INSERT INTO audiobook_chapters
+        (audiobook_id,chapter_index,title,start_offset_ms,end_offset_ms,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?)`).run(11, chapterIndex, title, startOffset, endOffset, now, now);
+    }
+    db.prepare(`INSERT INTO content_catalog
+      (rating_key,media_type,title,library_title,audiobook_id,source_provenance,refreshed_at)
+      VALUES ('verified-detail-track','track','Verified Detail Track','Audiobooks',11,'fixture',?)`).run(now);
+    db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,watched_at,percent_complete,view_offset,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(users.Tony, "verified-detail-track", "track", "Audiobooks", "Verified Detail Track", now, 50, 150000, 180000, 0, now, now);
+
+    const verifiedAudiobook = service.getDetailWorkspace("audiobook:11");
+    assert.equal(verifiedAudiobook.ok, true);
+    assert.equal(verifiedAudiobook.data.progressSummary.unit, "chapter");
+    assert.equal(verifiedAudiobook.data.progressSummary.source, "audiobook_tool");
+    assert.equal(verifiedAudiobook.data.progressSummary.sourceVerified, true);
+    assert.equal(verifiedAudiobook.data.progressSummary.completedItems, 2);
+    assert.equal(verifiedAudiobook.data.progressSummary.totalItems, 3);
+    assert.equal(verifiedAudiobook.data.progressSummary.currentPercent, 50);
+    const verifiedHierarchy = service.getDetailWorkspaceHierarchy("audiobook:11");
+    assert.equal(verifiedHierarchy.ok, true);
+    assert.equal(verifiedHierarchy.data.hierarchy.chapters.length, 3);
+    assert.equal(verifiedHierarchy.data.hierarchy.chapters.filter(chapter => Object.values(chapter.watchedStates).includes("watched")).length, 2);
 
     db.prepare(`INSERT INTO content_catalog (rating_key, media_type, title, library_title, source_provenance, refreshed_at)
       VALUES ('hidden-movie', 'movie', 'Hidden Movie', 'Movies', 'fixture', ?)`).run(now);
     insertObservation.run(users.Disabled, "hidden-movie", null, "movie", "Movies", "Hidden Movie", null, now, 100, 600000, 1, now, now);
     assert.equal(service.resolveDetailIdentity("hidden-movie").ok, false);
     assert.equal(service.resolveDetailIdentity("hidden-movie").errorCode, "DETAIL_NOT_FOUND");
+  });
+});
+
+test("dashboard Movie history canonicalizes exact GUID keys into household-local viewing days", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const now = "2026-07-15T12:00:00.000Z";
+    db.prepare("UPDATE users SET dashboard_alias = 'Garner' WHERE plex_username = 'Viewer'").run();
+    db.prepare(`INSERT INTO users
+      (plex_username,display_name,dashboard_alias,dashboard_shown,is_source_user,is_typical_cowatcher,enabled,created_at,updated_at)
+      VALUES ('Dorothy','Dorothy','Dorothy',1,0,1,1,?,?)`).run(now, now);
+    db.prepare(`INSERT INTO users
+      (plex_username,display_name,dashboard_alias,dashboard_shown,is_source_user,is_typical_cowatcher,enabled,created_at,updated_at)
+      VALUES ('Hidden','Hidden','Secret',0,0,1,1,?,?)`).run(now, now);
+    const users = Object.fromEntries(db.prepare("SELECT id, plex_username FROM users").all().map(user => [user.plex_username, user.id]));
+    const guid = "plex://movie/shang-chi-canonical";
+    db.prepare(`INSERT INTO content_catalog
+      (rating_key,guid,media_type,title,duration,library_title,source_provenance,refreshed_at)
+      VALUES ('57417',?,'movie','Shang-Chi and the Legend of the Ten Rings',7920000,'Movies','fixture',?)`).run(guid, now);
+    const insert = db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,plex_guid,media_type,library_name,title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+    insert.run(users.Tony, "23917", guid, "movie", "Movies", "Shang-Chi and the Legend of the Ten Rings", "2022-01-01T02:00:00.000Z", 100, 7920000, 1, now, now);
+    insert.run(users.Viewer, "57417", guid, "movie", "Movies", "Shang-Chi and the Legend of the Ten Rings", "2026-07-14T18:00:00.000Z", 35, 7920000, 0, now, now);
+    insert.run(users.Viewer, "57417", guid, "movie", "Movies", "Shang-Chi and the Legend of the Ten Rings", "2026-07-14T20:00:00.000Z", 100, 7920000, 1, now, now);
+    insert.run(users.Dorothy, "57417", guid, "movie", "Movies", "Shang-Chi and the Legend of the Ten Rings", "2026-07-15T02:00:00.000Z", 100, 7920000, 1, now, now);
+    insert.run(users.Hidden, "57417", guid, "movie", "Movies", "Shang-Chi and the Legend of the Ten Rings", "2026-07-15T03:00:00.000Z", 100, 7920000, 1, now, now);
+    insert.run(users.Tony, "same-title-other", "plex://movie/different", "movie", "Movies", "Shang-Chi and the Legend of the Ten Rings", "2026-07-15T04:00:00.000Z", 100, 7920000, 1, now, now);
+
+    const service = new DashboardService(db, { timeZone: "America/Toronto" });
+    const result = service.getDetailWorkspace("movie:57417");
+    assert.equal(result.ok, true);
+    const history = result.data.movieHistory;
+    assert.ok(history);
+    assert.equal(history.canonicalGuid, guid);
+    assert.equal(history.runtimeMinutes, 132);
+    assert.equal(history.summary.rawObservationCount, 4);
+    assert.equal(history.summary.viewingDayCount, 3);
+    assert.equal(history.summary.completedViewingDayCount, 3);
+    assert.equal(history.summary.distinctViewerCount, 3);
+    assert.deepEqual(history.people.map(person => person.displayName), ["Dorothy", "Garner", "Tony"]);
+    assert.equal(history.rows.find(row => row.displayName === "Garner").observationCount, 2);
+    assert.equal(history.rows.find(row => row.displayName === "Tony").localDate, "2021-12-31");
+    assert.equal(result.data.people.some(person => person.displayName === "Secret"), false);
+    assert.equal(result.data.playbackSummary.plays, 4);
+    assert.match(result.data.movieProfile.route, /movie-profile$/);
+  });
+});
+
+function movieProfileEnvelope(overrides = {}) {
+  return JSON.stringify({
+    ok: true,
+    tool: "exact_movie_profile",
+    data: {
+      schema_version: 1,
+      status: "available",
+      profile: {
+        title: "Shang-Chi and the Legend of the Ten Rings",
+        release_year: 2021,
+        release_date: "2021-09-03",
+        runtime_minutes: 132,
+        genres: ["Action", "Adventure", "Fantasy"],
+        directors: ["Destin Daniel Cretton"],
+        cast: ["Simu Liu", "Awkwafina", "Tony Leung"],
+        studios: ["Marvel Studios"],
+        countries: ["United States"],
+        content_rating: "PG-13",
+        tagline: "You can't outrun your destiny.",
+        synopsis: "Shang-Chi confronts the past he thought he left behind.",
+        imdb_id: "tt3228774",
+        tmdb_id: 566525,
+        brand_tags: ["Marvel"],
+        franchise_tags: ["Shang-Chi"],
+        universe_tags: ["Marvel Cinematic Universe"],
+        source_property_tags: ["Marvel Comics"],
+        refreshed_at: "2026-07-15T12:00:00Z",
+        file_path: "F:/private/movie.mkv",
+        ...overrides
+      }
+    }
+  });
+}
+
+function fakeMovieProfileProcess(responses, calls) {
+  return (_executable, args, options) => {
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.pid = 9876;
+    child.kill = () => true;
+    calls.push({ args: [...args], options });
+    const response = responses.shift() ?? {};
+    queueMicrotask(() => {
+      if (response.error) return child.emit("error", new Error(response.error));
+      if (response.stdout !== undefined) child.stdout.write(response.stdout);
+      if (response.stderr !== undefined) child.stderr.write(response.stderr);
+      if (!response.hang) child.emit("close", response.exitCode ?? 0);
+    });
+    return child;
+  };
+}
+
+test("Movie profile adapter is exact, bounded, allowlisted, and timeout-safe", async () => {
+  const calls = [];
+  const adapter = new MovieProfileAdapter({
+    executablePath: "python.exe",
+    projectRoot: ".",
+    timeoutMs: 25,
+    spawnProcess: fakeMovieProfileProcess([{ stdout: movieProfileEnvelope() }], calls),
+    killProcessTree: () => {}
+  });
+  const result = await adapter.fetchProfile({ ratingKey: "57417", imdbId: "tt3228774", tmdbId: 566525 });
+  assert.equal(result.status, "available");
+  assert.equal(result.profile.runtimeMinutes, 132);
+  assert.equal(Object.hasOwn(result.profile, "file_path"), false);
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].args.includes("exact-profile"));
+  assert.equal(calls[0].args.some(arg => String(arg).includes("semantic")), false);
+  assert.equal(calls[0].options.shell, false);
+
+  const timeoutAdapter = new MovieProfileAdapter({
+    executablePath: "python.exe",
+    projectRoot: ".",
+    timeoutMs: 5,
+    spawnProcess: fakeMovieProfileProcess([{ hang: true }], []),
+    killProcessTree: () => {}
+  });
+  assert.deepEqual(await timeoutAdapter.fetchProfile({ ratingKey: "57417" }), { status: "unavailable", reason: "timeout" });
+});
+
+test("Movie profile service coalesces misses, caches valid profiles, and backs off failures", async () => {
+  await withTestDb(async (db) => {
+    const nowIso = "2026-07-15T12:00:00.000Z";
+    db.prepare(`INSERT INTO content_catalog (rating_key,media_type,title,source_provenance,refreshed_at)
+      VALUES ('57417','movie','Shang-Chi and the Legend of the Ten Rings','fixture',?)`).run(nowIso);
+    let clock = 1_000;
+    let calls = 0;
+    let fail = false;
+    const profile = {
+      schemaVersion: 1, title: "Shang-Chi and the Legend of the Ten Rings", releaseYear: 2021, releaseDate: "2021-09-03",
+      runtimeMinutes: 132, genres: ["Action"], directors: ["Destin Daniel Cretton"], cast: ["Simu Liu"], studios: ["Marvel Studios"],
+      countries: ["United States"], contentRating: "PG-13", tagline: null, synopsis: "Fixture synopsis", imdbId: "tt3228774", tmdbId: 566525,
+      brandTags: ["Marvel"], franchiseTags: ["Shang-Chi"], universeTags: ["Marvel Cinematic Universe"], sourcePropertyTags: [],
+      source: "media-bot", refreshedAt: nowIso
+    };
+    const adapter = { fetchProfile: async () => {
+      calls += 1;
+      await new Promise(resolve => setTimeout(resolve, 5));
+      return fail ? { status: "unavailable", reason: "upstream_unavailable" } : { status: "available", profile, cached: false };
+    } };
+    const service = new MovieProfileService(db, adapter, { ttlMs: 50, failureBackoffMs: 20, now: () => clock });
+    const identity = { kind: "movie", category: "movie", ratingKey: "57417", detailKey: "movie:57417" };
+    const [first, second] = await Promise.all([service.getProfile(identity), service.getProfile(identity)]);
+    assert.equal(first.status, "available");
+    assert.equal(second.status, "available");
+    assert.equal(calls, 1);
+    assert.equal((await service.getProfile(identity)).cached, true);
+    assert.equal(calls, 1);
+    clock += 51;
+    fail = true;
+    assert.equal((await service.getProfile(identity)).status, "unavailable");
+    assert.equal(calls, 2);
+    assert.equal((await service.getProfile(identity)).status, "unavailable");
+    assert.equal(calls, 2);
   });
 });
 
@@ -2829,7 +3198,10 @@ test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed promp
       assert.equal(overview.ok,true);
       assert.equal(overview.data.totals.plays,1);
       assert.equal(typeof overview.data.timingMs,"number");
-      assert.equal(overview.data.activity.items[0].artworkUrl,"/api/artwork/movie-http");      const timeline = await (await fetch(base+"/api/dashboard/timeline")).json();
+      assert.equal(overview.data.activity.items[0].artworkUrl, overview.data.activity.items[0].posterUrl);
+      assert.match(overview.data.activity.items[0].posterUrl, /^\/api\/artwork\/movie-http\?variant=poster&v=[a-f0-9]{20}$/);
+      assert.match(overview.data.activity.items[0].artworkRevision, /^[a-f0-9]{20}$/);
+      const timeline = await (await fetch(base+"/api/dashboard/timeline")).json();
       assert.equal(timeline.ok,true);
       assert.equal(timeline.data.items.length,1);
       assert.equal(timeline.data.sessions.length,1);
@@ -2980,7 +3352,7 @@ test("artwork endpoint uses transcoding, caching headers, and optimizes loading"
       // 1. Fetch artwork for the first time
       const res1 = await originalFetch(base + "/api/artwork/transcode-test");
       assert.equal(res1.status, 200);
-      assert.equal(res1.headers.get("cache-control"), "public, max-age=604800, immutable");
+      assert.equal(res1.headers.get("cache-control"), "private, max-age=604800, immutable");
       
       // Verify the server fetched the transcoded Plex URL
       assert.ok(lastFetchedUrl);
@@ -2998,7 +3370,7 @@ test("artwork endpoint uses transcoding, caching headers, and optimizes loading"
       // 2. Fetch artwork for the second time (should hit in-memory cache)
       const res2 = await originalFetch(base + "/api/artwork/transcode-test");
       assert.equal(res2.status, 200);
-      assert.equal(res2.headers.get("cache-control"), "public, max-age=604800, immutable");
+      assert.equal(res2.headers.get("cache-control"), "private, max-age=604800, immutable");
 
       // Verify it still proxy fetched the image, but did NOT resolve metadata again
       assert.ok(lastFetchedUrl);
@@ -3150,7 +3522,8 @@ test("dashboard service progress contract verifies repeat plays, unknown totals,
     assert.equal(abGroup.totalItems, 15);
     assert.equal(abGroup.progressUnit, "track");
     // Artwork key must use canonical book identity
-    assert.equal(abGroup.artworkUrl, "/api/artwork/audiobook%3A10");
+    assert.equal(abGroup.artworkUrl, abGroup.posterUrl);
+    assert.match(abGroup.posterUrl, /^\/api\/artwork\/audiobook%3A10\?variant=poster&v=[a-f0-9]{20}$/);
   });
 
   tests.push({

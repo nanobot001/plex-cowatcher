@@ -38,6 +38,9 @@ const envSchema = z.object({
       return value;
     }, z.boolean())
     .default(false),
+  MEDIA_BOT_PROFILE_EXECUTABLE: z.string().default(""),
+  MEDIA_BOT_PROFILE_ROOT: z.string().default(""),
+  MEDIA_BOT_PROFILE_PYTHON_VERSION: z.string().regex(/^\d+\.\d+$/).default("3.12"),
   TAUTULLI_BASE_URL: z.string().default("http://127.0.0.1:8181"),
   TAUTULLI_API_KEY: z.string().default(""),
   DISCORD_BOT_TOKEN: z.string().default(""),
