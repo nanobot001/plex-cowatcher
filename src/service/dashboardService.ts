@@ -47,6 +47,7 @@ const timelineFilterSchema = filterSchema.extend({
 
 type DashboardDerivedCategory = DashboardCategory | "other";
 type PeoplePeriod = typeof PEOPLE_PERIODS[number];
+type DashboardWatcherPerson = { userId: number | null; displayName: string };
 type PeopleContribution = DashboardActivityItem & {
   contribution: "observed" | "attributed_confirmed_together";
   confirmedTogether: boolean;
@@ -77,7 +78,7 @@ type AudiobookChapterProgressSnapshot = {
     endOffsetMs?: number;
     duration: number;
     watchedStates: Record<string, ProgressNodeState>;
-    watcherEvidence: Array<{ displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number; stateSource?: ProgressNodeStateSource; partialPosition?: number }>;
+    watcherEvidence: Array<{ userId: number | null; displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number; stateSource?: ProgressNodeStateSource; partialPosition?: number }>;
     stateSources: Record<string, ProgressNodeStateSource>;
     partialPositions: Record<string, number>;
     sourceType?: "audiobook_tool";
@@ -209,6 +210,19 @@ function detailIdentityKey(identity: DashboardDetailIdentityInput): string {
 
 function withDetailKey(identity: DashboardDetailIdentityInput): DashboardDetailIdentity {
   return { ...identity, detailKey: detailIdentityKey(identity) } as DashboardDetailIdentity;
+}
+
+function activityDetailKey(category: DashboardCategory, ratingKey: string, grandparentRatingKey?: string | null, audiobookId?: number | null): string | undefined {
+  if (category === "movie" && isSafeDetailSegment(ratingKey)) {
+    return detailIdentityKey({ kind: "movie", category: "movie", ratingKey });
+  }
+  if ((category === "tv" || category === "classic_tv" || category === "anime") && grandparentRatingKey && isSafeDetailSegment(grandparentRatingKey)) {
+    return detailIdentityKey({ kind: "series", category, grandparentRatingKey });
+  }
+  if (category === "audiobook" && Number.isInteger(Number(audiobookId))) {
+    return detailIdentityKey({ kind: "audiobook", category: "audiobook", audiobookId: Number(audiobookId) });
+  }
+  return undefined;
 }
 
 function parseConfirmedParticipants(value: unknown): Array<{ userId: number; displayName: string }> {
@@ -414,10 +428,24 @@ export class DashboardService {
         ORDER BY po.watched_at DESC, po.id DESC LIMIT 1
       `).get(...this.detailIdentityArgs(identity)) as any;
 
-      const people = [...new Set(activity.flatMap((item) => item.displayNames?.length ? item.displayNames : [item.displayName]))]
-        .filter(Boolean)
-        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
-        .map((displayName) => ({ displayName }));
+      const watcherPeople = this.visibleDashboardPeople();
+      const peopleByName = new Map<string, DashboardWatcherPerson>();
+      for (const item of activity) {
+        const names = item.displayNames?.length ? item.displayNames : [item.displayName];
+        for (const displayName of names.filter(Boolean)) {
+          const visiblePerson = watcherPeople.find((person) => person.displayName === displayName);
+          if (visiblePerson) {
+            peopleByName.set(displayName, visiblePerson);
+          } else if (displayName === item.displayName) {
+            peopleByName.set(displayName, { userId: item.userId, displayName });
+          }
+        }
+      }
+      const peopleOrder = new Map(watcherPeople.map((person, index) => [person.displayName, index]));
+      const people = [...peopleByName.values()].sort((a, b) => {
+        const orderDelta = (peopleOrder.get(a.displayName) ?? Number.MAX_SAFE_INTEGER) - (peopleOrder.get(b.displayName) ?? Number.MAX_SAFE_INTEGER);
+        return orderDelta || a.displayName.localeCompare(b.displayName, undefined, { sensitivity: "base" });
+      });
       const progress = this.getDetailProgressSummary(identity, metadata, Number(aggregate?.completed_items ?? 0), latest?.percentComplete);
 
       return {
@@ -429,7 +457,10 @@ export class DashboardService {
           subtitle: metadata.subtitle,
           category: identity.category,
           artworkUrl: metadata.artworkUrl,
-          people,
+          posterUrl: metadata.posterUrl,
+          backdropUrl: metadata.backdropUrl,
+          people: people.filter((person): person is DashboardWatcherPerson & { userId: number } => person.userId != null).map((person) => ({ id: person.userId, displayName: person.displayName })),
+          watcherPeople: watcherPeople.filter((person): person is DashboardWatcherPerson & { userId: number } => person.userId != null).map((person) => ({ id: person.userId, displayName: person.displayName })),
           playbackSummary: {
             plays: Number(aggregate?.plays ?? 0),
             completedPlays: Number(aggregate?.completed_plays ?? 0),
@@ -552,11 +583,19 @@ export class DashboardService {
     return { audiobookId: identity.audiobookId };
   }
 
-  private getDetailWorkspaceMetadata(identity: DashboardDetailIdentity): { title: string; subtitle: string | null; artworkUrl: string } | null {
+  private getDetailWorkspaceMetadata(identity: DashboardDetailIdentity): { title: string; subtitle: string | null; artworkUrl: string; posterUrl: string; backdropUrl: string } | null {
+    const artworkRoutes = (key: string) => {
+      const encodedKey = encodeURIComponent(key);
+      return {
+        artworkUrl: `/api/artwork/${encodedKey}`,
+        posterUrl: `/api/artwork/${encodedKey}?variant=poster`,
+        backdropUrl: `/api/artwork/${encodedKey}?variant=backdrop`
+      };
+    };
     if (identity.kind === "audiobook") {
       const book = this.db.prepare(`SELECT title, subtitle FROM audiobook_books WHERE id = ?`).get(identity.audiobookId) as any;
       if (!book) return null;
-      return { title: book.title, subtitle: book.subtitle ?? null, artworkUrl: `/api/artwork/${encodeURIComponent(identity.detailKey)}` };
+      return { title: book.title, subtitle: book.subtitle ?? null, ...artworkRoutes(identity.detailKey) };
     }
     const key = identity.kind === "movie" ? identity.ratingKey : identity.grandparentRatingKey;
     const catalog = this.db.prepare(`
@@ -566,10 +605,10 @@ export class DashboardService {
       ORDER BY CASE WHEN rating_key = ? THEN 0 ELSE 1 END, rating_key
       LIMIT 1
     `).get(key, key, key) as any;
-    if (catalog) return { title: catalog.title || catalog.grandparent_title || key, subtitle: catalog.library_title ?? null, artworkUrl: `/api/artwork/${encodeURIComponent(identity.detailKey.replace(/^series:[^:]+:/, ""))}` };
+    if (catalog) return { title: catalog.title || catalog.grandparent_title || key, subtitle: catalog.library_title ?? null, ...artworkRoutes(identity.detailKey.replace(/^series:[^:]+:/, "")) };
     const observation = this.db.prepare(`SELECT title, show_title, library_name FROM playback_observations WHERE rating_key = ? OR grandparent_rating_key = ? ORDER BY watched_at DESC LIMIT 1`).get(key, key) as any;
     if (!observation) return null;
-    return { title: identity.kind === "series" ? (observation.show_title || observation.title) : observation.title, subtitle: observation.library_name ?? null, artworkUrl: `/api/artwork/${encodeURIComponent(key)}` };
+    return { title: identity.kind === "series" ? (observation.show_title || observation.title) : observation.title, subtitle: observation.library_name ?? null, ...artworkRoutes(identity.kind === "series" ? identity.detailKey.replace(/^series:[^:]+:/, "") : key) };
   }
 
   private getDetailProgressSummary(identity: DashboardDetailIdentity, metadata: any, completedItems: number, latestPercent: unknown) {
@@ -2334,21 +2373,22 @@ export class DashboardService {
     state: ProgressNodeState,
     plays: DashboardActivityItem[],
     stateSource?: ProgressNodeStateSource,
-    partialPosition?: number
+    partialPosition?: number,
+    userId: number | null = null
   ) {
     const latestObservedAt = plays.reduce<string | null>((latest, play) => !latest || play.watchedAt > latest ? play.watchedAt : latest, null);
-    return { displayName, state, latestObservedAt, watchCount: plays.length, stateSource, partialPosition };
+    return { userId, displayName, state, latestObservedAt, watchCount: plays.length, stateSource, partialPosition };
   }
 
-  private visibleDashboardPeople(): Array<{ displayName: string }> {
-    return this.db.prepare(`SELECT COALESCE(NULLIF(dashboard_alias,''), plex_username) displayName FROM users WHERE COALESCE(dashboard_shown, enabled)=1 ORDER BY displayName COLLATE NOCASE`).all() as Array<{ displayName: string }>;
+  private visibleDashboardPeople(): DashboardWatcherPerson[] {
+    return this.db.prepare(`SELECT id AS userId, COALESCE(NULLIF(dashboard_alias,''), plex_username) displayName FROM users WHERE COALESCE(dashboard_shown, enabled)=1 ORDER BY displayName COLLATE NOCASE, id`).all() as DashboardWatcherPerson[];
   }
 
   private buildTvHierarchy(
     showKey: string,
     showTitle: string,
     plays: DashboardActivityItem[],
-    people: Array<{ displayName: string }>
+    people: Array<{ displayName: string; userId?: number | null }>
   ) {
     const episodesCatalog = this.db.prepare(`
       SELECT rating_key, title, parent_title, parent_rating_key, leaf_count
@@ -2377,7 +2417,7 @@ export class DashboardService {
 
       const epPlays = episodePlays.get(ep.rating_key) || [];
       const watchedStates: { [displayName: string]: "watched" | "partial" | "repeated" | "unknown" } = {};
-      const watcherEvidence: Array<{ displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number }> = [];
+      const watcherEvidence: Array<{ userId: number | null; displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number }> = [];
 
       for (const person of people) {
         const userPlays = epPlays.filter(p => {
@@ -2391,7 +2431,7 @@ export class DashboardService {
         } else {
           watchedStates[person.displayName] = "repeated";
         }
-        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, watchedStates[person.displayName], userPlays));
+        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, watchedStates[person.displayName], userPlays, undefined, undefined, person.userId ?? null));
       }
 
       const seasonName = ep.parent_title || "Season 1";
@@ -2482,7 +2522,7 @@ export class DashboardService {
   private buildVerifiedAudiobookChapterProgress(
     audiobook: any,
     plays: DashboardActivityItem[],
-    people: Array<{ displayName: string }>,
+    people: Array<{ displayName: string; userId?: number | null }>,
     source: CachedAudiobookSource,
     cachedChapters: CachedAudiobookChapter[]
   ): AudiobookChapterProgressSnapshot {
@@ -2496,7 +2536,7 @@ export class DashboardService {
       const watchedStates: Record<string, ProgressNodeState> = {};
       const stateSources: Record<string, ProgressNodeStateSource> = {};
       const partialPositions: Record<string, number> = {};
-      const watcherEvidence: Array<{ displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number; stateSource?: ProgressNodeStateSource; partialPosition?: number }> = [];
+      const watcherEvidence: Array<{ userId: number | null; displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number; stateSource?: ProgressNodeStateSource; partialPosition?: number }> = [];
 
       for (const person of people) {
         const userPlays = plays.filter((play) => {
@@ -2550,7 +2590,7 @@ export class DashboardService {
         if (state === "partial" && mappedPartials.length > 0) {
           partialPositions[person.displayName] = Math.max(...mappedPartials);
         }
-        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, state, userPlays, stateSource, partialPositions[person.displayName]));
+        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, state, userPlays, stateSource, partialPositions[person.displayName], person.userId ?? null));
 
         if (state === "watched" || state === "repeated" || state === "partial") {
           touchedChapters.add(chapter.chapter_index);
@@ -2642,7 +2682,7 @@ export class DashboardService {
   private buildTrackFileAudiobookProgress(
     audiobook: any,
     plays: DashboardActivityItem[],
-    people: Array<{ displayName: string }>
+    people: Array<{ displayName: string; userId?: number | null }>
   ): AudiobookChapterProgressSnapshot {
     const chaptersCatalog = this.db.prepare(`
       SELECT rating_key, title, duration
@@ -2667,7 +2707,7 @@ export class DashboardService {
       const chPlays = chapterPlays.get(ch.rating_key) || [];
       const watchedStates: Record<string, ProgressNodeState> = {};
       const stateSources: Record<string, ProgressNodeStateSource> = {};
-      const watcherEvidence: Array<{ displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number; stateSource?: ProgressNodeStateSource }> = [];
+      const watcherEvidence: Array<{ userId: number | null; displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number; stateSource?: ProgressNodeStateSource }> = [];
 
       for (const person of people) {
         const userPlays = chPlays.filter(p => {
@@ -2682,7 +2722,7 @@ export class DashboardService {
         }
         watchedStates[person.displayName] = state;
         stateSources[person.displayName] = state === "unknown" ? "none" : "track_file";
-        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, state, userPlays, stateSources[person.displayName]));
+        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, state, userPlays, stateSources[person.displayName], undefined, person.userId ?? null));
 
         if (state === "watched" || state === "repeated" || state === "partial") touchedTracks.add(ch.rating_key);
         if (state === "watched" || state === "repeated") completedTracks.add(ch.rating_key);
@@ -2940,6 +2980,7 @@ export class DashboardService {
         parentTitle: row.catalog_parent_title ?? undefined
       }),
       ratingKey: row.rating_key, 
+      detailKey: activityDetailKey(category.category, row.rating_key, row.grandparent_rating_key, row.audiobook_id),
       title: row.title, 
       showTitle: row.show_title ?? undefined, 
       parentTitle: row.catalog_parent_title ?? undefined,

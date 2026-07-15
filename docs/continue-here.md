@@ -1,5 +1,18 @@
 # Continue Here
 
+## 2026-07-14
+
+Current state:
+- Block 3-2n-6E-1 is implemented and verified, providing the canonical detail identity, workspace read contract, and lazy hierarchy route.
+- Block 3-2n-6E-2 is implemented and verified. Every non-Progress detail caller now opens one URL-restorable `#detail-dialog` shell with explicit Movie, TV, Classic TV, Anime, and Audiobook presenters. A populated Classic TV review corrected the initial column hierarchy: the sticky left rail now holds artwork and compact summary metadata, while seasons/episodes/chapters use the wider primary column.
+- Block 3-2n-6E-2A is implemented and verified. The shared non-Progress detail workspace now has a full-width private Plex backdrop hero, an honest Audiobook gradient/square-cover fallback, and unlabeled stable-ID watcher lanes ordered like People with hover/focus evidence and cross-row selection. Progress remains isolated for 6E-3.
+- Block 3-2n-6E-2B is implemented and verified. Movie detail now uses the primary column for a source-backed viewing record with progress, playback, latest activity, visible participants, and evidence explanation instead of an empty hierarchy placeholder.
+- The deterministic block gate passed with 104 service/integration tests and 43 dashboard regression tests (plus one intentional duplicate-project skip). After the PM2 restart, the live dashboard smoke passed, and live visual QA passed at 1440px and 390px.
+- The 3-2n-5d-3 recurring-worker enablement decision remains separately pending; this detail-workspace work does not imply that automatic audiobook proof was enabled.
+
+Next step:
+- Implement **Block 3-2n-6E-3: Progress Migration And Cross-Surface Regression** (`docs/blocks/block-3-2n-6e-3-progress-migration-and-regression.md`). Reuse the verified 6E-2/6E-2A/6E-2B shell, renderer, artwork, Movie presenter, watcher-lane, one-scroller, route, and focus contracts; migrate `progressDetail`, retire `#progress-dialog`, and lock cross-surface parity before starting 6D.
+
 ## 2026-07-12
 
 Current state:

@@ -79,7 +79,10 @@ export interface DashboardDetailWorkspaceResponse {
   subtitle: string | null;
   category: DashboardCategory;
   artworkUrl: string;
-  people: Array<{ displayName: string }>;
+  posterUrl: string;
+  backdropUrl: string | null;
+  people: Array<{ id: number; displayName: string }>;
+  watcherPeople: Array<{ id: number; displayName: string }>;
   playbackSummary: {
     plays: number;
     completedPlays: number;
@@ -123,6 +126,7 @@ export type ProgressNodeState = "watched" | "partial" | "repeated" | "unknown" |
 export type ProgressNodeStateSource = "verified_offset" | "book_completion" | "track_file" | "source_uncertain" | "none";
 
 export interface ProgressWatcherEvidence {
+  userId: number | null;
   displayName: string;
   state: ProgressNodeState;
   latestObservedAt: string | null;
@@ -218,6 +222,7 @@ export interface DashboardOperationItem {
 
 export interface DashboardActivityItem {
   id: number; userId: number; username: string; displayName: string; ratingKey: string;
+  detailKey?: string;
   title: string; showTitle?: string; mediaType: string; category: DashboardCategory;
   categoryLabel: string; categoryDerived: boolean; libraryName?: string; watchedAt: string;
   sessionStartAt?: string; sessionEndAt?: string;

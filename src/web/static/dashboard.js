@@ -1,5 +1,5 @@
 const layouts = new Set(["overview","timeline","explorer","people","progress"]);
-const state = { layout: "overview", filters: {}, offset: 0, totals: null, users: null, libraries: null, explorer: { section: "", sort: "recent", offset: 0, selected: "" }, timeline: { date: "", offset: 0 }, people: { period: "30d", dateFrom: "", dateTo: "", orderMode: "default", activeOrder: [], secondaryOrder: [] }, progress: { recentlyActiveOffset: 0, continueOffset: 0, recentlyCompletedOffset: 0, selected: "" } };
+const state = { layout: "overview", filters: {}, offset: 0, totals: null, users: null, libraries: null, explorer: { section: "", sort: "recent", offset: 0, selected: "" }, detail: { key: "", selector: "", originKey: "" }, timeline: { date: "", offset: 0 }, people: { period: "30d", dateFrom: "", dateTo: "", orderMode: "default", activeOrder: [], secondaryOrder: [] }, progress: { recentlyActiveOffset: 0, continueOffset: 0, recentlyCompletedOffset: 0, selected: "" } };
 const content = document.querySelector("#dashboard-content");
 const form = document.querySelector("#dashboard-filters");
 const dialog = document.querySelector("#detail-dialog");
@@ -7,6 +7,10 @@ const progressDialog = document.querySelector("#progress-dialog");
 let explorerRenderVersion=0;
 let peopleRenderVersion=0;
 const progressExpansionCache = new Map();
+const detailHierarchyCache = new Map();
+let detailReturnFocus = null;
+let activeDetailHierarchyState = null;
+let detailWatcherSelection = null;
 const peopleDragState = { pointerId: null, personId: "", group: "", sourceCard: null, dragGhost: null, placeholder: null, targetCard: null, placeBefore: true, startX: 0, startY: 0, lastX: 0, lastY: 0, offsetX: 0, offsetY: 0, dragging: false, ignoreClickUntil: 0 };
 const peopleHeatmapState = { activeByPerson: new Map(), activeDefault: [], secondaryDefault: [], activeVisible: [], secondaryVisible: [], hoveredCell: null, popover: null, announcer: null, pendingAnnouncement: "" };
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -26,7 +30,7 @@ const prefs=safePrefs(); state.layout=layouts.has(prefs.layout)?prefs.layout:"ov
 const save=()=>{try{localStorage.setItem("cowatch.dashboard",JSON.stringify({layout:state.layout,filters:state.filters,people:state.people}));}catch{}};
 const query=(extra={})=>{const p=new URLSearchParams();Object.entries({...state.filters,...extra}).forEach(([k,v])=>{if(v!==""&&v!=null)p.set(k,String(v));});return p;};
 const peopleQuery=(extra={})=>{const p=query(extra);p.delete("dateFrom");p.delete("dateTo");p.set("period",state.people.period||"30d");if(state.people.period==="custom"){if(state.people.dateFrom)p.set("dateFrom",state.people.dateFrom);if(state.people.dateTo)p.set("dateTo",state.people.dateTo);}return p;};
-const fetchJson=async url=>{const r=await fetch(url,{cache:"no-store"});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.message||"Panel could not load.");return j.data;};
+const fetchJson=async (url,options={})=>{const r=await fetch(url,{cache:"no-store",...options});const j=await r.json();if(!r.ok||!j.ok){const error=new Error(j.message||"Panel could not load.");error.code=j.errorCode||"REQUEST_FAILED";throw error;}return j.data;};
 const evidence=x=>{const e=x.evidence||{};return '<div class="evidence"><span class="proof observed">Observed</span>'+(e.confirmed?'<span class="proof confirmed">Confirmed</span>':'')+(e.promptStatus?'<span class="proof">Prompt '+esc(e.promptStatus)+'</span>':'')+(e.plexSyncStatus?'<span class="proof synced">Plex '+esc(e.plexSyncStatus)+'</span>':'')+'</div>';};
 const art=x=>'<img class="poster" src="'+esc(x.artworkUrl)+'" alt="'+esc((x.displayTitle||x.title||x.showTitle||"Title")+" "+categoryLabel(x.category)+" artwork")+'" loading="lazy" onerror="this.src=\'/static/icon.svg\';this.classList.add(\'artwork-fallback\')">';
 const mediaTitle=x=>esc(x.displayTitle||x.title||x.showTitle||"");
@@ -216,7 +220,14 @@ const routeQuery=()=>{
     if(state.progress.recentlyCompletedOffset)p.set("recentlyCompletedOffset",String(state.progress.recentlyCompletedOffset));
     if(state.progress.selected)p.set("progressDetail",state.progress.selected);
   }
-  if(state.explorer.selected)p.set("selected",state.explorer.selected);
+  if(state.explorer.selected){
+    if(state.detail.key){
+      p.set("detail",state.detail.key);
+      if(state.detail.originKey&&state.detail.originKey!==state.detail.key)p.set("selected",state.detail.originKey);
+    }else{
+      p.set("selected",state.explorer.selected);
+    }
+  }
   return p;
 };
 const personOrderKey = group => group === "secondary" ? "secondaryOrder" : "activeOrder";
@@ -404,7 +415,14 @@ function restoreLocationState(){
   state.explorer.section=explorerSections.some(item=>item.id===section)?section:"";
   state.explorer.sort=["recent","title","progress","plays"].includes(params.get("sort"))?params.get("sort"):"recent";
   state.explorer.offset=Math.max(0,Number(params.get("offset"))||0);
-  state.explorer.selected=params.get("selected")||"";
+  const canonicalDetail=params.get("detail")||"";
+  const legacySelected=params.get("selected")||"";
+  state.explorer.selected=legacySelected||canonicalDetail;
+  state.detail={
+    key:canonicalDetail,
+    selector:canonicalDetail||legacySelected,
+    originKey:legacySelected||canonicalDetail
+  };
   state.timeline.date=params.get("timelineDate")||"";
   state.timeline.offset=Math.max(0,Number(params.get("timelineOffset"))||0);
   if(state.layout==="progress"){
@@ -496,10 +514,19 @@ function selectCardInDOM(selectedKey) {
   }
 }
 
-async function openDetail(x) {
-  state.explorer.selected = x.groupKey || x.ratingKey;
+async function openDetail(x, trigger = null) {
+  const selector = x.detailKey || x.groupKey || x.ratingKey;
+  if (!selector) return;
+  const originKey = x.groupKey || x.ratingKey || selector;
+  if (trigger instanceof HTMLElement) detailReturnFocus = trigger;
+  state.explorer.selected = originKey;
+  state.detail = { key: x.detailKey || "", selector, originKey };
   save();
   selectCardInDOM(state.explorer.selected);
+  if (trigger instanceof HTMLElement) {
+    trigger.classList.add("selected");
+    trigger.setAttribute("aria-pressed", "true");
+  }
   const targetHash = "#" + state.layout + "?" + routeQuery();
   if (location.hash !== targetHash) {
     history.replaceState({}, "", targetHash);
@@ -516,24 +543,28 @@ async function syncDetailFromURL() {
   }
 
   if (!state.explorer.selected) {
+    state.detail = { key: "", selector: "", originKey: "" };
+    document.body.classList.remove("detail-workspace-open");
+    document.body.style.removeProperty("overflow");
     if (dialog.hasAttribute("open")) {
       dialog.close();
     }
     return;
   }
 
-  const ratingKey = getRatingKeyFromSelected(state.explorer.selected);
-  if (!ratingKey) {
+  const selector = state.detail.selector || state.detail.key || state.explorer.selected;
+  if (!selector) {
     if (dialog.hasAttribute("open")) {
       dialog.close();
     }
     return;
   }
 
-  // Open dialog as modal universally (handles overlay, dim backdrop, and focus trap natively)
   if (!dialog.hasAttribute("open")) {
     dialog.showModal();
   }
+  document.body.classList.add("detail-workspace-open");
+  document.body.style.overflow="hidden";
 
   // Optimistic rendering from active DOM card to eliminate loading lag
   const cardElement = document.querySelector(`[data-select-key="${state.explorer.selected}"]`);
@@ -548,34 +579,37 @@ async function syncDetailFromURL() {
   }
 
   if (optimisticItem) {
-    renderDetailContent({
-      item: optimisticItem,
-      plays: [],
-      people: [],
-      repeatCount: 0,
-      catalog: null,
-      audiobook: null,
-      hierarchy: null,
-      isOptimistic: true
-    });
+    renderDetailWorkspaceLoading(optimisticItem);
   } else {
-    document.querySelector("#detail-content").innerHTML = '<div class="panel-state">Loading rich detail.</div>';
+    renderDetailWorkspaceLoading(null);
   }
 
   activeDetailFetchAbortController = new AbortController();
   const signal = activeDetailFetchAbortController.signal;
 
   try {
-    const d = await fetchJson("/api/dashboard/detail/" + encodeURIComponent(ratingKey), { signal });
+    const d = await fetchJson("/api/dashboard/detail-workspace/" + encodeURIComponent(selector), { signal });
     if (signal.aborted) return;
     if (d) {
-      renderDetailContent(d);
+      if (activeDetailWorkspace?.detailKey !== d.detailKey) detailWatcherSelection = null;
+      state.detail = {
+        key: d.detailKey,
+        selector: d.detailKey,
+        originKey: state.detail.originKey || state.explorer.selected || d.detailKey
+      };
+      dialog.dataset.detailKey = d.detailKey;
+      const canonicalHash = "#" + state.layout + "?" + routeQuery();
+      if (location.hash !== canonicalHash) history.replaceState({}, "", canonicalHash);
+      renderDetailWorkspace(d, { status: d.category === "movie" ? "ready" : "loading", data: d.category === "movie" ? { hierarchy: { type: "movie" } } : null });
+      if (d.category !== "movie" && d.hierarchy?.available) {
+        void loadDetailWorkspaceHierarchy(d, signal);
+      }
     } else {
-      document.querySelector("#detail-content").innerHTML = '<div class="panel-state error">Detail unavailable.</div>';
+      renderDetailWorkspaceFailure("Detail unavailable", "This media detail could not be resolved.");
     }
   } catch (err) {
     if (signal.aborted) return;
-    document.querySelector("#detail-content").innerHTML = '<div class="panel-state error">Could not load details.</div>';
+    renderDetailWorkspaceFailure("Could not load detail", err.code === "DETAIL_NOT_FOUND" ? "This saved detail is no longer available." : "The detail workspace could not be loaded.");
   }
 }
 
@@ -799,6 +833,336 @@ function renderDetailContent(d) {
   `;
 
   document.querySelector("#detail-content").innerHTML = detailHtml;
+}
+
+let activeDetailWorkspace = null;
+
+function setDetailWorkspaceHeader(eyebrow, title, subtitle = "") {
+  const eyebrowNode = document.querySelector("#detail-workspace-eyebrow");
+  const titleNode = document.querySelector("#detail-workspace-heading");
+  const subtitleNode = document.querySelector("#detail-workspace-subtitle");
+  if (eyebrowNode) eyebrowNode.textContent = eyebrow;
+  if (titleNode) titleNode.textContent = title;
+  if (subtitleNode) {
+    subtitleNode.textContent = subtitle;
+    subtitleNode.hidden = !subtitle;
+  }
+}
+
+function renderDetailWorkspaceLoading(item) {
+  activeDetailWorkspace = null;
+  dialog.removeAttribute("data-detail-key");
+  setDetailWorkspaceHeader("Media detail", item?.displayTitle || item?.showTitle || item?.title || "Loading detail", "");
+  const artworkUrl = item?.artworkUrl;
+  document.querySelector("#detail-content").innerHTML = `
+    <div class="detail-workspace-grid detail-workspace-loading" data-testid="detail-workspace-loading">
+      <aside class="detail-workspace-reference">
+        <div class="detail-workspace-artwork-frame">
+          ${artworkUrl ? `<img class="poster" src="${esc(artworkUrl)}" alt="" aria-hidden="true">` : '<div class="detail-workspace-artwork-placeholder" aria-hidden="true"></div>'}
+        </div>
+        <div class="panel-state compact">Loading summary...</div>
+      </aside>
+      <main class="detail-workspace-main">
+        <div class="panel-state">Loading title workspace...</div>
+      </main>
+    </div>`;
+}
+
+function renderDetailWorkspaceFailure(title, message) {
+  activeDetailWorkspace = null;
+  setDetailWorkspaceHeader("Media detail", title, "");
+  document.querySelector("#detail-content").innerHTML = `
+    <div class="detail-workspace-failure" data-testid="detail-workspace-error">
+      <div class="panel-state error">
+        <p>${esc(message)}</p>
+        <button type="button" class="btn" data-detail-retry-base>Try again</button>
+      </div>
+    </div>`;
+}
+
+function detailSourceLabel(progress) {
+  if (progress.source === "audiobook_tool" && progress.sourceVerified) return "Verified audiobook chapters";
+  if (progress.source === "audiobook_tool") return "Audiobook chapter source (unverified)";
+  if (progress.source === "plex") return progress.sourceVerified ? "Verified Plex evidence" : "Plex track/file evidence";
+  return "Source unknown";
+}
+
+function detailProgressLabel(progress) {
+  const unit = progress.unit && progress.unit !== "unknown" ? progress.unit : "item";
+  const plural = progress.totalItems === 1 ? unit : `${unit}s`;
+  const count = progress.totalItems == null
+    ? `${progress.completedItems} completed ${plural}; total unknown`
+    : `${progress.completedItems} of ${progress.totalItems} ${plural}`;
+  return progress.currentPercent == null ? count : `${count} · ${progress.currentPercent}%`;
+}
+
+const detailWatcherStateLabels = {
+  watched: "Watched",
+  repeated: "Repeated",
+  partial: "Partial",
+  source_uncertain: "Source uncertain",
+  unknown: "No observed evidence"
+};
+const detailWatcherStateIcons = {
+  watched: "✓",
+  repeated: "↻",
+  partial: "◐",
+  source_uncertain: "?",
+  unknown: "·"
+};
+
+function detailWatcherRoster(workspace) {
+  const source = Array.isArray(workspace?.watcherPeople) && workspace.watcherPeople.length
+    ? workspace.watcherPeople
+    : (Array.isArray(workspace?.people) ? workspace.people : []);
+  const unique = [];
+  const seen = new Set();
+  for (const person of source) {
+    const id = String(person?.id ?? person?.userId ?? "");
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    unique.push({ id, displayName: String(person.displayName || "Viewer") });
+  }
+  if (state.people.orderMode !== "custom") return unique;
+  const byId = new Map(unique.map(person => [person.id, person]));
+  const ordered = [];
+  for (const id of [...(state.people.activeOrder || []), ...(state.people.secondaryOrder || [])].map(String)) {
+    const person = byId.get(id);
+    if (person && !ordered.includes(person)) ordered.push(person);
+  }
+  return ordered.concat(unique.filter(person => !ordered.includes(person)));
+}
+
+function detailWatcherRow(node, person) {
+  const evidence = Array.isArray(node?.watcherEvidence) ? node.watcherEvidence : [];
+  const row = evidence.find(candidate => candidate?.userId != null && String(candidate.userId) === person.id)
+    || evidence.find(candidate => candidate?.displayName === person.displayName);
+  const state = row?.state || node?.watchedStates?.[person.displayName] || "unknown";
+  const label = detailWatcherStateLabels[state] || "Unknown state";
+  const latest = row?.latestObservedAt ? fmtDate(row.latestObservedAt) : "No observed time";
+  const watchCount = Number.isFinite(Number(row?.watchCount)) ? Number(row.watchCount) : 0;
+  const playLabel = `${watchCount} ${watchCount === 1 ? "play" : "plays"}`;
+  return { state, label, latest, playLabel, row };
+}
+
+function detailWatcherLanes(node, workspace, label = "") {
+  const roster = detailWatcherRoster(workspace);
+  if (!roster.length) return '<span class="text-muted">No visible watcher evidence</span>';
+  const selectedId = detailWatcherSelection ? String(detailWatcherSelection) : "";
+  const markers = roster.map((person, index) => {
+    const detail = detailWatcherRow(node, person);
+    const summary = `${person.displayName}: ${detail.label}. Latest observed: ${detail.latest}. ${detail.playLabel}.`;
+    const selected = selectedId === person.id ? " is-selected" : "";
+    return `<button type="button" class="watcher-lane-marker ${esc(detail.state)}${selected}" data-detail-watcher-lane data-person-id="${esc(person.id)}" data-person-name="${esc(person.displayName)}" data-state="${esc(detail.state)}" aria-pressed="${selected ? "true" : "false"}" aria-label="${esc(summary)}" title="${esc(summary)}" tabindex="-1"><span class="watcher-state-icon" aria-hidden="true">${esc(detailWatcherStateIcons[detail.state] || "·")}</span><span class="watcher-lane-tooltip" role="tooltip">${esc(person.displayName)}<br><span>${esc(detail.label)} · ${esc(detail.latest)} · ${esc(detail.playLabel)}</span></span></button>`;
+  }).join("");
+  return `<div class="detail-watcher-grid" data-testid="detail-watcher-grid" style="--watcher-count:${roster.length}"><div class="detail-tree-episode-label"><strong>${esc(label)}</strong></div>${markers}</div>`;
+}
+
+function renderDetailHierarchyState(label, state) {
+  if (state.status === "loading") {
+    return `<section class="detail-hierarchy-section" data-testid="detail-workspace-hierarchy"><h3>${esc(label)}</h3><div class="panel-state compact" data-testid="detail-workspace-hierarchy-loading">Loading selected hierarchy...</div></section>`;
+  }
+  if (state.status === "error") {
+    return `<section class="detail-hierarchy-section" data-testid="detail-workspace-hierarchy"><h3>${esc(label)}</h3><div class="panel-state compact error" data-testid="detail-workspace-hierarchy-error"><p>Hierarchy is temporarily unavailable.</p><button type="button" class="text-button" data-detail-retry-hierarchy>Try hierarchy again</button></div></section>`;
+  }
+  return "";
+}
+
+function renderSeriesHierarchy(workspace, state, presenterName, heading) {
+  const pending = renderDetailHierarchyState(heading, state);
+  if (pending) return `<div data-testid="detail-presenter-${presenterName}">${pending}</div>`;
+  const hierarchy = state.data?.hierarchy;
+  if (!hierarchy || hierarchy.type !== "tv") {
+    return `<div data-testid="detail-presenter-${presenterName}"><section class="detail-hierarchy-section" data-testid="detail-workspace-hierarchy"><h3>${esc(heading)}</h3><p class="text-muted">No hierarchy is available for this title.</p></section></div>`;
+  }
+  return `<div data-testid="detail-presenter-${presenterName}">
+    <section class="detail-hierarchy-section" data-testid="detail-workspace-hierarchy" aria-label="${esc(heading)}">
+      <h3>${esc(heading)}</h3>
+      <div class="detail-hierarchy-tree">
+        ${hierarchy.seasons.map(season => `<details class="detail-tree-season" data-testid="detail-hierarchy-group">
+          <summary class="detail-tree-season-header"><span>${esc(season.seasonName)}</span><span class="detail-hierarchy-count">${esc(season.episodes.length)} episodes</span></summary>
+          <div class="detail-tree-season-episodes">
+            ${season.episodes.map(episode => `<div class="detail-tree-episode-row" data-testid="detail-hierarchy-node" data-episode-key="${esc(episode.ratingKey)}">
+              ${detailWatcherLanes(episode, workspace, `Episode ${episode.episodeNumber ?? "?"}: ${episode.title}`)}
+            </div>`).join("")}
+          </div>
+        </details>`).join("")}
+      </div>
+    </section>
+  </div>`;
+}
+
+function renderMovieDetailPresenter(workspace) {
+  const progress = workspace.progressSummary || {};
+  const playback = workspace.playbackSummary || {};
+  const percentValue = Number(progress.currentPercent);
+  const percent = Number.isFinite(percentValue) ? Math.max(0, Math.min(100, percentValue)) : null;
+  const people = (workspace.people || []).map(person => person.displayName).filter(Boolean);
+  const currentProgress = percent == null ? "Progress percentage unavailable" : `${percent}% observed progress`;
+  const evidenceCopy = percent == null
+    ? "This record is based on observed Plex playback. A precise progress percentage is not available for the current evidence."
+    : "This record is based on observed Plex playback. The progress meter reflects the latest available observation, not a separate episodic hierarchy.";
+  return `<div data-testid="detail-presenter-movie" class="detail-movie-presenter">
+    <section class="detail-movie-record" data-testid="detail-movie-overview" aria-labelledby="detail-movie-overview-heading">
+      <span class="eyebrow">Viewing record</span>
+      <h3 id="detail-movie-overview-heading">Movie viewing</h3>
+      <p class="detail-movie-status">${esc(currentProgress)}</p>
+      <div class="detail-movie-progress" role="progressbar" aria-label="${esc(`${workspace.title} observed progress`)}" aria-valuemin="0" aria-valuemax="100"${percent == null ? "" : ` aria-valuenow="${percent}"`}>
+        <span style="width:${percent == null ? 0 : percent}%"></span>
+      </div>
+      <div class="detail-movie-stat-grid">
+        <div><span class="eyebrow">Playback</span><strong>${esc(playback.plays ?? 0)} plays</strong><span>${esc(playback.completedPlays ?? 0)} completed</span></div>
+        <div><span class="eyebrow">Observed time</span><strong>${esc(fmtHourValue(playback.observedMinutes ?? 0))}</strong><span>from Plex evidence</span></div>
+      </div>
+      <dl class="detail-movie-facts">
+        <div><dt>Latest activity</dt><dd>${esc(playback.latestWatchedAt ? fmtDate(playback.latestWatchedAt) : "No observed activity")}</dd></div>
+        <div><dt>People</dt><dd>${esc(people.length ? people.join(", ") : "No visible participants")}</dd></div>
+      </dl>
+    </section>
+    <section class="detail-evidence-section" data-testid="detail-movie-evidence" aria-labelledby="detail-movie-evidence-heading">
+      <h3 id="detail-movie-evidence-heading">Viewing evidence</h3>
+      <p>${esc(evidenceCopy)}</p>
+      <div class="detail-movie-evidence-note"><span class="detail-movie-evidence-icon" aria-hidden="true">✓</span><span>${esc(detailSourceLabel(progress))}</span></div>
+    </section>
+  </div>`;
+}
+
+function renderTvDetailPresenter(workspace, state) {
+  return renderSeriesHierarchy(workspace, state, "tv", "Show hierarchy");
+}
+
+function renderClassicTvDetailPresenter(workspace, state) {
+  return renderSeriesHierarchy(workspace, state, "classic-tv", "Classic TV hierarchy");
+}
+
+function renderAnimeDetailPresenter(workspace, state) {
+  return renderSeriesHierarchy(workspace, state, "anime", "Anime hierarchy");
+}
+
+function renderAudiobookDetailPresenter(workspace, state) {
+  const pending = renderDetailHierarchyState("Book hierarchy", state);
+  if (pending) return `<div data-testid="detail-presenter-audiobook">${pending}</div>`;
+  const hierarchy = state.data?.hierarchy;
+  if (!hierarchy || hierarchy.type !== "audiobook") {
+    return `<div data-testid="detail-presenter-audiobook"><section class="detail-hierarchy-section" data-testid="detail-workspace-hierarchy"><h3>Book hierarchy</h3><p class="text-muted">No chapter hierarchy is available for this book.</p></section></div>`;
+  }
+  const series = [hierarchy.parentSeries, hierarchy.subseries, hierarchy.series].filter(Boolean);
+  return `<div data-testid="detail-presenter-audiobook">
+    <section class="detail-hierarchy-section" data-testid="detail-workspace-hierarchy" aria-label="Book hierarchy">
+      <h3>Book hierarchy</h3>
+      ${series.length ? `<p class="detail-hierarchy-context">${series.map(esc).join(" · ")}</p>` : ""}
+      <details class="detail-tree-season detail-chapter-disclosure" data-testid="detail-hierarchy-group">
+        <summary class="detail-tree-season-header"><span>Chapters</span><span class="detail-hierarchy-count">${esc(hierarchy.chapters.length)} ${workspace.progressSummary.unit === "chapter" ? "chapters" : "tracks/files"}</span></summary>
+        <div class="detail-tree-season-episodes">
+          ${hierarchy.chapters.map((chapter, index) => `<div class="detail-tree-episode-row" data-testid="detail-hierarchy-node" data-episode-key="${esc(chapter.ratingKey)}">
+            ${detailWatcherLanes(chapter, workspace, chapter.title || `Chapter ${index + 1}`)}
+          </div>`).join("")}
+        </div>
+      </details>
+    </section>
+  </div>`;
+}
+
+function renderDetailCategoryPresenter(workspace, hierarchyState) {
+  if (workspace.category === "movie") return renderMovieDetailPresenter(workspace);
+  if (workspace.category === "tv") return renderTvDetailPresenter(workspace, hierarchyState);
+  if (workspace.category === "classic_tv") return renderClassicTvDetailPresenter(workspace, hierarchyState);
+  if (workspace.category === "anime") return renderAnimeDetailPresenter(workspace, hierarchyState);
+  if (workspace.category === "audiobook") return renderAudiobookDetailPresenter(workspace, hierarchyState);
+  return '<section class="detail-hierarchy-section"><p class="text-muted">Unsupported media category.</p></section>';
+}
+
+function renderDetailWorkspace(workspace, hierarchyState) {
+  activeDetailWorkspace = workspace;
+  activeDetailHierarchyState = hierarchyState;
+  dialog.dataset.detailKey = workspace.detailKey;
+  setDetailWorkspaceHeader(categoryLabel(workspace.category), workspace.title, workspace.subtitle || "");
+  const people = (workspace.people || []).map(person => person.displayName).join(", ");
+  const playback = workspace.playbackSummary;
+  const progress = workspace.progressSummary;
+  const posterUrl = workspace.posterUrl || workspace.artworkUrl;
+  const selectedPerson = detailWatcherRoster(workspace).find(person => person.id === String(detailWatcherSelection || ""));
+  const selectionHtml = selectedPerson
+    ? `<div class="detail-watcher-selection" data-testid="detail-watcher-selection" role="status"><span>Showing ${esc(selectedPerson.displayName)} across expanded rows</span><button type="button" class="text-button" data-clear-detail-watcher>Clear</button></div>`
+    : "";
+  document.querySelector("#detail-content").innerHTML = `
+    <section class="detail-workspace-hero" data-testid="detail-workspace-hero" data-category="${esc(workspace.category)}" data-artwork-state="pending">
+      ${workspace.backdropUrl ? `<img class="detail-workspace-hero-backdrop" data-detail-backdrop src="${esc(workspace.backdropUrl)}" alt="" aria-hidden="true">` : ""}
+      <div class="detail-workspace-hero-shade" aria-hidden="true"></div>
+      <div class="detail-workspace-hero-content">
+        <p class="eyebrow">${esc(categoryLabel(workspace.category))}</p>
+        <h3>${esc(workspace.title)}</h3>
+        ${workspace.subtitle ? `<p>${esc(workspace.subtitle)}</p>` : ""}
+        ${workspace.category === "audiobook" ? `<img class="detail-workspace-hero-cover" src="${esc(posterUrl)}" alt="" aria-hidden="true">` : ""}
+        ${selectionHtml}
+      </div>
+    </section>
+    <div class="detail-workspace-grid" data-testid="detail-workspace-body" data-category="${esc(workspace.category)}" data-selected-person="${esc(detailWatcherSelection || "")}">
+      <aside class="detail-workspace-reference" data-testid="detail-workspace-reference">
+        <div class="detail-workspace-artwork-frame">
+          <img class="poster" data-testid="detail-workspace-artwork" src="${esc(posterUrl)}" alt="${esc(`${workspace.title} ${categoryLabel(workspace.category)} artwork`)}" onerror="this.src='/static/icon.svg';this.classList.add('artwork-fallback')">
+        </div>
+        <div class="detail-workspace-rail">
+          <div class="detail-workspace-summary-grid">
+          <section class="detail-summary-card" data-testid="detail-workspace-progress" aria-label="Progress summary">
+            <span class="eyebrow">Progress</span>
+            <strong>${esc(detailProgressLabel(progress))}</strong>
+            <span data-testid="detail-workspace-source">${esc(detailSourceLabel(progress))}</span>
+          </section>
+          <section class="detail-summary-card" data-testid="detail-workspace-playback" aria-label="Playback summary">
+            <span class="eyebrow">Playback</span>
+            <strong>${esc(playback.plays)} plays · ${esc(playback.completedPlays)} completed</strong>
+            <span>${esc(fmtHourValue(playback.observedMinutes))} observed</span>
+          </section>
+          </div>
+          <dl class="detail-workspace-metadata">
+          <div><dt>People</dt><dd data-testid="detail-people">${esc(people || "No visible participants")}</dd></div>
+          <div><dt>Latest activity</dt><dd>${esc(fmtDate(playback.latestWatchedAt))}</dd></div>
+          <div><dt>Category</dt><dd data-testid="detail-workspace-category">${esc(categoryLabel(workspace.category))}</dd></div>
+          <div><dt>Detail identity</dt><dd class="detail-workspace-key" data-testid="detail-workspace-key">${esc(workspace.detailKey)}</dd></div>
+          </dl>
+          <section class="detail-evidence-section" data-testid="detail-workspace-evidence">
+            <h3>Evidence</h3>
+            <p>Canonical progress and participant evidence. Hierarchy loads separately for only this title.</p>
+          </section>
+        </div>
+      </aside>
+      <main class="detail-workspace-main" data-testid="detail-workspace-main">
+        ${renderDetailCategoryPresenter(workspace, hierarchyState)}
+      </main>
+    </div>`;
+  const hero = document.querySelector('[data-testid="detail-workspace-hero"]');
+  const backdrop = hero?.querySelector("[data-detail-backdrop]");
+  if (hero && backdrop) {
+    backdrop.addEventListener("load", () => {
+      hero.dataset.artworkState = "ready";
+    }, { once: true });
+    backdrop.addEventListener("error", () => {
+      hero.dataset.artworkState = "fallback";
+      backdrop.remove();
+    }, { once: true });
+  } else if (hero) {
+    hero.dataset.artworkState = "fallback";
+  }
+  const firstWatcher = document.querySelector("[data-detail-watcher-lane]");
+  if (firstWatcher) firstWatcher.setAttribute("tabindex", "0");
+}
+
+async function loadDetailWorkspaceHierarchy(workspace, signal) {
+  const cached = detailHierarchyCache.get(workspace.detailKey);
+  if (cached) {
+    if (!signal.aborted && activeDetailWorkspace?.detailKey === workspace.detailKey) renderDetailWorkspace(workspace, { status: "ready", data: cached });
+    return;
+  }
+  try {
+    const hierarchy = await fetchJson(workspace.hierarchy.route, { signal });
+    if (signal.aborted || activeDetailWorkspace?.detailKey !== workspace.detailKey) return;
+    detailHierarchyCache.set(workspace.detailKey, hierarchy);
+    renderDetailWorkspace(workspace, { status: "ready", data: hierarchy });
+  } catch (error) {
+    if (signal.aborted || activeDetailWorkspace?.detailKey !== workspace.detailKey) return;
+    renderDetailWorkspace(workspace, { status: "error", error });
+  }
 }
 
 // ----------------------------------------------------
@@ -2305,8 +2669,7 @@ content.addEventListener("click",async e=>{
   const libraryItem=e.target.closest("[data-library-item]");
   if(libraryItem){
     const item=JSON.parse(decodeURIComponent(libraryItem.dataset.libraryItem));
-    state.explorer.selected=item.groupKey;
-    return render();
+    return openDetail(item, libraryItem);
   }
   const progressCard=e.target.closest("[data-progress-card]");
   const progressDetailItem=e.target.closest(".progress-node[data-item]");
@@ -2316,7 +2679,7 @@ content.addEventListener("click",async e=>{
     return;
   }
   const item=e.target.closest("[data-item]");
-  if(item)return openDetail(JSON.parse(decodeURIComponent(item.dataset.item)));
+  if(item)return openDetail(JSON.parse(decodeURIComponent(item.dataset.item)), item);
   const routeButton=e.target.closest("[data-route]");
   if(routeButton){
     applyRoute(JSON.parse(decodeURIComponent(routeButton.dataset.route)));
@@ -2476,8 +2839,7 @@ content.addEventListener("keydown",e=>{
   if((e.key==="Enter"||e.key===" ")&&e.target.matches("[data-library-item]")){
     e.preventDefault();
     const item=JSON.parse(decodeURIComponent(e.target.dataset.libraryItem));
-    state.explorer.selected=item.groupKey;
-    render();
+    openDetail(item, e.target);
     return;
   }
   if((e.key==="Enter"||e.key===" ")&&e.target.matches("[data-progress-card]")){
@@ -2487,7 +2849,7 @@ content.addEventListener("keydown",e=>{
   }
   if((e.key==="Enter"||e.key===" ")&&e.target.matches("[data-item]")){
     e.preventDefault();
-    openDetail(JSON.parse(decodeURIComponent(e.target.dataset.item)));
+    openDetail(JSON.parse(decodeURIComponent(e.target.dataset.item)), e.target);
     return;
   }
   const heatmapContainer = e.target.closest("[data-person-heatmap]");
@@ -2568,28 +2930,95 @@ content.addEventListener("mouseleave", e => {
 });
 
 dialog.querySelector(".dialog-close").addEventListener("click",()=>dialog.close());
-dialog.addEventListener("click",e=>{if(e.target===dialog)dialog.close();});
+dialog.addEventListener("click",e=>{
+  const watcherLane = e.target.closest?.("[data-detail-watcher-lane]");
+  if (watcherLane && activeDetailWorkspace) {
+    const personId = String(watcherLane.dataset.personId || "");
+    detailWatcherSelection = detailWatcherSelection === personId ? null : personId;
+    renderDetailWorkspace(activeDetailWorkspace, activeDetailHierarchyState || { status: "loading", data: null });
+    return;
+  }
+  if (e.target.closest?.("[data-clear-detail-watcher]") && activeDetailWorkspace) {
+    detailWatcherSelection = null;
+    renderDetailWorkspace(activeDetailWorkspace, activeDetailHierarchyState || { status: "loading", data: null });
+    return;
+  }
+  if(e.target.closest("[data-detail-retry-base]")){
+    void syncDetailFromURL();
+    return;
+  }
+  if(e.target.closest("[data-detail-retry-hierarchy]")&&activeDetailWorkspace){
+    detailHierarchyCache.delete(activeDetailWorkspace.detailKey);
+    renderDetailWorkspace(activeDetailWorkspace,{status:"loading",data:null});
+    let controller=activeDetailFetchAbortController;
+    if(!controller||controller.signal.aborted){
+      controller=new AbortController();
+      activeDetailFetchAbortController=controller;
+    }
+    void loadDetailWorkspaceHierarchy(activeDetailWorkspace,controller.signal);
+    return;
+  }
+  if(e.target===dialog)dialog.close();
+});
+
+dialog.addEventListener("keydown", e => {
+  const watcherLane = e.target.closest?.("[data-detail-watcher-lane]");
+  if (e.key === "Escape" && detailWatcherSelection) {
+    e.preventDefault();
+    detailWatcherSelection = null;
+    renderDetailWorkspace(activeDetailWorkspace, activeDetailHierarchyState || { status: "loading", data: null });
+    return;
+  }
+  if (!watcherLane) return;
+  const lanes = [...dialog.querySelectorAll("[data-detail-watcher-lane]")];
+  const currentIndex = lanes.indexOf(watcherLane);
+  if (currentIndex < 0) return;
+  const grid = watcherLane.closest("[data-testid='detail-watcher-grid']");
+  const laneCount = grid ? grid.querySelectorAll("[data-detail-watcher-lane]").length : 1;
+  let nextIndex = currentIndex;
+  if (e.key === "ArrowRight") nextIndex = Math.min(lanes.length - 1, currentIndex + 1);
+  else if (e.key === "ArrowLeft") nextIndex = Math.max(0, currentIndex - 1);
+  else if (e.key === "ArrowDown") nextIndex = Math.min(lanes.length - 1, currentIndex + laneCount);
+  else if (e.key === "ArrowUp") nextIndex = Math.max(0, currentIndex - laneCount);
+  else if (e.key === "Home") nextIndex = 0;
+  else if (e.key === "End") nextIndex = lanes.length - 1;
+  else return;
+  e.preventDefault();
+  lanes[nextIndex].focus();
+});
+
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape" || !detailWatcherSelection || !dialog.hasAttribute("open")) return;
+  e.preventDefault();
+  detailWatcherSelection = null;
+  renderDetailWorkspace(activeDetailWorkspace, activeDetailHierarchyState || { status: "loading", data: null });
+});
 
 if (progressDialog) {
   progressDialog.querySelector(".dialog-close").addEventListener("click", () => progressDialog.close());
   progressDialog.addEventListener("click", e => { if (e.target === progressDialog) progressDialog.close(); });
 }
 dialog.addEventListener("close",()=>{
+  document.body.classList.remove("detail-workspace-open");
+  document.body.style.removeProperty("overflow");
+  dialog.removeAttribute("data-detail-key");
+  activeDetailWorkspace=null;
+  activeDetailHierarchyState=null;
+  detailWatcherSelection=null;
   if(state.explorer.selected){
     const closedKey = state.explorer.selected;
     state.explorer.selected="";
+    state.detail={key:"",selector:"",originKey:""};
     save();
     selectCardInDOM("");
     const targetHash = "#" + state.layout + "?" + routeQuery();
     if (location.hash !== targetHash) {
       history.replaceState({}, "", targetHash);
     }
-    if (closedKey) {
-      const card = document.querySelector(`[data-select-key="${closedKey}"]`);
-      if (card) {
-        card.focus();
-      }
-    }
+    const card = closedKey ? document.querySelector(`[data-select-key="${closedKey}"]`) : null;
+    const focusTarget = detailReturnFocus?.isConnected ? detailReturnFocus : card || document.querySelector("#view-title");
+    if (focusTarget instanceof HTMLElement) focusTarget.focus({preventScroll:true});
+    detailReturnFocus=null;
   }
 });
 

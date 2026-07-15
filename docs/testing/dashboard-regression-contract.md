@@ -13,7 +13,7 @@ Protect durable dashboard behavior across numbered blocks without freezing visua
 
 ## Frozen Invariants
 
-- Visible participant names agree across the API-backed card badge, accessible `Watched by` label, and opened detail `People` value.
+- Every visible participant named by an API-backed entry card must remain present in the opened canonical detail `People` value. Session cards may show a narrower recent-session subset while the canonical title workspace includes additional visible title participants; hidden users remain excluded from both.
 - Overview recent-playback cards are session cards: the same canonical item within the shared two-hour inactivity boundary is one card, with a start–end range when times differ; different items, two-hour gaps, and later replays after completion remain separate.
 - Overview session cards expose participant naming once through the accessible poster badge; they do not render a duplicate visible `Watched by` line.
 - Explicit confirmed participants can appear without duplicate playback observations.
@@ -34,6 +34,10 @@ Protect durable dashboard behavior across numbered blocks without freezing visua
 - Ask in Discord is operator-triggered, permits one open prompt per candidate, remains separate from normal Plex-sync prompts, and exposes pending/failure state without private Discord identifiers.
 - Multi-person badges remain readable without child overlap or element overflow.
 - Library selection survives reload, Back, and Forward navigation.
+- Non-Progress detail entry points normalize legacy selectors to one canonical `detail` URL and one `#detail-dialog` shell. Overview, Activity/Timeline, and Library must agree on canonical title, category, artwork, visible people, progress/source values, and selected hierarchy; final truth comes from the canonical workspace response rather than card datasets.
+- The shared detail shell uses explicit Movie, TV, Classic TV, Anime, and Audiobook presenters, loads only the selected hierarchy after base content is interactive, keeps hierarchy failure section-local and retryable, restores focus on close, and owns exactly one `.detail-workspace-scroll` region from 320px through 1440px without page scroll behind the modal. At desktop widths, the compact poster/summary rail is sticky and narrower than the primary hierarchy workspace; narrow layouts stack hierarchy after the summary rail.
+- The shared detail workspace exposes separate private poster/backdrop artwork variants; backdrop resolution uses only Plex `art`/parent-art sources and falls back without stretching portrait art. Audiobooks without a genuine backdrop retain a gradient hero and square cover reference.
+- Episodic detail watcher lanes are unlabeled, stable-ID controls ordered from the People roster, aligned across every visible row, and expose person/state/latest observation/play count on hover or focus. Selection highlights one person across expanded rows, clears on repeat activation or Escape, excludes hidden users, and does not make state meaning color-only.
 - Progress workspace shell separates Recently Active, Continue, and Recently Completed buckets.
 - Progress offset and filter parameters (category, user) are URL-restorable, browser-history preserved, and reset cleanly.
 - Progress hierarchy expansion is lazy and single-card: first paint stays summary-only, one expanded card is URL-restorable, cached re-expansion does not refetch, and unrelated cards are not rendered as expanded.

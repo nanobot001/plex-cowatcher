@@ -32,6 +32,15 @@ const expectBadgeRowsDoNotOverlap = async (badge) => {
   }
 };
 
+const readDetailCore = async (dialog) => ({
+  key: await dialog.getByTestId("detail-workspace-key").textContent(),
+  title: await dialog.locator("#detail-workspace-heading").textContent(),
+  category: await dialog.getByTestId("detail-workspace-category").textContent(),
+  people: await dialog.getByTestId("detail-people").textContent(),
+  progress: await dialog.getByTestId("detail-workspace-progress").textContent(),
+  source: await dialog.getByTestId("detail-workspace-source").textContent()
+});
+
 test("participant evidence stays consistent from recent card to detail", async ({ page }) => {
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -124,6 +133,7 @@ test("library URL state survives selection, reload, Back, and Forward", async ({
   await card.click();
   await expect(card).toHaveAttribute("aria-pressed", "true");
   await expect.poll(() => page.url()).toContain("selected=");
+  await expect.poll(() => page.url()).toContain("detail=series%3Atv%3Ashow-regression");
   const selectedUrl = page.url();
 
   await page.reload();
@@ -158,15 +168,23 @@ test("detail workspace narrow viewport behavior: modal, focus trap, and close re
   // Click close button
   await closeBtn.click();
   await expect(dialog).not.toBeVisible();
-  
-  // Focus should restore to the card
+  await expect(card).toBeFocused();
+
+  await page.keyboard.press("Enter");
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
   await expect(card).toBeFocused();
   expect(pageErrors).toEqual([]);
 });
 
-test("detail shows TV hierarchy, watched states, and lazy-loads plays", async ({ page }) => {
+test("detail loads the selected canonical TV hierarchy with watcher evidence", async ({ page }) => {
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
+  const requests = [];
+  page.on("request", request => {
+    if (request.url().includes("/api/dashboard/detail-workspace/")) requests.push(request.url());
+  });
   await page.goto("/");
 
   const card = page.getByTestId("recent-playback-card").filter({ hasText: "Regression Show" }).first();
@@ -174,31 +192,183 @@ test("detail shows TV hierarchy, watched states, and lazy-loads plays", async ({
 
   const dialog = page.locator("#detail-dialog");
   await expect(dialog).toBeVisible();
+  const detailResponse = await page.request.get("/api/dashboard/detail-workspace/series%3Atv%3Ashow-regression");
+  const detailData = (await detailResponse.json()).data;
+  expect(detailData.posterUrl).toContain("variant=poster");
+  expect(detailData.backdropUrl).toContain("variant=backdrop");
+  expect(detailData.people.every(person => Number.isInteger(person.id))).toBeTruthy();
+  expect(detailData.watcherPeople.every(person => Number.isInteger(person.id))).toBeTruthy();
+  expect(JSON.stringify(detailData)).not.toContain("X-Plex-Token");
+  await expect(dialog.getByTestId("detail-workspace-hero")).toBeVisible();
 
-  // Seasons hierarchy check
-  const seasonHeader = dialog.locator(".detail-tree-season-header").first();
+  await expect(dialog.getByTestId("detail-workspace-main")).toBeVisible();
+  const seasonHeader = dialog.getByTestId("detail-hierarchy-group").first().locator("summary");
   await expect(seasonHeader).toBeVisible();
   await expect(seasonHeader).toContainText("Season 1");
-
-  // Click to expand season
   await seasonHeader.click();
-
-  // Check that episodes are now visible
-  const epRow = dialog.locator(".detail-tree-episode-row").first();
+  const epRow = dialog.getByTestId("detail-hierarchy-node").first();
   await expect(epRow).toBeVisible();
-
-  // Check state badges exist
-  const badgeGroup = epRow.locator(".state-badge-group");
-  await expect(badgeGroup).toBeVisible();
-  await expect(badgeGroup.locator(".state-badge").first()).toBeVisible();
-
-  // Click episode to lazy-load plays
-  await epRow.click();
-  const lazyContainer = epRow.locator(".detail-tree-episode-lazy");
-  await expect(lazyContainer).toBeVisible();
-  await expect(lazyContainer.locator(".detail-lazy-play-item").first()).toBeVisible();
-
+  const watcherGrid = epRow.getByTestId("detail-watcher-grid");
+  await expect(watcherGrid).toBeVisible();
+  const watcherMarkers = watcherGrid.locator("[data-detail-watcher-lane]");
+  await expect(watcherMarkers).toHaveCount(detailData.watcherPeople.length);
+  const firstWatcher = watcherMarkers.first();
+  await firstWatcher.hover();
+  await expect(firstWatcher.locator(".watcher-lane-tooltip")).toBeVisible();
+  const selectedPersonId = await firstWatcher.getAttribute("data-person-id");
+  await firstWatcher.click();
+  await expect(dialog.getByTestId("detail-watcher-selection")).toBeVisible();
+  await expect(firstWatcher).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("Escape");
+  await expect(dialog.getByTestId("detail-watcher-selection")).toHaveCount(0);
+  await expect(dialog.locator(`[data-person-id="${selectedPersonId}"]`).first()).toHaveAttribute("aria-pressed", "false");
+  const layout = await dialog.evaluate(element => {
+    const reference = element.querySelector('[data-testid="detail-workspace-reference"]').getBoundingClientRect();
+    const main = element.querySelector('[data-testid="detail-workspace-main"]').getBoundingClientRect();
+    const hierarchy = element.querySelector('[data-testid="detail-workspace-hierarchy"]').getBoundingClientRect();
+    return {
+      viewportWidth: window.innerWidth,
+      reference: { right: reference.right, bottom: reference.bottom, width: reference.width },
+      main: { left: main.left, top: main.top },
+      hierarchy: { width: hierarchy.width }
+    };
+  });
+  if (layout.viewportWidth >= 768) {
+    expect(layout.main.left).toBeGreaterThanOrEqual(layout.reference.right);
+    expect(layout.hierarchy.width).toBeGreaterThan(layout.reference.width);
+  } else {
+    expect(layout.main.top).toBeGreaterThanOrEqual(layout.reference.bottom - 1);
+  }
+  expect(requests.filter(url => url.endsWith("/hierarchy"))).toHaveLength(1);
+  expect(requests.filter(url => !url.endsWith("/hierarchy"))).toHaveLength(1);
   expect(pageErrors).toEqual([]);
+});
+
+test("non-Progress surfaces normalize to one canonical detail contract", async ({ page }) => {
+  const legacyDetailRequests = [];
+  page.on("request", request => {
+    if (/\/api\/dashboard\/detail\/(?!workspace)/.test(request.url())) legacyDetailRequests.push(request.url());
+  });
+  await page.goto("/");
+
+  const overviewCard = page.getByTestId("recent-playback-card").filter({ hasText: "Regression Show" }).first();
+  await overviewCard.click();
+  const dialog = page.locator("#detail-dialog");
+  await expect(dialog).toHaveAttribute("data-detail-key", "series:tv:show-regression");
+  await expect.poll(() => page.url()).toContain("detail=series%3Atv%3Ashow-regression");
+  const overviewCore = await readDetailCore(dialog);
+  await dialog.locator(".dialog-close").click();
+
+  await page.getByRole("button", { name: "Media Explorer" }).click();
+  const libraryCard = page.locator('[data-section="tv"]').getByTestId("library-card").filter({ hasText: "Regression Show" });
+  await libraryCard.evaluate(element => {
+    const value = JSON.parse(decodeURIComponent(element.dataset.libraryItem));
+    element.dataset.libraryItem = encodeURIComponent(JSON.stringify({
+      ...value,
+      title: "Wrong card title",
+      displayTitle: "Wrong card title",
+      category: "movie",
+      displayNames: ["Wrong Person"],
+      percentComplete: 1
+    }));
+  });
+  await libraryCard.click();
+  await expect(dialog).toHaveAttribute("data-detail-key", "series:tv:show-regression");
+  const libraryCore = await readDetailCore(dialog);
+  expect(libraryCore).toEqual(overviewCore);
+  expect(libraryCore.title).toBe("Regression Show");
+  expect(libraryCore.people).not.toContain("Wrong Person");
+  expect(legacyDetailRequests).toEqual([]);
+});
+
+test("shared detail shell renders explicit presenters for all dashboard categories", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Media Explorer" }).click();
+  const cases = [
+    ["movie", "movie"],
+    ["tv", "tv"],
+    ["classic_tv", "classic-tv"],
+    ["anime", "anime"],
+    ["audiobook", "audiobook"]
+  ];
+  const dialog = page.locator("#detail-dialog");
+  for (const [section, presenter] of cases) {
+    const card = page.locator(`[data-section="${section}"]`).getByTestId("library-card").first();
+    await expect(card).toBeVisible();
+    const encodedItem = await card.getAttribute("data-library-item");
+    const item = JSON.parse(decodeURIComponent(encodedItem || ""));
+    expect(item.detailKey).toBeTruthy();
+    expect(item.detailKey).toContain(section === "classic_tv" ? "series:classic_tv:" : section === "tv" ? "series:tv:" : section === "anime" ? "series:anime:" : section === "movie" ? "movie:" : "audiobook:");
+    await card.click();
+    await expect.poll(() => page.url()).toContain(`detail=${encodeURIComponent(item.detailKey)}`);
+    await expect(dialog.getByTestId(`detail-presenter-${presenter}`)).toBeVisible();
+    if (section === "movie") {
+      await expect(dialog.getByTestId("detail-movie-overview")).toBeVisible();
+      await expect(dialog.getByTestId("detail-movie-evidence")).toBeVisible();
+      await expect(dialog.getByRole("progressbar", { name: /observed progress/i })).toBeVisible();
+      await expect(dialog.getByTestId("detail-movie-overview").locator(".detail-movie-facts")).toBeVisible();
+    }
+    await expect(dialog.getByTestId("detail-workspace-category")).toHaveText(section === "classic_tv" ? "Classic TV" : section === "tv" ? "TV" : section === "movie" ? "Movies" : section === "anime" ? "Anime" : "Audiobooks");
+    await dialog.locator(".dialog-close").click();
+    await expect(dialog).not.toBeVisible();
+  }
+});
+
+test("hierarchy failure remains section-local and retries without blanking detail", async ({ page }) => {
+  let failHierarchy = true;
+  await page.route(/\/api\/dashboard\/detail-workspace\/.+\/hierarchy$/, route => failHierarchy ? route.abort() : route.continue());
+  await page.goto("/");
+  await page.getByTestId("recent-playback-card").filter({ hasText: "Regression Show" }).first().click();
+  const dialog = page.locator("#detail-dialog");
+  await expect(dialog.locator("#detail-workspace-heading")).toHaveText("Regression Show");
+  await expect(dialog.getByTestId("detail-workspace-main")).toBeVisible();
+  await expect(dialog.getByTestId("detail-workspace-hierarchy-error")).toBeVisible();
+  failHierarchy = false;
+  await dialog.getByRole("button", { name: "Try hierarchy again" }).click();
+  await expect(dialog.getByTestId("detail-hierarchy-group").first()).toBeVisible();
+  await expect(dialog.getByTestId("detail-workspace-main")).toBeVisible();
+});
+
+test("detail shell owns one scroller and stays content-first across required widths", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "The explicit viewport matrix runs once in the desktop project.");
+  for (const width of [320, 390, 768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto(`/#overview?detail=${encodeURIComponent("movie:movie-regression")}`);
+    const dialog = page.locator("#detail-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator("#detail-workspace-heading")).toHaveText("Fixture Movie");
+    const metrics = await dialog.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      const body = element.querySelector('[data-testid="detail-workspace-body"]');
+      const bodyRect = body.getBoundingClientRect();
+      const scrollOwners = [...element.querySelectorAll("*")]
+        .filter(node => ["auto", "scroll"].includes(getComputedStyle(node).overflowY))
+        .map(node => node.getAttribute("data-testid") || node.className);
+      const reference = element.querySelector('[data-testid="detail-workspace-reference"]');
+      return {
+        rect: { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, height: rect.height },
+        viewport: { width: document.documentElement.clientWidth, height: window.innerHeight },
+        documentWidth: document.documentElement.scrollWidth,
+        bodyOverflow: getComputedStyle(document.body).overflow,
+        dialogOverflow: getComputedStyle(element).overflowY,
+        scrollOwners,
+        unusedRatio: Math.max(0, rect.bottom - bodyRect.bottom) / Math.max(1, rect.height),
+        referencePosition: getComputedStyle(reference).position
+      };
+    });
+    expect(metrics.rect.left).toBeGreaterThanOrEqual(0);
+    expect(metrics.rect.top).toBeGreaterThanOrEqual(0);
+    expect(metrics.rect.right).toBeLessThanOrEqual(metrics.viewport.width + 0.5);
+    expect(metrics.rect.bottom).toBeLessThanOrEqual(metrics.viewport.height + 0.5);
+    expect(metrics.documentWidth).toBeLessThanOrEqual(metrics.viewport.width);
+    expect(metrics.bodyOverflow).toBe("hidden");
+    expect(metrics.dialogOverflow).toBe("hidden");
+    expect(metrics.scrollOwners).toEqual(["detail-workspace-scroll"]);
+    expect(metrics.unusedRatio).toBeLessThan(0.25);
+    expect(metrics.referencePosition).toBe(width >= 768 ? "sticky" : "static");
+    await dialog.locator(".dialog-close").click();
+    await expect(page.locator("#view-title")).toBeFocused();
+  }
 });
 
 test("people separates included household identities and preserves profile navigation", async ({ page }) => {

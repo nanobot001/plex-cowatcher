@@ -252,7 +252,8 @@ export function buildRouter(
   });
   router.get("/api/artwork/:key", async (req, res, next) => {
     try {
-      await serveArtwork(req.params.key, res);
+      const variant = req.query.variant === "backdrop" ? "backdrop" : "poster";
+      await serveArtwork(req.params.key, res, variant);
     } catch (error) {
       next(error);
     }
@@ -494,41 +495,45 @@ export function buildRouter(
     }
   });
 
-  async function serveArtwork(rawKey: string, res: express.Response): Promise<void> {
+  type ArtworkVariant = "poster" | "backdrop";
+
+  async function serveArtwork(rawKey: string, res: express.Response, variant: ArtworkVariant = "poster"): Promise<void> {
     const decodedKey = decodeURIComponent(rawKey);
+    const cacheKey = `${variant}:${decodedKey}`;
 
-    const cachedUrl = artworkUrlCache.get(decodedKey);
+    const cachedUrl = artworkUrlCache.get(cacheKey);
     if (cachedUrl) {
-      await proxyArtworkSource(cachedUrl, res);
+      await proxyArtworkSource(cachedUrl, res, variant);
       return;
     }
 
-    const localSource = await resolveLocalArtworkSource(decodedKey);
+    const localSource = variant === "poster" ? await resolveLocalArtworkSource(decodedKey) : null;
     if (localSource) {
-      artworkUrlCache.set(decodedKey, localSource);
-      await proxyArtworkSource(localSource, res);
+      artworkUrlCache.set(cacheKey, localSource);
+      await proxyArtworkSource(localSource, res, variant);
       return;
     }
 
-    const remoteSource = await resolvePlexArtworkSource(decodedKey);
+    const remoteSource = await resolvePlexArtworkSource(decodedKey, variant);
     if (remoteSource) {
-      artworkUrlCache.set(decodedKey, remoteSource);
-      await proxyArtworkSource(remoteSource, res);
+      artworkUrlCache.set(cacheKey, remoteSource);
+      await proxyArtworkSource(remoteSource, res, variant);
       return;
     }
 
     const audiobookRatingKey = resolveAudiobookRatingKey(decodedKey);
     if (audiobookRatingKey && audiobookRatingKey !== decodedKey) {
-      const cachedFallback = artworkUrlCache.get(audiobookRatingKey);
+      const fallbackCacheKey = `${variant}:${audiobookRatingKey}`;
+      const cachedFallback = artworkUrlCache.get(fallbackCacheKey);
       if (cachedFallback) {
-        await proxyArtworkSource(cachedFallback, res);
+        await proxyArtworkSource(cachedFallback, res, variant);
         return;
       }
-      const fallbackRemoteSource = await resolvePlexArtworkSource(audiobookRatingKey);
+      const fallbackRemoteSource = await resolvePlexArtworkSource(audiobookRatingKey, variant);
       if (fallbackRemoteSource) {
-        artworkUrlCache.set(audiobookRatingKey, fallbackRemoteSource);
-        artworkUrlCache.set(decodedKey, fallbackRemoteSource);
-        await proxyArtworkSource(fallbackRemoteSource, res);
+        artworkUrlCache.set(fallbackCacheKey, fallbackRemoteSource);
+        artworkUrlCache.set(cacheKey, fallbackRemoteSource);
+        await proxyArtworkSource(fallbackRemoteSource, res, variant);
         return;
       }
     }
@@ -609,7 +614,7 @@ export function buildRouter(
     return catalogRow?.rating_key ?? null;
   }
 
-  async function resolvePlexArtworkSource(artworkKey: string): Promise<string | null> {
+  async function resolvePlexArtworkSource(artworkKey: string, variant: ArtworkVariant = "poster"): Promise<string | null> {
     const key = artworkKey.startsWith("audiobook:") ? artworkKey.slice("audiobook:".length) : artworkKey;
     let metadata: Awaited<ReturnType<PlexAdapter["getRichMetadataByRatingKey"]>> | null = null;
 
@@ -620,18 +625,20 @@ export function buildRouter(
       return null;
     }
 
-    const source = metadata.thumb ?? metadata.parentThumb ?? metadata.grandparentThumb ?? metadata.art ?? metadata.parentArt ?? metadata.grandparentArt;
+    const source = variant === "backdrop"
+      ? metadata.art ?? metadata.parentArt ?? metadata.grandparentArt
+      : metadata.thumb ?? metadata.parentThumb ?? metadata.grandparentThumb;
     if (!source) return null;
-    return normalizeArtworkSource(source);
+    return normalizeArtworkSource(source, variant);
   }
 
-  function normalizeArtworkSource(source: string): string {
+  function normalizeArtworkSource(source: string, variant: ArtworkVariant = "poster"): string {
     if (/^data:/i.test(source) || /^https?:\/\//i.test(source)) {
       return source;
     }
     const transcodeUrl = new URL("/photo/:/transcode", appConfig.PLEX_BASE_URL);
-    transcodeUrl.searchParams.set("width", "300");
-    transcodeUrl.searchParams.set("height", "450");
+    transcodeUrl.searchParams.set("width", variant === "backdrop" ? "1440" : "300");
+    transcodeUrl.searchParams.set("height", variant === "backdrop" ? "630" : "450");
     transcodeUrl.searchParams.set("minSize", "1");
     transcodeUrl.searchParams.set("upscale", "1");
     transcodeUrl.searchParams.set("url", source);
@@ -641,11 +648,11 @@ export function buildRouter(
     return transcodeUrl.toString();
   }
 
-  async function proxyArtworkSource(sourceUrl: string, res: express.Response): Promise<void> {
+  async function proxyArtworkSource(sourceUrl: string, res: express.Response, variant: ArtworkVariant = "poster"): Promise<void> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
     try {
-      const response = await fetch(normalizeArtworkSource(sourceUrl), { signal: controller.signal });
+      const response = await fetch(normalizeArtworkSource(sourceUrl, variant), { signal: controller.signal });
       if (!response.ok) {
         res.status(response.status === 404 ? 404 : 502).end();
         return;

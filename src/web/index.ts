@@ -25,7 +25,7 @@ export function registerWebRoutes(router: Router): void {
         <div class="dashboard-main">
           <header class="dashboard-header">
             <div class="header-titles">
-              <h2 id="view-title" style="margin:0; font-size:1.8rem;">Overview</h2>
+              <h2 id="view-title" tabindex="-1" style="margin:0; font-size:1.8rem;">Overview</h2>
               <p id="view-subtitle" style="margin:4px 0 0; color:var(--text-muted); font-size:0.95rem;">Everything everyone is enjoying.</p>
             </div>
             <div id="stat-ribbon" class="stat-ribbon"></div>
@@ -47,16 +47,25 @@ export function registerWebRoutes(router: Router): void {
           <p id="active-filters" class="active-filters"></p>
           <div id="dashboard-content"></div>
         </div>
-        <dialog id="detail-dialog">
-          <button class="dialog-close" formmethod="dialog">&times;</button>
-          <div id="detail-content"></div>
+        <dialog id="detail-dialog" aria-labelledby="detail-workspace-heading" aria-describedby="detail-workspace-subtitle">
+          <section class="detail-workspace-shell" data-testid="detail-workspace">
+            <header class="detail-workspace-header">
+              <div class="detail-workspace-heading-copy">
+                <p class="eyebrow" id="detail-workspace-eyebrow">Media detail</p>
+                <h2 id="detail-workspace-heading">Loading detail</h2>
+                <p id="detail-workspace-subtitle" hidden></p>
+              </div>
+              <button type="button" class="dialog-close" aria-label="Close media detail">&times;</button>
+            </header>
+            <div id="detail-content" class="detail-workspace-scroll" data-testid="detail-workspace-scroll"></div>
+          </section>
         </dialog>
         <dialog id="progress-dialog">
           <button class="dialog-close" formmethod="dialog">&times;</button>
           <div id="progress-content"></div>
         </dialog>
       </div>
-      <script src="/static/dashboard.js?v=3-2n-6c"></script>
+      <script src="/static/dashboard.js?v=3-2n-6e-2-layout"></script>
     `));
   });
 
@@ -722,7 +731,7 @@ function renderPage(title: string, body: string): string {
       <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
       <link rel="apple-touch-icon" href="/static/icon.svg">
       <title>${title} - Plex Co-Watch Sync</title>
-      <link rel="stylesheet" href="/static/styles.css?v=3-2n-6c">
+      <link rel="stylesheet" href="/static/styles.css?v=3-2n-6e-2-layout">
       <script>
         if ('serviceWorker' in navigator) {
           window.addEventListener('load', () => {
