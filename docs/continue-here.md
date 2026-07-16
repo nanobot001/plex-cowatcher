@@ -16,9 +16,10 @@ Current state:
 - The 3-2n-5d-3 recurring-worker enablement decision remains separately pending; this detail-workspace work does not imply that automatic audiobook proof was enabled.
 - Block 3-2n-6E-3 is implemented and verified. Progress now opens the canonical shared detail workspace; `#progress-dialog`, its duplicate renderer/CSS, and browser `/progress/expand` reads are retired. Canonical `detail` URLs are generated, legacy `progressDetail`/`selected` URLs still restore and normalize, and the deterministic/live gates passed.
 - A new corrective block, **3-2n-6E-3A: Replay Semantics And Session Provenance** (`docs/blocks/block-3-2n-6e-3a-replay-semantics-and-session-provenance.md`), is now planned after 6E-3 and before 6D. It will stop raw same-day start/stop observations from being labeled `repeated`, distinguish sessions and local viewing days, and require genuine replay evidence.
+- A follow-on corrective block, **3-2n-6E-3B: On-Demand Plex Metadata And Artwork Refresh** (`docs/blocks/block-3-2n-6e-3b-on-demand-plex-metadata-and-artwork-refresh.md`), is now planned after 6E-3A and before 6D. It will add a title-scoped shared-detail refresh from Plex so changed artwork/metadata becomes visible without restarting CoWatcher or refreshing an entire library.
 
 Next step:
-- Implement **Block 3-2n-6E-3A: Replay Semantics And Session Provenance** (`docs/blocks/block-3-2n-6e-3a-replay-semantics-and-session-provenance.md`) next, then begin 6D. Preserve the verified 6E-2D hero, Audiobook summary contract, and the shared 6E-3 detail presenter seam.
+- Implement **Block 3-2n-6E-3A: Replay Semantics And Session Provenance** (`docs/blocks/block-3-2n-6e-3a-replay-semantics-and-session-provenance.md`) next, then **6E-3B: On-Demand Plex Metadata And Artwork Refresh** (`docs/blocks/block-3-2n-6e-3b-on-demand-plex-metadata-and-artwork-refresh.md`) before beginning 6D. Preserve the verified 6E-2D hero, Audiobook summary contract, and the shared 6E-3 detail presenter seam.
 
 ## 2026-07-12
 

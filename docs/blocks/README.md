@@ -64,6 +64,7 @@ Corrective sequence:
    6. `completed/block-3-2n-6e-2d-detail-presentation-and-summary-parity.md` - implemented and verified; improves hero readability/responsive crop safety and aligns verified Audiobook summaries with the expanded chapter state.
    7. `completed/block-3-2n-6e-3-progress-migration-and-regression.md` - implemented and verified; Progress now uses the shared canonical detail workspace with legacy URL compatibility and parity coverage.
    8. `block-3-2n-6e-3a-replay-semantics-and-session-provenance.md` - planned corrective block after 6E-3; separate raw observations, sessions, viewing days, and genuine replays before 6D consumes progress truth.
+   9. `block-3-2n-6e-3b-on-demand-plex-metadata-and-artwork-refresh.md` - planned corrective block after 6E-3A; add title-scoped CoWatcher refresh from Plex without whole-library refreshes or service restarts.
 29. `block-3-2n-6d-audiobook-resume-context.md` - planned umbrella; do not implement directly. Turn source-backed audiobook history stops into private bounded transcript context and a useful resume modal after 6E establishes the shared Audiobook presenter.
    1. `block-3-2n-6d-1-bounded-resume-transcription-contract.md` - add and verify the separate `audiobook` project's bounded read-only transcription command.
    2. `block-3-2n-6d-2-trusted-resume-adapter-and-state.md` - add CoWatcher's bounded trusted adapter and revision-safe durable job/result state without automatic execution.
