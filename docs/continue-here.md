@@ -1,6 +1,6 @@
 # Continue Here
 
-## 2026-07-15
+## 2026-07-16
 
 Current state:
 - Block 3-2n-6E-1 is implemented and verified, providing the canonical detail identity, workspace read contract, and lazy hierarchy route.
@@ -15,11 +15,12 @@ Current state:
 - The 6E-2D gate passed with 110 service tests and 51 dashboard regression cases plus one intentional skip. The live verified Audiobook canary `audiobook:73` returned `34 of 62` chapters and matched 34 watched/repeated chapters in the expanded hierarchy. Production was restarted and `npm run verify:live-dashboard` passed.
 - The 3-2n-5d-3 recurring-worker enablement decision remains separately pending; this detail-workspace work does not imply that automatic audiobook proof was enabled.
 - Block 3-2n-6E-3 is implemented and verified. Progress now opens the canonical shared detail workspace; `#progress-dialog`, its duplicate renderer/CSS, and browser `/progress/expand` reads are retired. Canonical `detail` URLs are generated, legacy `progressDetail`/`selected` URLs still restore and normalize, and the deterministic/live gates passed.
-- A new corrective block, **3-2n-6E-3A: Replay Semantics And Session Provenance** (`docs/blocks/block-3-2n-6e-3a-replay-semantics-and-session-provenance.md`), is now planned after 6E-3 and before 6D. It will stop raw same-day start/stop observations from being labeled `repeated`, distinguish sessions and local viewing days, and require genuine replay evidence.
+- Block **3-2n-6E-3A: Replay Semantics And Session Provenance** (`docs/blocks/completed/block-3-2n-6e-3a-replay-semantics-and-session-provenance.md`) is implemented and verified. One shared evaluator now separates observations, two-hour reconstructed sessions, household-local viewing days, and completed-session replays across TV, Classic TV, Anime, Movie, verified Audiobook chapters, unverified Audiobook tracks/files, Progress, and shared detail. Compatibility fields remain additive, ambiguous and partial evidence stays non-repeated, and raw book observations are not multiplied when they map onto several verified chapters.
+- The 6E-3A deterministic gate passed with 113 service/integration tests and 53 dashboard regression cases plus one intentional viewport-matrix skip, including API and visible watcher-lane proof that two same-session completed observations remain one session and zero replays. Tool contracts passed, production was rebuilt/restarted under PM2, and `npm run verify:live-dashboard` passed. A separate read-only live canary found all 150 returned Progress items carrying the explicit replay fields and zero false `repeated` rows across 434 verified-audiobook watcher-evidence rows.
 - A follow-on corrective block, **3-2n-6E-3B: On-Demand Plex Metadata And Artwork Refresh** (`docs/blocks/block-3-2n-6e-3b-on-demand-plex-metadata-and-artwork-refresh.md`), is now planned after 6E-3A and before 6D. It will add a title-scoped shared-detail refresh from Plex so changed artwork/metadata becomes visible without restarting CoWatcher or refreshing an entire library.
 
 Next step:
-- Implement **Block 3-2n-6E-3A: Replay Semantics And Session Provenance** (`docs/blocks/block-3-2n-6e-3a-replay-semantics-and-session-provenance.md`) next, then **6E-3B: On-Demand Plex Metadata And Artwork Refresh** (`docs/blocks/block-3-2n-6e-3b-on-demand-plex-metadata-and-artwork-refresh.md`) before beginning 6D. Preserve the verified 6E-2D hero, Audiobook summary contract, and the shared 6E-3 detail presenter seam.
+- Implement **6E-3B: On-Demand Plex Metadata And Artwork Refresh** (`docs/blocks/block-3-2n-6e-3b-on-demand-plex-metadata-and-artwork-refresh.md`) next before beginning 6D. Preserve the verified replay/session contract, 6E-2D hero, Audiobook summary contract, and shared detail presenter seam.
 
 ## 2026-07-12
 

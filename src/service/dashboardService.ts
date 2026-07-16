@@ -1,9 +1,10 @@
 import { z } from "zod";
 import type { Db } from "../db/database.js";
-import type { DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket, ProgressHierarchyExpansion, ProgressNodeState, ProgressNodeStateSource, DashboardDetailIdentity, DashboardDetailIdentityInput, DashboardDetailResolution, DashboardDetailWorkspaceResult, DashboardDetailWorkspaceHierarchyResult, DashboardMovieHistory, DashboardMovieHistoryRow } from "../types/api.js";
+import type { DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket, ProgressHierarchyExpansion, ProgressNodeState, ProgressNodeStateSource, ProgressWatcherEvidence, DashboardDetailIdentity, DashboardDetailIdentityInput, DashboardDetailResolution, DashboardDetailWorkspaceResult, DashboardDetailWorkspaceHierarchyResult, DashboardMovieHistory, DashboardMovieHistoryRow } from "../types/api.js";
 import { CowatchingIntelligenceService } from "./cowatchingIntelligenceService.js";
 import { CowatchAdjudicationService } from "./cowatchAdjudicationService.js";
 import { buildDashboardArtworkDescriptor, type DashboardArtworkDescriptor } from "./artworkService.js";
+import { evaluateReplaySemantics, type ReplayObservation, type ReplaySemantics } from "./replaySemantics.js";
 
 const HOUSEHOLD_CATEGORIES = ["movie", "tv", "classic_tv", "anime", "audiobook"] as const;
 const SUMMARY_SAMPLE_LIMIT = 500;
@@ -82,7 +83,7 @@ type AudiobookChapterProgressSnapshot = {
     endOffsetMs?: number;
     duration: number;
     watchedStates: Record<string, ProgressNodeState>;
-    watcherEvidence: Array<{ userId: number | null; displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number; stateSource?: ProgressNodeStateSource; partialPosition?: number }>;
+    watcherEvidence: ProgressWatcherEvidence[];
     stateSources: Record<string, ProgressNodeStateSource>;
     partialPositions: Record<string, number>;
     sourceType?: "audiobook_tool";
@@ -95,7 +96,8 @@ type AudiobookChapterProgressSnapshot = {
   distinctCompleted: number;
   currentChapterIndex?: number | null;
   currentProgressPercent?: number | null;
-  peopleStats: Map<string, { distinctItems: number; distinctCompleted: number; partials: number }>;
+  replaySemantics: ReplaySemantics;
+  peopleStats: Map<string, { distinctItems: number; distinctCompleted: number; partials: number; observationCount: number; sessionCount: number; viewingDayCount: number; replayCount: number }>;
 };
 
 type PeopleWindow = {
@@ -109,6 +111,22 @@ type PeopleWindow = {
   heatmapTruncated: boolean;
   defaulted: boolean;
 };
+
+function emptyReplaySemantics(): ReplaySemantics {
+  return { observationCount: 0, sessionCount: 0, viewingDayCount: 0, replayCount: 0, replayReason: null, latestObservedAt: null };
+}
+
+function addReplaySemantics(target: ReplaySemantics, source: ReplaySemantics): ReplaySemantics {
+  target.observationCount += source.observationCount;
+  target.sessionCount += source.sessionCount;
+  target.viewingDayCount += source.viewingDayCount;
+  target.replayCount += source.replayCount;
+  if (source.replayReason) target.replayReason = source.replayReason;
+  if (source.latestObservedAt && (!target.latestObservedAt || source.latestObservedAt > target.latestObservedAt)) {
+    target.latestObservedAt = source.latestObservedAt;
+  }
+  return target;
+}
 
 function nowMs(): number {
   return Date.now();
@@ -480,6 +498,17 @@ export class DashboardService {
         ? (movieHistory.summary.completedViewingDayCount > 0 ? 1 : 0)
         : Number(aggregate?.completed_items ?? 0);
       const progress = this.getDetailProgressSummary(identity, metadata, completedItems, latest?.percentComplete, audiobookProgress);
+      const activityReplaySemantics = this.aggregateReplaySemantics(activity).total;
+      const detailReplaySemantics: ReplaySemantics = movieHistory
+        ? {
+          observationCount: movieHistory.summary.rawObservationCount,
+          sessionCount: movieHistory.summary.sessionCount,
+          viewingDayCount: movieHistory.summary.viewingDayCount,
+          replayCount: movieHistory.summary.replayCount,
+          replayReason: movieHistory.summary.replayReason,
+          latestObservedAt: movieHistory.summary.latestViewedAt
+        }
+        : activityReplaySemantics;
 
       return {
         ok: true,
@@ -497,6 +526,11 @@ export class DashboardService {
           watcherPeople: watcherPeople.filter((person): person is DashboardWatcherPerson & { userId: number } => person.userId != null).map((person) => ({ id: person.userId, displayName: person.displayName })),
           playbackSummary: {
             plays: Number(aggregate?.plays ?? 0),
+            observationCount: detailReplaySemantics.observationCount,
+            sessionCount: detailReplaySemantics.sessionCount,
+            viewingDayCount: detailReplaySemantics.viewingDayCount,
+            replayCount: detailReplaySemantics.replayCount,
+            replayReason: detailReplaySemantics.replayReason,
             completedPlays: Number(aggregate?.completed_plays ?? 0),
             latestWatchedAt: aggregate?.latest_watched_at ?? null,
             observedMinutes: Math.round(Number(aggregate?.observed_duration ?? 0) / 60000)
@@ -648,11 +682,88 @@ export class DashboardService {
     return `${year}-${month}-${day}`;
   }
 
+  private replayProgressPercent(row: { percentComplete?: unknown; viewOffset?: unknown; duration?: unknown }): number | null {
+    const percent = Number(row.percentComplete);
+    if (Number.isFinite(percent)) return Math.max(0, Math.min(100, percent));
+    const offset = Number(row.viewOffset);
+    const duration = Number(row.duration);
+    if (!Number.isFinite(offset) || !Number.isFinite(duration) || offset < 0 || duration <= 0) return null;
+    return Math.max(0, Math.min(100, (offset / duration) * 100));
+  }
+
+  private replayObservation(
+    row: { watchedAt: string; completed?: unknown; percentComplete?: unknown; viewOffset?: unknown; duration?: unknown; sessionStartAt?: string; sessionEndAt?: string },
+    completed = Boolean(row.completed),
+    progressPercent = this.replayProgressPercent(row)
+  ): ReplayObservation {
+    return {
+      observedAt: row.watchedAt,
+      localDate: this.householdLocalDate(row.watchedAt),
+      completed,
+      progressPercent,
+      startedAt: row.sessionStartAt ?? null,
+      endedAt: row.sessionEndAt ?? null
+    };
+  }
+
+  private replaySemanticsForPlays(plays: DashboardActivityItem[]): ReplaySemantics {
+    return evaluateReplaySemantics(plays.map(play => this.replayObservation(play)));
+  }
+
+  private aggregateReplaySemantics(plays: DashboardActivityItem[]) {
+    const buckets = new Map<string, { userId: number; observations: DashboardActivityItem[] }>();
+    for (const play of plays) {
+      const key = `${play.userId}:${play.ratingKey}`;
+      const bucket = buckets.get(key) ?? { userId: play.userId, observations: [] };
+      bucket.observations.push(play);
+      buckets.set(key, bucket);
+    }
+
+    const total: ReplaySemantics = {
+      observationCount: 0,
+      sessionCount: 0,
+      viewingDayCount: 0,
+      replayCount: 0,
+      replayReason: null,
+      latestObservedAt: null
+    };
+    const byUserId = new Map<number, ReplaySemantics>();
+    for (const bucket of buckets.values()) {
+      const semantics = this.replaySemanticsForPlays(bucket.observations);
+      total.observationCount += semantics.observationCount;
+      total.sessionCount += semantics.sessionCount;
+      total.viewingDayCount += semantics.viewingDayCount;
+      total.replayCount += semantics.replayCount;
+      if (semantics.replayReason) total.replayReason = semantics.replayReason;
+      if (semantics.latestObservedAt && (!total.latestObservedAt || semantics.latestObservedAt > total.latestObservedAt)) {
+        total.latestObservedAt = semantics.latestObservedAt;
+      }
+      const user = byUserId.get(bucket.userId) ?? {
+        observationCount: 0,
+        sessionCount: 0,
+        viewingDayCount: 0,
+        replayCount: 0,
+        replayReason: null,
+        latestObservedAt: null
+      };
+      user.observationCount += semantics.observationCount;
+      user.sessionCount += semantics.sessionCount;
+      user.viewingDayCount += semantics.viewingDayCount;
+      user.replayCount += semantics.replayCount;
+      if (semantics.replayReason) user.replayReason = semantics.replayReason;
+      if (semantics.latestObservedAt && (!user.latestObservedAt || semantics.latestObservedAt > user.latestObservedAt)) {
+        user.latestObservedAt = semantics.latestObservedAt;
+      }
+      byUserId.set(bucket.userId, user);
+    }
+    return { total, byUserId };
+  }
+
   private getCanonicalMovieHistory(identity: DashboardDetailIdentity & { kind: "movie" }): DashboardMovieHistory {
     const canonicalGuid = this.currentMovieGuid(identity.ratingKey);
     const directRows = this.db.prepare(`
       SELECT po.id, po.user_id AS userId, po.rating_key AS ratingKey, po.watched_at AS watchedAt,
-        po.percent_complete AS percentComplete, po.completed,
+        po.percent_complete AS percentComplete, po.view_offset AS viewOffset, po.duration, po.completed,
         COALESCE(NULLIF(u.dashboard_alias, ''), u.plex_username) AS displayName
       FROM playback_observations po
       JOIN users u ON u.id = po.user_id
@@ -667,6 +778,8 @@ export class DashboardService {
     const groups = new Map<string, DashboardMovieHistoryRow>();
     const eligibleRatingKeys = new Set<string>([identity.ratingKey]);
     const evidenceTimestamps: string[] = [];
+    const directEvidenceByDay = new Map<string, ReplayObservation[]>();
+    const directEvidenceByUser = new Map<number, ReplayObservation[]>();
 
     for (const row of observations) {
       const userId = Number(row.userId);
@@ -675,6 +788,13 @@ export class DashboardService {
       evidenceTimestamps.push(row.watchedAt);
       const localDate = this.householdLocalDate(row.watchedAt);
       const key = `${userId}:${localDate}`;
+      const replayObservation = this.replayObservation(row, Number(row.completed) === 1);
+      const dayEvidence = directEvidenceByDay.get(key) ?? [];
+      dayEvidence.push(replayObservation);
+      directEvidenceByDay.set(key, dayEvidence);
+      const userEvidence = directEvidenceByUser.get(userId) ?? [];
+      userEvidence.push(replayObservation);
+      directEvidenceByUser.set(userId, userEvidence);
       const percentValue = row.percentComplete == null ? null : Number(row.percentComplete);
       const percent = Number.isFinite(percentValue) ? Math.max(0, Math.min(100, Math.round(percentValue as number))) : null;
       const existing = groups.get(key);
@@ -687,6 +807,8 @@ export class DashboardService {
           state: Number(row.completed) === 1 ? "completed" : "partial",
           strongestPercent: percent,
           observationCount: 1,
+          sessionCount: 0,
+          replayCount: 0,
           evidenceKind: "direct_observation"
         });
         continue;
@@ -695,6 +817,14 @@ export class DashboardService {
       if (row.watchedAt > existing.latestWatchedAt) existing.latestWatchedAt = row.watchedAt;
       if (Number(row.completed) === 1) existing.state = "completed";
       if (percent != null && (existing.strongestPercent == null || percent > existing.strongestPercent)) existing.strongestPercent = percent;
+    }
+
+    for (const [key, replayObservations] of directEvidenceByDay.entries()) {
+      const row = groups.get(key);
+      if (!row) continue;
+      const semantics = evaluateReplaySemantics(replayObservations);
+      row.sessionCount = semantics.sessionCount;
+      row.replayCount = semantics.replayCount;
     }
 
     const keys = [...eligibleRatingKeys].slice(0, 250);
@@ -731,6 +861,8 @@ export class DashboardService {
           state: "confirmed",
           strongestPercent: null,
           observationCount: 0,
+          sessionCount: 0,
+          replayCount: 0,
           evidenceKind: "attributed_confirmed"
         });
       }
@@ -749,6 +881,18 @@ export class DashboardService {
       .map(([id, displayName]) => ({ id, displayName }))
       .sort((a, b) => (peopleOrder.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (peopleOrder.get(b.id) ?? Number.MAX_SAFE_INTEGER) || a.displayName.localeCompare(b.displayName));
     const timestamps = evidenceTimestamps.sort();
+    const directReplaySummary = [...directEvidenceByUser.values()].reduce<ReplaySemantics>((summary, replayObservations) => {
+      const semantics = evaluateReplaySemantics(replayObservations);
+      summary.observationCount += semantics.observationCount;
+      summary.sessionCount += semantics.sessionCount;
+      summary.viewingDayCount += semantics.viewingDayCount;
+      summary.replayCount += semantics.replayCount;
+      if (semantics.replayReason) summary.replayReason = semantics.replayReason;
+      if (semantics.latestObservedAt && (!summary.latestObservedAt || semantics.latestObservedAt > summary.latestObservedAt)) {
+        summary.latestObservedAt = semantics.latestObservedAt;
+      }
+      return summary;
+    }, { observationCount: 0, sessionCount: 0, viewingDayCount: 0, replayCount: 0, replayReason: null, latestObservedAt: null });
     const catalog = this.db.prepare(`SELECT duration FROM content_catalog WHERE rating_key = ? LIMIT 1`).get(identity.ratingKey) as any;
     const duration = Number(catalog?.duration);
     return {
@@ -757,7 +901,10 @@ export class DashboardService {
       people,
       summary: {
         rawObservationCount: observations.length,
+        sessionCount: directReplaySummary.sessionCount,
         viewingDayCount: allRows.length,
+        replayCount: directReplaySummary.replayCount,
+        replayReason: directReplaySummary.replayReason,
         completedViewingDayCount: allRows.filter((row) => row.state === "completed").length,
         distinctViewerCount: people.length,
         firstViewedAt: timestamps[0] ?? null,
@@ -2244,18 +2391,30 @@ export class DashboardService {
           }
         }
 
+        const replayProjection = this.aggregateReplaySemantics(g.rawItems);
+        let sessionCount = replayProjection.total.sessionCount;
+        let viewingDayCount = replayProjection.total.viewingDayCount;
+        let replayCount = replayProjection.total.replayCount;
+
         // Build people array
-        let people: DashboardProgressPersonContext[] = [...g.peopleMap.values()].map((pCtx) => ({
-          userId: pCtx.userId,
-          plexUsername: pCtx.plexUsername,
-          displayName: pCtx.displayName,
-          plays: pCtx.plays,
-          completedPlays: pCtx.completedPlays,
-          partials: pCtx.partials,
-          distinctItems: pCtx.distinctItems.size,
-          distinctCompleted: pCtx.distinctCompleted.size,
-          latestWatchedAt: pCtx.latestWatchedAt
-        })).sort((a, b) => b.plays - a.plays || a.displayName.localeCompare(b.displayName));
+        let people: DashboardProgressPersonContext[] = [...g.peopleMap.values()].map((pCtx) => {
+          const semantics = replayProjection.byUserId.get(pCtx.userId) ?? emptyReplaySemantics();
+          return {
+            userId: pCtx.userId,
+            plexUsername: pCtx.plexUsername,
+            displayName: pCtx.displayName,
+            plays: pCtx.plays,
+            observationCount: pCtx.plays,
+            sessionCount: semantics.sessionCount,
+            viewingDayCount: semantics.viewingDayCount,
+            replayCount: semantics.replayCount,
+            completedPlays: pCtx.completedPlays,
+            partials: pCtx.partials,
+            distinctItems: pCtx.distinctItems.size,
+            distinctCompleted: pCtx.distinctCompleted.size,
+            latestWatchedAt: pCtx.latestWatchedAt
+          };
+        }).sort((a, b) => b.plays - a.plays || a.displayName.localeCompare(b.displayName));
 
         let distinctItems = g.distinctItems.size;
         let distinctCompleted = g.distinctCompleted.size;
@@ -2277,7 +2436,12 @@ export class DashboardService {
             partials = [...audiobookProgress.peopleStats.values()].reduce((sum, stat) => sum + stat.partials, 0);
             people = people.map((person) => {
               const stats = audiobookProgress.peopleStats.get(person.displayName);
-              return stats ? { ...person, distinctItems: stats.distinctItems, distinctCompleted: stats.distinctCompleted, partials: stats.partials } : person;
+              return stats ? {
+                ...person,
+                distinctItems: stats.distinctItems,
+                distinctCompleted: stats.distinctCompleted,
+                partials: stats.partials
+              } : person;
             });
           }
         }
@@ -2302,6 +2466,10 @@ export class DashboardService {
           distinctItems,
           distinctCompleted,
           plays: g.plays,
+          observationCount: g.plays,
+          sessionCount,
+          viewingDayCount,
+          replayCount,
           completedPlays: g.completedPlays,
           partials,
           observedMinutes: g.observedMinutes,
@@ -2321,6 +2489,10 @@ export class DashboardService {
           category: g.category,
           distinctItems: g.distinctItems.size,
           plays: g.plays,
+          observationCount: g.plays,
+          sessionCount,
+          viewingDayCount,
+          replayCount,
           completed: g.completedPlays,
           averagePercent,
           totalKnown,
@@ -2549,12 +2721,18 @@ export class DashboardService {
           AND COALESCE(target.dashboard_shown,target.enabled)=1
         ORDER BY ca.id DESC LIMIT 50
       `).all(...detailRatingKeys) : [];
+      const replayProjection = this.aggregateReplaySemantics(plays);
 
       return {
         item: first,
         plays,
         people,
-        repeatCount: Math.max(0, plays.length - 1),
+        observationCount: replayProjection.total.observationCount,
+        sessionCount: replayProjection.total.sessionCount,
+        viewingDayCount: replayProjection.total.viewingDayCount,
+        replayCount: replayProjection.total.replayCount,
+        replayReason: replayProjection.total.replayReason,
+        repeatCount: replayProjection.total.replayCount,
         catalog,
         audiobook,
         hierarchy,
@@ -2570,10 +2748,23 @@ export class DashboardService {
     plays: DashboardActivityItem[],
     stateSource?: ProgressNodeStateSource,
     partialPosition?: number,
-    userId: number | null = null
+    userId: number | null = null,
+    replaySemantics = this.replaySemanticsForPlays(plays)
   ) {
-    const latestObservedAt = plays.reduce<string | null>((latest, play) => !latest || play.watchedAt > latest ? play.watchedAt : latest, null);
-    return { userId, displayName, state, latestObservedAt, watchCount: plays.length, stateSource, partialPosition };
+    return {
+      userId,
+      displayName,
+      state,
+      latestObservedAt: replaySemantics.latestObservedAt,
+      watchCount: replaySemantics.observationCount,
+      observationCount: replaySemantics.observationCount,
+      sessionCount: replaySemantics.sessionCount,
+      viewingDayCount: replaySemantics.viewingDayCount,
+      replayCount: replaySemantics.replayCount,
+      replayReason: replaySemantics.replayReason,
+      stateSource,
+      partialPosition
+    };
   }
 
   private visibleDashboardPeople(): DashboardWatcherPerson[] {
@@ -2613,21 +2804,22 @@ export class DashboardService {
 
       const epPlays = episodePlays.get(ep.rating_key) || [];
       const watchedStates: { [displayName: string]: "watched" | "partial" | "repeated" | "unknown" } = {};
-      const watcherEvidence: Array<{ userId: number | null; displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number }> = [];
+      const watcherEvidence: ProgressWatcherEvidence[] = [];
 
       for (const person of people) {
         const userPlays = epPlays.filter(p => {
           const names = p.displayNames?.length ? p.displayNames : [p.displayName];
           return names.includes(person.displayName);
         });
+        const replaySemantics = this.replaySemanticsForPlays(userPlays);
         if (userPlays.length === 0) {
           watchedStates[person.displayName] = "unknown";
-        } else if (userPlays.length === 1) {
-          watchedStates[person.displayName] = userPlays[0].completed ? "watched" : "partial";
+        } else if (userPlays.some(play => play.completed)) {
+          watchedStates[person.displayName] = replaySemantics.replayCount > 0 ? "repeated" : "watched";
         } else {
-          watchedStates[person.displayName] = "repeated";
+          watchedStates[person.displayName] = "partial";
         }
-        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, watchedStates[person.displayName], userPlays, undefined, undefined, person.userId ?? null));
+        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, watchedStates[person.displayName], userPlays, undefined, undefined, person.userId ?? null, replaySemantics));
       }
 
       const seasonName = ep.parent_title || "Season 1";
@@ -2726,13 +2918,14 @@ export class DashboardService {
     const currentPosition = this.resolveCurrentAudiobookPosition(plays, cachedChapters, bookDurationMs);
     const completedChapters = new Set<number>();
     const touchedChapters = new Set<number>();
-    const peopleStats = new Map<string, { distinctItems: number; distinctCompleted: number; partials: number }>();
+    const replaySemantics = emptyReplaySemantics();
+    const peopleStats = new Map<string, { distinctItems: number; distinctCompleted: number; partials: number; observationCount: number; sessionCount: number; viewingDayCount: number; replayCount: number }>();
 
     const chapters = cachedChapters.map((chapter) => {
       const watchedStates: Record<string, ProgressNodeState> = {};
       const stateSources: Record<string, ProgressNodeStateSource> = {};
       const partialPositions: Record<string, number> = {};
-      const watcherEvidence: Array<{ userId: number | null; displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number; stateSource?: ProgressNodeStateSource; partialPosition?: number }> = [];
+      const watcherEvidence: ProgressWatcherEvidence[] = [];
 
       for (const person of people) {
         const userPlays = plays.filter((play) => {
@@ -2743,6 +2936,8 @@ export class DashboardService {
         const mappedStates: ProgressNodeState[] = [];
         const mappedSources: ProgressNodeStateSource[] = [];
         const mappedPartials: number[] = [];
+        const mappedPlays: DashboardActivityItem[] = [];
+        const mappedReplayObservations: ReplayObservation[] = [];
         let sawUncertainEvidence = false;
 
         for (const play of userPlays) {
@@ -2751,23 +2946,33 @@ export class DashboardService {
             if (offset.value >= chapter.end_offset_ms) {
               mappedStates.push("watched");
               mappedSources.push("verified_offset");
+              mappedPlays.push(play);
+              mappedReplayObservations.push(this.replayObservation(play, true, 100));
             } else if (offset.value > chapter.start_offset_ms && offset.value < chapter.end_offset_ms) {
               mappedStates.push("partial");
               mappedSources.push("verified_offset");
-              mappedPartials.push(Math.round(((offset.value - chapter.start_offset_ms) / (chapter.end_offset_ms - chapter.start_offset_ms)) * 100));
+              const chapterPercent = Math.round(((offset.value - chapter.start_offset_ms) / (chapter.end_offset_ms - chapter.start_offset_ms)) * 100);
+              mappedPartials.push(chapterPercent);
+              mappedPlays.push(play);
+              mappedReplayObservations.push(this.replayObservation(play, false, chapterPercent));
             }
           } else if (play.completed) {
             mappedStates.push("watched");
             mappedSources.push("book_completion");
+            mappedPlays.push(play);
+            mappedReplayObservations.push(this.replayObservation(play, true, 100));
           } else if (offset.status === "uncertain") {
             sawUncertainEvidence = true;
+            mappedPlays.push(play);
+            mappedReplayObservations.push(this.replayObservation(play, false, null));
           }
         }
 
+        const personReplaySemantics = evaluateReplaySemantics(mappedReplayObservations);
         let state: ProgressNodeState = "unknown";
         let stateSource: ProgressNodeStateSource = "none";
         const hasWatchedEvidence = mappedStates.includes("watched") || mappedStates.includes("repeated");
-        if (hasWatchedEvidence && mappedStates.length > 1) {
+        if (hasWatchedEvidence && personReplaySemantics.replayCount > 0) {
           state = "repeated";
           stateSource = mappedSources.includes("book_completion") ? "book_completion" : "verified_offset";
         } else if (hasWatchedEvidence) {
@@ -2786,7 +2991,8 @@ export class DashboardService {
         if (state === "partial" && mappedPartials.length > 0) {
           partialPositions[person.displayName] = Math.max(...mappedPartials);
         }
-        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, state, userPlays, stateSource, partialPositions[person.displayName], person.userId ?? null));
+        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, state, mappedPlays, stateSource, partialPositions[person.displayName], person.userId ?? null, personReplaySemantics));
+        addReplaySemantics(replaySemantics, personReplaySemantics);
 
         if (state === "watched" || state === "repeated" || state === "partial") {
           touchedChapters.add(chapter.chapter_index);
@@ -2795,10 +3001,14 @@ export class DashboardService {
           completedChapters.add(chapter.chapter_index);
         }
 
-        const stats = peopleStats.get(person.displayName) ?? { distinctItems: 0, distinctCompleted: 0, partials: 0 };
+        const stats = peopleStats.get(person.displayName) ?? { distinctItems: 0, distinctCompleted: 0, partials: 0, observationCount: 0, sessionCount: 0, viewingDayCount: 0, replayCount: 0 };
         if (state === "watched" || state === "repeated" || state === "partial") stats.distinctItems += 1;
         if (state === "watched" || state === "repeated") stats.distinctCompleted += 1;
         if (state === "partial" || state === "source_uncertain") stats.partials += 1;
+        stats.observationCount += personReplaySemantics.observationCount;
+        stats.sessionCount += personReplaySemantics.sessionCount;
+        stats.viewingDayCount += personReplaySemantics.viewingDayCount;
+        stats.replayCount += personReplaySemantics.replayCount;
         peopleStats.set(person.displayName, stats);
       }
 
@@ -2829,6 +3039,7 @@ export class DashboardService {
       distinctCompleted: completedChapters.size,
       currentChapterIndex: currentPosition?.chapterIndex ?? null,
       currentProgressPercent: currentPosition?.progressPercent ?? null,
+      replaySemantics,
       peopleStats
     };
   }
@@ -2897,36 +3108,40 @@ export class DashboardService {
 
     const completedTracks = new Set<string>();
     const touchedTracks = new Set<string>();
-    const peopleStats = new Map<string, { distinctItems: number; distinctCompleted: number; partials: number }>();
+    const replaySemantics = emptyReplaySemantics();
+    const peopleStats = new Map<string, { distinctItems: number; distinctCompleted: number; partials: number; observationCount: number; sessionCount: number; viewingDayCount: number; replayCount: number }>();
 
     const chapters = chaptersCatalog.map(ch => {
       const chPlays = chapterPlays.get(ch.rating_key) || [];
       const watchedStates: Record<string, ProgressNodeState> = {};
       const stateSources: Record<string, ProgressNodeStateSource> = {};
-      const watcherEvidence: Array<{ userId: number | null; displayName: string; state: ProgressNodeState; latestObservedAt: string | null; watchCount: number; stateSource?: ProgressNodeStateSource }> = [];
+      const watcherEvidence: ProgressWatcherEvidence[] = [];
 
       for (const person of people) {
         const userPlays = chPlays.filter(p => {
           const names = p.displayNames?.length ? p.displayNames : [p.displayName];
           return names.includes(person.displayName);
         });
+        const personReplaySemantics = this.replaySemanticsForPlays(userPlays);
         let state: ProgressNodeState = "unknown";
-        if (userPlays.length === 1) {
-          state = userPlays[0].completed ? "watched" : "partial";
-        } else if (userPlays.length > 1) {
-          state = "repeated";
-        }
+        if (userPlays.some(play => play.completed)) state = personReplaySemantics.replayCount > 0 ? "repeated" : "watched";
+        else if (userPlays.length > 0) state = "partial";
         watchedStates[person.displayName] = state;
         stateSources[person.displayName] = state === "unknown" ? "none" : "track_file";
-        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, state, userPlays, stateSources[person.displayName], undefined, person.userId ?? null));
+        watcherEvidence.push(this.progressWatcherEvidence(person.displayName, state, userPlays, stateSources[person.displayName], undefined, person.userId ?? null, personReplaySemantics));
+        addReplaySemantics(replaySemantics, personReplaySemantics);
 
         if (state === "watched" || state === "repeated" || state === "partial") touchedTracks.add(ch.rating_key);
         if (state === "watched" || state === "repeated") completedTracks.add(ch.rating_key);
 
-        const stats = peopleStats.get(person.displayName) ?? { distinctItems: 0, distinctCompleted: 0, partials: 0 };
+        const stats = peopleStats.get(person.displayName) ?? { distinctItems: 0, distinctCompleted: 0, partials: 0, observationCount: 0, sessionCount: 0, viewingDayCount: 0, replayCount: 0 };
         if (state === "watched" || state === "repeated" || state === "partial") stats.distinctItems += 1;
         if (state === "watched" || state === "repeated") stats.distinctCompleted += 1;
         if (state === "partial") stats.partials += 1;
+        stats.observationCount += personReplaySemantics.observationCount;
+        stats.sessionCount += personReplaySemantics.sessionCount;
+        stats.viewingDayCount += personReplaySemantics.viewingDayCount;
+        stats.replayCount += personReplaySemantics.replayCount;
         peopleStats.set(person.displayName, stats);
       }
 
@@ -2948,6 +3163,7 @@ export class DashboardService {
       chapters,
       distinctItems: touchedTracks.size,
       distinctCompleted: completedTracks.size,
+      replaySemantics,
       peopleStats
     };
   }

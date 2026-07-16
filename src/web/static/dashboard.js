@@ -802,8 +802,9 @@ function renderDetailContent(d) {
   const peopleList = d.isOptimistic
     ? (x.displayNames?.length ? x.displayNames : [x.displayName]).filter(Boolean).map(n => ({ displayName: n }))
     : d.people || [];
-  const playsCount = d.isOptimistic ? "..." : d.plays.length;
-  const repeatCount = d.isOptimistic ? "..." : d.repeatCount;
+  const observationCount = d.isOptimistic ? "..." : (d.observationCount ?? d.plays.length);
+  const sessionCount = d.isOptimistic ? "..." : (d.sessionCount ?? 0);
+  const replayCount = d.isOptimistic ? "..." : (d.replayCount ?? d.repeatCount ?? 0);
 
   const detailHtml = `
     <div class="detail-layout">
@@ -819,8 +820,8 @@ function renderDetailContent(d) {
           <dl class="detail-metadata">
             <dt>People</dt>
             <dd data-testid="detail-people">${peopleList.map(p=>esc(p.displayName)).join(", ")}</dd>
-            <dt>Plays</dt>
-            <dd>${playsCount} (${repeatCount} repeats)</dd>
+            <dt>Playback evidence</dt>
+            <dd>${observationCount} observations &middot; ${sessionCount} sessions &middot; ${replayCount} replays</dd>
             <dt>Library</dt>
             <dd>${esc(x.libraryName||"Unknown")}</dd>
             <dt>Consumed</dt>
@@ -946,9 +947,12 @@ function detailWatcherRow(node, person) {
   const state = row?.state || node?.watchedStates?.[person.displayName] || "unknown";
   const label = detailWatcherStateLabels[state] || "Unknown state";
   const latest = row?.latestObservedAt ? fmtDate(row.latestObservedAt) : "No observed time";
-  const watchCount = Number.isFinite(Number(row?.watchCount)) ? Number(row.watchCount) : 0;
-  const playLabel = `${watchCount} ${watchCount === 1 ? "play" : "plays"}`;
-  return { state, label, latest, playLabel, row };
+  const observationCount = Number.isFinite(Number(row?.observationCount)) ? Number(row.observationCount) : Number(row?.watchCount || 0);
+  const sessionCount = Number.isFinite(Number(row?.sessionCount)) ? Number(row.sessionCount) : 0;
+  const viewingDayCount = Number.isFinite(Number(row?.viewingDayCount)) ? Number(row.viewingDayCount) : 0;
+  const replayCount = Number.isFinite(Number(row?.replayCount)) ? Number(row.replayCount) : 0;
+  const evidenceLabel = `${observationCount} ${observationCount === 1 ? "observation" : "observations"} · ${sessionCount} ${sessionCount === 1 ? "session" : "sessions"} · ${viewingDayCount} viewing ${viewingDayCount === 1 ? "day" : "days"} · ${replayCount} ${replayCount === 1 ? "replay" : "replays"}`;
+  return { state, label, latest, evidenceLabel, row };
 }
 
 function detailWatcherLanes(node, workspace, label = "") {
@@ -957,9 +961,9 @@ function detailWatcherLanes(node, workspace, label = "") {
   const selectedId = detailWatcherSelection ? String(detailWatcherSelection) : "";
   const markers = roster.map((person, index) => {
     const detail = detailWatcherRow(node, person);
-    const summary = `${person.displayName}: ${detail.label}. Latest observed: ${detail.latest}. ${detail.playLabel}.`;
+    const summary = `${person.displayName}: ${detail.label}. Latest observed: ${detail.latest}. ${detail.evidenceLabel}.`;
     const selected = selectedId === person.id ? " is-selected" : "";
-    return `<button type="button" class="watcher-lane-marker ${esc(detail.state)}${selected}" data-detail-watcher-lane data-person-id="${esc(person.id)}" data-person-name="${esc(person.displayName)}" data-state="${esc(detail.state)}" aria-pressed="${selected ? "true" : "false"}" aria-label="${esc(summary)}" title="${esc(summary)}" tabindex="-1"><span class="watcher-state-icon" aria-hidden="true">${esc(detailWatcherStateIcons[detail.state] || "·")}</span><span class="watcher-lane-tooltip" role="tooltip">${esc(person.displayName)}<br><span>${esc(detail.label)} · ${esc(detail.latest)} · ${esc(detail.playLabel)}</span></span></button>`;
+    return `<button type="button" class="watcher-lane-marker ${esc(detail.state)}${selected}" data-detail-watcher-lane data-person-id="${esc(person.id)}" data-person-name="${esc(person.displayName)}" data-state="${esc(detail.state)}" aria-pressed="${selected ? "true" : "false"}" aria-label="${esc(summary)}" title="${esc(summary)}" tabindex="-1"><span class="watcher-state-icon" aria-hidden="true">${esc(detailWatcherStateIcons[detail.state] || "·")}</span><span class="watcher-lane-tooltip" role="tooltip">${esc(person.displayName)}<br><span>${esc(detail.label)} · ${esc(detail.latest)} · ${esc(detail.evidenceLabel)}</span></span></button>`;
   }).join("");
   return `<div class="detail-watcher-grid" data-testid="detail-watcher-grid" style="--watcher-count:${roster.length}"><div class="detail-tree-episode-label"><strong>${esc(label)}</strong></div>${markers}</div>`;
 }
@@ -1017,7 +1021,7 @@ function renderMovieDetailPresenter(workspace) {
         <span style="width:${percent == null ? 0 : percent}%"></span>
       </div>
       <div class="detail-movie-stat-grid">
-        <div><span class="eyebrow">Playback</span><strong>${esc(playback.plays ?? 0)} plays</strong><span>${esc(playback.completedPlays ?? 0)} completed</span></div>
+        <div><span class="eyebrow">Playback</span><strong>${esc(playback.observationCount ?? playback.plays ?? 0)} observations</strong><span>${esc(playback.sessionCount ?? 0)} ${Number(playback.sessionCount) === 1 ? "session" : "sessions"} · ${esc(playback.replayCount ?? 0)} ${Number(playback.replayCount) === 1 ? "replay" : "replays"}</span></div>
         <div><span class="eyebrow">Observed time</span><strong>${esc(fmtHourValue(playback.observedMinutes ?? 0))}</strong><span>from Plex evidence</span></div>
       </div>
       <dl class="detail-movie-facts">
@@ -1047,7 +1051,7 @@ function renderCanonicalMovieDetailPresenter(workspace) {
         : row.strongestPercent == null ? "Partial" : `${row.strongestPercent}% observed`;
     const evidence = row.evidenceKind === "attributed_confirmed"
       ? "Household confirmation"
-      : `${row.observationCount} ${row.observationCount === 1 ? "observation" : "observations"}`;
+      : `${row.observationCount} ${row.observationCount === 1 ? "observation" : "observations"} · ${row.sessionCount ?? 0} ${(row.sessionCount ?? 0) === 1 ? "session" : "sessions"}${Number(row.replayCount) > 0 ? ` · ${row.replayCount} ${Number(row.replayCount) === 1 ? "replay" : "replays"}` : ""}`;
     return `<div class="detail-movie-history-row" role="row" data-testid="detail-movie-history-row" data-evidence-kind="${esc(row.evidenceKind)}">
       <span role="cell" class="detail-movie-history-date">${esc(row.localDate)}</span>
       <strong role="cell" class="detail-movie-history-person">${esc(row.displayName)}</strong>
@@ -1063,7 +1067,7 @@ function renderCanonicalMovieDetailPresenter(workspace) {
     <section class="detail-movie-record" data-testid="detail-movie-history" aria-labelledby="detail-movie-history-heading">
       <span class="eyebrow">Household record</span>
       <h3 id="detail-movie-history-heading">Watch history</h3>
-      <p class="detail-movie-status"><strong>${esc(summary.viewingDayCount ?? 0)}</strong> viewing ${Number(summary.viewingDayCount) === 1 ? "day" : "days"} across <span data-testid="detail-people">${esc(people.length ? people.join(", ") : "no visible viewers")}</span>.</p>
+      <p class="detail-movie-status"><strong>${esc(summary.viewingDayCount ?? 0)}</strong> viewing ${Number(summary.viewingDayCount) === 1 ? "day" : "days"} · <strong>${esc(summary.replayCount ?? 0)}</strong> genuine ${Number(summary.replayCount) === 1 ? "replay" : "replays"} across <span data-testid="detail-people">${esc(people.length ? people.join(", ") : "no visible viewers")}</span>.</p>
       <div class="detail-movie-history-table" role="table" aria-label="Movie viewing days">
         <div class="detail-movie-history-row detail-movie-history-header" role="row">
           <span role="columnheader">Date</span><span role="columnheader">Person</span><span role="columnheader">Status</span><span role="columnheader">Evidence</span>
@@ -1079,7 +1083,7 @@ function renderCanonicalMovieDetailPresenter(workspace) {
     </section>
     <details class="detail-evidence-section detail-movie-provenance" data-testid="detail-movie-evidence">
       <summary>Evidence and identity</summary>
-      <p>${esc(summary.rawObservationCount ?? 0)} raw playback ${Number(summary.rawObservationCount) === 1 ? "observation" : "observations"} grouped into household-local viewing days. Same-title records are never merged; stale Plex keys qualify only through an exact non-empty GUID match.</p>
+      <p>${esc(summary.rawObservationCount ?? 0)} raw playback ${Number(summary.rawObservationCount) === 1 ? "observation" : "observations"} reconstructed into ${esc(summary.sessionCount ?? 0)} ${Number(summary.sessionCount) === 1 ? "session" : "sessions"}, ${esc(summary.viewingDayCount ?? 0)} household-local viewing ${Number(summary.viewingDayCount) === 1 ? "day" : "days"}, and ${esc(summary.replayCount ?? 0)} evidence-backed ${Number(summary.replayCount) === 1 ? "replay" : "replays"}. Same-title records are never merged; stale Plex keys qualify only through an exact non-empty GUID match.</p>
       <dl class="detail-workspace-metadata">
         <div><dt>First evidence</dt><dd>${esc(summary.firstViewedAt ? fmtDate(summary.firstViewedAt) : "Unavailable")}</dd></div>
         <div><dt>Latest evidence</dt><dd>${esc(summary.latestViewedAt ? fmtDate(summary.latestViewedAt) : "Unavailable")}</dd></div>
@@ -1183,8 +1187,8 @@ function renderDefaultDetailRail(workspace, people, playback, progress) {
       </section>
       <section class="detail-summary-card" data-testid="detail-workspace-playback" aria-label="Playback summary">
         <span class="eyebrow">Playback</span>
-        <strong>${esc(playback.plays)} plays Â· ${esc(playback.completedPlays)} completed</strong>
-        <span>${esc(fmtHourValue(playback.observedMinutes))} observed</span>
+        <strong>${esc(playback.observationCount ?? playback.plays)} observations Â· ${esc(playback.completedPlays)} completed</strong>
+        <span>${esc(playback.sessionCount ?? 0)} ${Number(playback.sessionCount) === 1 ? "session" : "sessions"} · ${esc(playback.replayCount ?? 0)} ${Number(playback.replayCount) === 1 ? "replay" : "replays"} · ${esc(fmtHourValue(playback.observedMinutes))} observed</span>
       </section>
     </div>
     <dl class="detail-workspace-metadata">
@@ -1238,8 +1242,8 @@ function renderDetailWorkspace(workspace, hierarchyState) {
           </section>
           <section class="detail-summary-card" data-testid="detail-workspace-playback" aria-label="Playback summary">
             <span class="eyebrow">Playback</span>
-            <strong>${esc(playback.plays)} plays · ${esc(playback.completedPlays)} completed</strong>
-            <span>${esc(fmtHourValue(playback.observedMinutes))} observed</span>
+            <strong>${esc(playback.observationCount ?? playback.plays)} observations · ${esc(playback.completedPlays)} completed</strong>
+            <span>${esc(playback.sessionCount ?? 0)} ${Number(playback.sessionCount) === 1 ? "session" : "sessions"} · ${esc(playback.replayCount ?? 0)} ${Number(playback.replayCount) === 1 ? "replay" : "replays"} · ${esc(fmtHourValue(playback.observedMinutes))} observed</span>
           </section>
           </div>
           <dl class="detail-workspace-metadata">
@@ -2055,7 +2059,7 @@ async function renderProgress() {
             <p class="progress-card-progress" data-testid="progress-summary">${esc(visibleProgress.text)}</p>
             ${progressMeterMarkup(visibleProgress, x.title)}
             <p class="progress-card-details">
-              ${x.distinctItems} distinct &middot; ${x.plays} play${x.plays > 1 ? "s" : ""} ${x.plays - x.distinctItems > 0 ? `(${x.plays - x.distinctItems} repeat${x.plays - x.distinctItems > 1 ? "s" : ""})` : ""}
+              ${x.distinctItems} distinct &middot; ${x.observationCount ?? x.plays} observation${Number(x.observationCount ?? x.plays) === 1 ? "" : "s"} &middot; ${x.sessionCount ?? 0} session${Number(x.sessionCount) === 1 ? "" : "s"} ${Number(x.replayCount) > 0 ? `&middot; ${x.replayCount} replay${Number(x.replayCount) === 1 ? "" : "s"}` : ""}
             </p>
             ${sourceLine ? `<p class="progress-card-source" data-testid="progress-source">${esc(sourceLine)}</p>` : ""}
             <p class="progress-card-observed">Observed: ${observedStr}</p>

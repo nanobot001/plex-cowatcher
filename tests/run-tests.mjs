@@ -20,6 +20,7 @@ import { MetadataService } from "../dist/service/metadataService.js";
 import { QueryService } from "../dist/service/queryService.js";
 import { SummaryService } from "../dist/service/summaryService.js";
 import { SessionService } from "../dist/service/sessionService.js";
+import { evaluateReplaySemantics } from "../dist/service/replaySemantics.js";
 import { CowatchingIntelligenceService } from "../dist/service/cowatchingIntelligenceService.js";
 import { AudiobookCatalogService, canonicalizeAudiobookSeriesTitle, isAudiobookMedia, parseAudiobookPath, parseAudnexusAsin, prepareAudiobookMetadata, normalizeAudiobookHierarchy } from "../dist/service/audiobookService.js";
 import { AudiobookBackfillService } from "../dist/service/audiobookBackfillService.js";
@@ -41,6 +42,57 @@ const tests = [];
 function test(name, fn) {
   tests.push({ name, fn });
 }
+
+test("replay semantics keep overlapping same-day observations in one session", () => {
+  const observations = [
+    { observedAt: "2026-07-16T10:30:00Z", localDate: "2026-07-16", completed: false, progressPercent: 30, startedAt: "2026-07-16T10:00:00Z", endedAt: "2026-07-16T10:30:00Z" },
+    { observedAt: "2026-07-16T10:45:00Z", localDate: "2026-07-16", completed: false, progressPercent: 55, startedAt: "2026-07-16T10:20:00Z", endedAt: "2026-07-16T10:45:00Z" },
+    { observedAt: "2026-07-16T11:00:00Z", localDate: "2026-07-16", completed: true, progressPercent: 100, startedAt: "2026-07-16T10:40:00Z", endedAt: "2026-07-16T11:00:00Z" }
+  ];
+  assert.deepEqual(evaluateReplaySemantics(observations), {
+    observationCount: 3,
+    sessionCount: 1,
+    viewingDayCount: 1,
+    replayCount: 0,
+    replayReason: null,
+    latestObservedAt: "2026-07-16T11:00:00Z"
+  });
+});
+
+test("replay semantics require separate completed sessions", () => {
+  const differentDays = evaluateReplaySemantics([
+    { observedAt: "2026-07-15T12:00:00Z", localDate: "2026-07-15", completed: true, progressPercent: 100 },
+    { observedAt: "2026-07-16T12:00:00Z", localDate: "2026-07-16", completed: true, progressPercent: 100 }
+  ]);
+  assert.equal(differentDays.sessionCount, 2);
+  assert.equal(differentDays.viewingDayCount, 2);
+  assert.equal(differentDays.replayCount, 1);
+  assert.equal(differentDays.replayReason, "different_viewing_day");
+
+  const sameDay = evaluateReplaySemantics([
+    { observedAt: "2026-07-16T08:00:00Z", localDate: "2026-07-16", completed: true, progressPercent: 100 },
+    { observedAt: "2026-07-16T14:00:00Z", localDate: "2026-07-16", completed: true, progressPercent: 100 }
+  ]);
+  assert.equal(sameDay.sessionCount, 2);
+  assert.equal(sameDay.replayCount, 1);
+  assert.equal(sameDay.replayReason, "same_day_completed_sessions");
+});
+
+test("replay semantics do not fabricate replays from partial or ambiguous gaps", () => {
+  const partials = evaluateReplaySemantics([
+    { observedAt: "2026-07-15T12:00:00Z", localDate: "2026-07-15", completed: false, progressPercent: 40 },
+    { observedAt: "2026-07-16T12:00:00Z", localDate: "2026-07-16", completed: false, progressPercent: 80 }
+  ]);
+  assert.equal(partials.sessionCount, 2);
+  assert.equal(partials.replayCount, 0);
+
+  const oneSession = evaluateReplaySemantics([
+    { observedAt: "2026-07-16T10:00:00Z", localDate: "2026-07-16", completed: true, progressPercent: 100 },
+    { observedAt: "2026-07-16T10:30:00Z", localDate: "2026-07-16", completed: true, progressPercent: 100 }
+  ]);
+  assert.equal(oneSession.sessionCount, 1);
+  assert.equal(oneSession.replayCount, 0);
+});
 
 test("watch completion accepts explicit completed rows", () => {
   assert.equal(countsAsCompleted({ completed: true }), true);
@@ -3036,14 +3088,20 @@ test("dashboard Movie history canonicalizes exact GUID keys into household-local
     assert.equal(history.canonicalGuid, guid);
     assert.equal(history.runtimeMinutes, 132);
     assert.equal(history.summary.rawObservationCount, 4);
+    assert.equal(history.summary.sessionCount, 4);
     assert.equal(history.summary.viewingDayCount, 3);
+    assert.equal(history.summary.replayCount, 0);
     assert.equal(history.summary.completedViewingDayCount, 3);
     assert.equal(history.summary.distinctViewerCount, 3);
     assert.deepEqual(history.people.map(person => person.displayName), ["Dorothy", "Garner", "Tony"]);
     assert.equal(history.rows.find(row => row.displayName === "Garner").observationCount, 2);
+    assert.equal(history.rows.find(row => row.displayName === "Garner").sessionCount, 2);
     assert.equal(history.rows.find(row => row.displayName === "Tony").localDate, "2021-12-31");
     assert.equal(result.data.people.some(person => person.displayName === "Secret"), false);
     assert.equal(result.data.playbackSummary.plays, 4);
+    assert.equal(result.data.playbackSummary.observationCount, 4);
+    assert.equal(result.data.playbackSummary.sessionCount, 4);
+    assert.equal(result.data.playbackSummary.replayCount, 0);
     assert.match(result.data.movieProfile.route, /movie-profile$/);
   });
 });
@@ -3431,7 +3489,7 @@ test("dashboard service meets latency budget under load", async () => {
   });
 });
 
-test("dashboard service progress contract verifies repeat plays, unknown totals, aliases, hidden users, and audiobook cover", () => {
+test("dashboard service progress contract separates observations, sessions, and replays", () => {
   withTestDb((db) => {
     seedUsers(db);
     // Prepare users
@@ -3465,7 +3523,7 @@ test("dashboard service progress contract verifies repeat plays, unknown totals,
       insert.run(u.id, key, gpKey, pKey, type, lib, title, showTitle, watchedAt, progress, duration, completed ? 1 : 0, watchedAt, watchedAt);
     };
 
-    // 1. Repeat completed plays: Tony plays Episode 1 twice (completed both times)
+    // 1. Duplicate same-session completion observations must not become a replay.
     addObs("Tony", "ep-1", "show-1", "season-1", "episode", "TV Shows", "Episode 1", "Great Show", 10, true, 100);
     addObs("Tony", "ep-1", "show-1", "season-1", "episode", "TV Shows", "Episode 1", "Great Show", 5, true, 100);
 
@@ -3506,11 +3564,18 @@ test("dashboard service progress contract verifies repeat plays, unknown totals,
     assert.equal(tvGroup.partials, 1);
     assert.equal(tvGroup.distinctItems, 2); // ep-1 and ep-2 (Viewer's ep-3 ignored)
     assert.equal(tvGroup.distinctCompleted, 1); // Only ep-1 completed (repeated completed plays did not inflate this!)
+    assert.equal(tvGroup.observationCount, 3);
+    assert.equal(tvGroup.sessionCount, 2);
+    assert.equal(tvGroup.viewingDayCount, 2);
+    assert.equal(tvGroup.replayCount, 0);
 
     // Verify hidden user exclusion and alias application in person context
     assert.equal(tvGroup.people.length, 1); // Only Tony is visible, Viewer excluded
     assert.equal(tvGroup.people[0].displayName, "Tony Alias");
     assert.equal(tvGroup.people[0].plays, 3);
+    assert.equal(tvGroup.people[0].observationCount, 3);
+    assert.equal(tvGroup.people[0].sessionCount, 2);
+    assert.equal(tvGroup.people[0].replayCount, 0);
     assert.equal(tvGroup.people[0].distinctItems, 2);
     assert.equal(tvGroup.people[0].distinctCompleted, 1);
 
@@ -3822,8 +3887,15 @@ test("verified audiobook chapter progress maps offsets, book completion, repeats
     assert.equal(tonyProgress.currentProgressPercent, 50);
     assert.equal(tonyProgress.distinctCompleted, 1);
     assert.equal(tonyProgress.distinctItems, 2);
+    assert.equal(tonyProgress.observationCount, 3);
+    assert.equal(tonyProgress.sessionCount, 1);
+    assert.equal(tonyProgress.viewingDayCount, 1);
+    assert.equal(tonyProgress.replayCount, 0);
     assert.equal(tonyProgress.people[0].distinctCompleted, 1);
     assert.equal(tonyProgress.people[0].partials, 1);
+    assert.equal(tonyProgress.people[0].observationCount, 3);
+    assert.equal(tonyProgress.people[0].sessionCount, 1);
+    assert.equal(tonyProgress.people[0].replayCount, 0);
 
     const expansion = dashboard.getProgressExpansion("audiobook:Audiobooks:30");
     assert.ok(expansion);
@@ -3837,8 +3909,11 @@ test("verified audiobook chapter progress maps offsets, book completion, repeats
 
     const [chapter1, chapter2, chapter3] = expansion.hierarchy.chapters;
     assert.equal(chapter1.chapterIndex, 1);
-    assert.equal(chapter1.watchedStates["Tony Alias"], "repeated");
+    assert.equal(chapter1.watchedStates["Tony Alias"], "watched");
     assert.equal(chapter1.stateSources["Tony Alias"], "verified_offset");
+    assert.equal(chapter1.watcherEvidence.find(row => row.displayName === "Tony Alias").observationCount, 3);
+    assert.equal(chapter1.watcherEvidence.find(row => row.displayName === "Tony Alias").sessionCount, 1);
+    assert.equal(chapter1.watcherEvidence.find(row => row.displayName === "Tony Alias").replayCount, 0);
     assert.equal(chapter2.watchedStates["Tony Alias"], "partial");
     assert.equal(chapter2.partialPositions["Tony Alias"], 50);
     assert.equal(chapter3.watchedStates["Tony Alias"], "unknown");
@@ -3846,6 +3921,16 @@ test("verified audiobook chapter progress maps offsets, book completion, repeats
     assert.equal(chapter3.stateSources["Ace"], "book_completion");
     assert.equal(chapter1.watchedStates["Justin"], "source_uncertain");
     assert.equal(chapter1.stateSources["Justin"], "source_uncertain");
+
+    insertObservation.run(1, '2026-07-07T10:45:00Z', 50, null, 60000, 0, '2026-07-07T10:45:00Z', '2026-07-07T10:45:00Z');
+    const replayExpansion = dashboard.getProgressExpansion("audiobook:Audiobooks:30");
+    const replayChapter = replayExpansion.hierarchy.chapters[0];
+    const replayEvidence = replayChapter.watcherEvidence.find(row => row.displayName === "Tony Alias");
+    assert.equal(replayChapter.watchedStates["Tony Alias"], "repeated");
+    assert.equal(replayEvidence.sessionCount, 2);
+    assert.equal(replayEvidence.viewingDayCount, 2);
+    assert.equal(replayEvidence.replayCount, 1);
+    assert.equal(replayEvidence.replayReason, "different_viewing_day");
   });
 });
 

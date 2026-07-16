@@ -1,7 +1,8 @@
 # Block 3-2n-6E-3A: Replay Semantics And Session Provenance
 
-> Status: Planned.
-> Result: Not implemented.
+> Status: Implemented and verified.
+> Result: Raw observations, reconstructed sessions, household-local viewing days, and evidence-backed replays are now separate across Progress and shared detail projections.
+> Verification: Completed 2026-07-16. `npm run verify:block` passed with 113 service/integration tests, 53 dashboard regression cases plus one intentional viewport-matrix skip, JavaScript syntax validation, and tool-contract verification. After the PM2 restart, `npm run verify:live-dashboard` passed.
 > Notes: Corrective block after 6E-3 and before 6D. Replace raw-observation-based “repeated” labels with source-honest session, viewing-day, and genuine replay semantics across Progress and shared detail surfaces.
 
 ## Goal
