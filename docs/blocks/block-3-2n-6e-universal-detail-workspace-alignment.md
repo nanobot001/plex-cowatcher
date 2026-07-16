@@ -6,8 +6,8 @@
 
 ## Child Block Sequence
 
-1. `block-3-2n-6e-1-canonical-detail-contract-and-entry-resolution.md`
-2. `block-3-2n-6e-2-shared-detail-shell-and-category-presenters.md`
+1. `completed/block-3-2n-6e-1-canonical-detail-contract-and-entry-resolution.md`
+2. `completed/block-3-2n-6e-2-shared-detail-shell-and-category-presenters.md`
 3. `block-3-2n-6e-3-progress-migration-and-regression.md`
 
 Implement the children in order. The umbrella is complete only after every child passes its own mandatory block gate.
