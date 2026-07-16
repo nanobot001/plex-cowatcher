@@ -14,9 +14,10 @@ Current state:
 - Block 3-2n-6E-2D is implemented and verified. The shared detail hero now uses a lighter contrast treatment, top-anchored (`center top`) focal positioning, and responsive sizing across the required viewport matrix. Verified Audiobook detail summaries reuse the chapter-aware snapshot used by the expanded hierarchy, while unverified books retain explicit Plex track/file evidence.
 - The 6E-2D gate passed with 110 service tests and 51 dashboard regression cases plus one intentional skip. The live verified Audiobook canary `audiobook:73` returned `34 of 62` chapters and matched 34 watched/repeated chapters in the expanded hierarchy. Production was restarted and `npm run verify:live-dashboard` passed.
 - The 3-2n-5d-3 recurring-worker enablement decision remains separately pending; this detail-workspace work does not imply that automatic audiobook proof was enabled.
+- A new corrective block, **3-2n-6E-3A: Replay Semantics And Session Provenance** (`docs/blocks/block-3-2n-6e-3a-replay-semantics-and-session-provenance.md`), is now planned after 6E-3 and before 6D. It will stop raw same-day start/stop observations from being labeled `repeated`, distinguish sessions and local viewing days, and require genuine replay evidence.
 
 Next step:
-- Implement **Block 3-2n-6E-3: Progress Migration And Cross-Surface Regression** (`docs/blocks/block-3-2n-6e-3-progress-migration-and-regression.md`) next. Preserve the verified 6E-2D hero and Audiobook summary contracts while migrating `progressDetail` and retiring `#progress-dialog`.
+- Implement **Block 3-2n-6E-3: Progress Migration And Cross-Surface Regression** (`docs/blocks/block-3-2n-6e-3-progress-migration-and-regression.md`) next, then **3-2n-6E-3A: Replay Semantics And Session Provenance** (`docs/blocks/block-3-2n-6e-3a-replay-semantics-and-session-provenance.md`) before starting 6D. Preserve the verified 6E-2D hero and Audiobook summary contracts while migrating `progressDetail`, retiring `#progress-dialog`, and correcting replay evidence semantics.
 
 ## 2026-07-12
 
@@ -29,7 +30,7 @@ Current state:
 
 Next step:
 - Resume the explicit recurring-worker enablement portion of **Block 3-2n-5d-3: Durable Proof Worker And Rollout** (`docs/blocks/block-3-2n-5d-3-durable-proof-worker-and-rollout.md`). Review the remaining pending and unsupported jobs, then enable only with an explicit rollout decision and rerun the live smoke gate.
-- After that rollout gate passes, implement **Block 3-2n-6E** children 6E-1 through 6E-3 first, beginning with **6E-1: Canonical Detail Contract And Entry Resolution** (`docs/blocks/block-3-2n-6e-1-canonical-detail-contract-and-entry-resolution.md`). The umbrella is `docs/blocks/block-3-2n-6e-universal-detail-workspace-alignment.md`, and the review is `docs/process/block-3-2n-6e-design-review.md`.
+- After that rollout gate passes, implement **Block 3-2n-6E** children 6E-1 through 6E-3 first, beginning with **6E-1: Canonical Detail Contract And Entry Resolution** (`docs/blocks/completed/block-3-2n-6e-1-canonical-detail-contract-and-entry-resolution.md`). The umbrella is `docs/blocks/block-3-2n-6e-universal-detail-workspace-alignment.md`, and the review is `docs/process/block-3-2n-6e-design-review.md`.
 - After 6E-3 passes, implement the planned **Block 3-2n-6D** children in order, beginning with **6D-1: Bounded Resume Transcription Contract** (`docs/blocks/block-3-2n-6d-1-bounded-resume-transcription-contract.md`). The umbrella is `docs/blocks/block-3-2n-6d-audiobook-resume-context.md`, and the pre-implementation review is `docs/process/block-3-2n-6d-design-review.md`. 6D-4 extends the shared 6E Audiobook presenter. The first release provides a private stopping-point excerpt plus chapter/position context; a true paraphrased summary remains a separately gated model/provider decision because Whisper alone cannot generate one.
 
 ## 2026-07-11

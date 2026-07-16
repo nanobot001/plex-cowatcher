@@ -19,9 +19,9 @@ Establish one trustworthy private artwork contract across all Plex-backed media 
 
 ## Child Blocks
 
-1. `block-3-2n-6e-2c1-canonical-artwork-resolver-and-proxy-freshness.md`
-2. `block-3-2n-6e-2c2-dashboard-wide-artwork-adoption-and-compatibility.md`
-3. `block-3-2n-6e-2c3-canonical-movie-history-and-enriched-detail.md`
+1. `completed/block-3-2n-6e-2c1-canonical-artwork-resolver-and-proxy-freshness.md`
+2. `completed/block-3-2n-6e-2c2-dashboard-wide-artwork-adoption-and-compatibility.md`
+3. `completed/block-3-2n-6e-2c3-canonical-movie-history-and-enriched-detail.md`
 
 The artwork contract and expanded corrective sequence are complete and verified through 6E-2C3.
 
