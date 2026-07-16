@@ -14,10 +14,11 @@ Current state:
 - Block 3-2n-6E-2D is implemented and verified. The shared detail hero now uses a lighter contrast treatment, top-anchored (`center top`) focal positioning, and responsive sizing across the required viewport matrix. Verified Audiobook detail summaries reuse the chapter-aware snapshot used by the expanded hierarchy, while unverified books retain explicit Plex track/file evidence.
 - The 6E-2D gate passed with 110 service tests and 51 dashboard regression cases plus one intentional skip. The live verified Audiobook canary `audiobook:73` returned `34 of 62` chapters and matched 34 watched/repeated chapters in the expanded hierarchy. Production was restarted and `npm run verify:live-dashboard` passed.
 - The 3-2n-5d-3 recurring-worker enablement decision remains separately pending; this detail-workspace work does not imply that automatic audiobook proof was enabled.
+- Block 3-2n-6E-3 is implemented and verified. Progress now opens the canonical shared detail workspace; `#progress-dialog`, its duplicate renderer/CSS, and browser `/progress/expand` reads are retired. Canonical `detail` URLs are generated, legacy `progressDetail`/`selected` URLs still restore and normalize, and the deterministic/live gates passed.
 - A new corrective block, **3-2n-6E-3A: Replay Semantics And Session Provenance** (`docs/blocks/block-3-2n-6e-3a-replay-semantics-and-session-provenance.md`), is now planned after 6E-3 and before 6D. It will stop raw same-day start/stop observations from being labeled `repeated`, distinguish sessions and local viewing days, and require genuine replay evidence.
 
 Next step:
-- Implement **Block 3-2n-6E-3: Progress Migration And Cross-Surface Regression** (`docs/blocks/block-3-2n-6e-3-progress-migration-and-regression.md`) next, then **3-2n-6E-3A: Replay Semantics And Session Provenance** (`docs/blocks/block-3-2n-6e-3a-replay-semantics-and-session-provenance.md`) before starting 6D. Preserve the verified 6E-2D hero and Audiobook summary contracts while migrating `progressDetail`, retiring `#progress-dialog`, and correcting replay evidence semantics.
+- Implement **Block 3-2n-6E-3A: Replay Semantics And Session Provenance** (`docs/blocks/block-3-2n-6e-3a-replay-semantics-and-session-provenance.md`) next, then begin 6D. Preserve the verified 6E-2D hero, Audiobook summary contract, and the shared 6E-3 detail presenter seam.
 
 ## 2026-07-12
 

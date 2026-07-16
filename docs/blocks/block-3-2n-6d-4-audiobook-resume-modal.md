@@ -12,6 +12,7 @@ Replace the audiobook modal's default wall of chapter rows with a concise, attri
 
 - Blocks 6D-1 through 6D-3 are implemented and verified, including persisted revision-valid fixture/state.
 - Block 6E-3 is implemented and verified. This block extends the shared canonical Audiobook presenter and one physical detail dialog; it must not recreate a Progress-only route, dialog, shell, or hierarchy renderer.
+- Extension seam: add the bounded resume projection to the canonical Audiobook detail workspace response and render it inside the existing `detail-presenter-audiobook` path. Keep the existing `detail-workspace-scroll`, hierarchy lazy route, and canonical `detail`/legacy URL lifecycle intact.
 
 ## Scope
 

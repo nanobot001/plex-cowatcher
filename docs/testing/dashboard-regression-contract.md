@@ -51,8 +51,8 @@ Protect durable dashboard behavior across numbered blocks without freezing visua
 - Progress watcher coverage uses stable hierarchy, season/chapter/track, watcher summary, watcher dot, overflow control, and roster selectors. Completed counts use only watched/repeated evidence over visible household members; partial, source-uncertain, and unknown evidence remains distinct. Dots and roster controls are keyboard- and touch-accessible without toggling the expanded card.
 - Recently Completed is a visible full-width Progress section below Continue Watching and Recently Active.
 - Audiobook Progress fixtures must include both verified cached chapters and unverified Plex track/file fallback evidence; browser copy may say chapters only for verified cached boundaries.
-- Known Progress totals expose visible completed/total/unit/percentage summary text; unknown totals remain explicit and never fabricate a percentage. The Progress modal repeats that summary with source, plays, observed time, latest activity, and visible participants.
-- At desktop width the Progress modal is materially wider than the shared 680px detail baseline while remaining viewport-bounded; tablet/narrow presentation stays fullscreen without horizontal overflow or competing outer/inner scroll regions.
+- Known Progress totals expose visible completed/total/unit/percentage summary text; unknown totals remain explicit and never fabricate a percentage. The canonical detail workspace repeats the same progress summary with source, plays, observed time, latest activity, and visible participants.
+- Progress opens the same viewport-bounded, content-first detail workspace as every other surface; it does not have a separate width, shell, scroll owner, or modal ID.
 - Unknown totals display explicit unknown stats without falsifying percentages or indicator fills.
 - Movies display progress/repeat evidence without invented TV or Audiobook season/chapter summaries.
 - Desktop and 390px layouts do not create page-level horizontal overflow or page errors in covered journeys.

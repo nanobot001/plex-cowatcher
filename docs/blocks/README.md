@@ -6,7 +6,7 @@ Blocks are numbered, bounded AI-buildable tickets for code, logic, docs, folder 
 
 The project is currently in the Phase 3 refinement set. A live Playwright review found that the completed 3-2f redesign did not meet its intended usability, bounded-rendering, or responsive outcome. The immediate next selected block is:
 
-- `block-3-2n-6e-3-progress-migration-and-regression.md` - move Progress onto the shared detail workspace and lock cross-surface parity before the replay-semantics correction and 6D.
+- `block-3-2n-6e-3a-replay-semantics-and-session-provenance.md` - correct replay/session semantics before 6D consumes Progress truth.
 
 Phase 3 builds on the completed playback-intelligence foundation with domain-specific refinement, richer operator ergonomics, and reporting.
 Blocks 3-2a through 3-2e form one sequential dashboard implementation path:
@@ -62,7 +62,7 @@ Corrective sequence:
       2. `completed/block-3-2n-6e-2c2-dashboard-wide-artwork-adoption-and-compatibility.md` - implemented and verified; adopts the canonical descriptor across every current artwork consumer with compatibility and reload regression coverage.
       3. `completed/block-3-2n-6e-2c3-canonical-movie-history-and-enriched-detail.md` - implemented and verified; joins exact-GUID stale-key Movie history, uses viewing-day evidence, de-duplicates Movie detail, and adds bounded lazy About enrichment.
    6. `completed/block-3-2n-6e-2d-detail-presentation-and-summary-parity.md` - implemented and verified; improves hero readability/responsive crop safety and aligns verified Audiobook summaries with the expanded chapter state.
-   7. `block-3-2n-6e-3-progress-migration-and-regression.md` - next planned block; migrate Progress, retire the duplicate dialog, and lock cross-surface parity after 6E-2D.
+   7. `completed/block-3-2n-6e-3-progress-migration-and-regression.md` - implemented and verified; Progress now uses the shared canonical detail workspace with legacy URL compatibility and parity coverage.
    8. `block-3-2n-6e-3a-replay-semantics-and-session-provenance.md` - planned corrective block after 6E-3; separate raw observations, sessions, viewing days, and genuine replays before 6D consumes progress truth.
 29. `block-3-2n-6d-audiobook-resume-context.md` - planned umbrella; do not implement directly. Turn source-backed audiobook history stops into private bounded transcript context and a useful resume modal after 6E establishes the shared Audiobook presenter.
    1. `block-3-2n-6d-1-bounded-resume-transcription-contract.md` - add and verify the separate `audiobook` project's bounded read-only transcription command.
@@ -73,7 +73,7 @@ Corrective sequence:
 
 Do not implement a later corrective block until the previous block's exit gate is recorded as passing. A later block must not conceal, waive, or silently absorb a failed earlier acceptance criterion.
 
-The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n code is implemented through 3-2n-5d-3, corrective 5D-2A plus the disabled Eric canary passed, and 6E-1/6E-2/6E-2A/6E-2B/6E-2C1/6E-2C2/6E-2C3/6E-2D are implemented and verified. Implement 6E-3, then 6E-3A replay/session semantics, before 6D-1 through 6D-4 and 3-2o. The explicit 5D-3 recurring-worker enablement decision remains pending. The pre-implementation reviews are `docs/process/block-3-2n-6e-design-review.md` and `docs/process/block-3-2n-6d-design-review.md`.
+The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n code is implemented through 3-2n-5d-3, corrective 5D-2A plus the disabled Eric canary passed, and 6E-1/6E-2/6E-2A/6E-2B/6E-2C1/6E-2C2/6E-2C3/6E-2D/6E-3 are implemented and verified. Implement 6E-3A replay/session semantics before 6D-1 through 6D-4 and 3-2o. The explicit 5D-3 recurring-worker enablement decision remains pending. The pre-implementation reviews are `docs/process/block-3-2n-6e-design-review.md` and `docs/process/block-3-2n-6d-design-review.md`.
 
 ## Umbrella Specifications
 

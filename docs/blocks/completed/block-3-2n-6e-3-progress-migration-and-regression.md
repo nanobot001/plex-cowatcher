@@ -1,8 +1,8 @@
 # Block 3-2n-6E-3: Progress Migration And Cross-Surface Regression
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Final child of 3-2n-6E. Move Progress onto the proven shared workspace, retire the duplicate dialog path, and lock universal detail parity before 6D-4 extends Audiobooks.
+> Status: Implemented.
+> Result: Verified.
+> Notes: Final child of 3-2n-6E. Progress now uses the canonical shared detail workspace, with legacy URL compatibility and cross-surface parity locked before 6D-4 extends the Audiobook presenter.
 
 ## Goal
 

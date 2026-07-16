@@ -60,12 +60,8 @@ export function registerWebRoutes(router: Router): void {
             <div id="detail-content" class="detail-workspace-scroll" data-testid="detail-workspace-scroll"></div>
           </section>
         </dialog>
-        <dialog id="progress-dialog">
-          <button class="dialog-close" formmethod="dialog">&times;</button>
-          <div id="progress-content"></div>
-        </dialog>
       </div>
-      <script src="/static/dashboard.js?v=3-2n-6e-2-layout"></script>
+      <script src="/static/dashboard.js?v=3-2n-6e-3-progress-workspace"></script>
     `));
   });
 
