@@ -8,6 +8,7 @@
 - Added the bounded Library category browser, corrected participant labels across cards and detail views, and introduced mandatory isolated Playwright regression and live dashboard verification gates for numbered blocks. (2026-07-03)
 - Added People co-watch attribution so confirmed shared viewing contributes separate observed and attributed totals, with restorable 7/30/90-day, all-time, and custom date windows plus an accessible heatmap legend. (2026-07-05)
 - Added planned dashboard follow-up blocks for audiobook progress correctness and compact lazy Progress evidence-map polish before the final accessibility/regression gate. (2026-07-09)
+- Corrected dashboard replay semantics so raw observations, reconstructed sessions, household-local viewing days, and genuine replays remain distinct across Progress, Movie history, episodic watcher lanes, and verified/unverified Audiobook evidence. (2026-07-16)
 
 ## [0.3.0] - 2026-06-27
 

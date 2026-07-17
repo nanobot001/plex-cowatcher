@@ -494,6 +494,47 @@ test("verified Audiobook detail summary matches the expanded chapter hierarchy",
   await expect(dialog.getByTestId("detail-workspace-progress")).not.toContainText("chapters");
 });
 
+test("same-session observations never become a replay across API and detail UI", async ({ page }) => {
+  const detailKey = "series:anime:anime-regression";
+  const baseResponse = await page.request.get("/api/dashboard/detail-workspace/" + encodeURIComponent(detailKey));
+  const baseBody = await baseResponse.json();
+  expect(baseResponse.status(), JSON.stringify(baseBody)).toBe(200);
+  expect(baseBody.ok, JSON.stringify(baseBody)).toBe(true);
+  expect(baseBody.data.playbackSummary.observationCount).toBe(2);
+  expect(baseBody.data.playbackSummary.sessionCount).toBe(1);
+  expect(baseBody.data.playbackSummary.replayCount).toBe(0);
+
+  const hierarchyResponse = await page.request.get("/api/dashboard/detail-workspace/" + encodeURIComponent(detailKey) + "/hierarchy");
+  const hierarchyBody = await hierarchyResponse.json();
+  expect(hierarchyResponse.status(), JSON.stringify(hierarchyBody)).toBe(200);
+  expect(hierarchyBody.ok, JSON.stringify(hierarchyBody)).toBe(true);
+  const pilot = hierarchyBody.data.hierarchy.seasons
+    .flatMap(season => season.episodes)
+    .find(episode => episode.ratingKey === "anime-regression-1");
+  const tonyEvidence = pilot?.watcherEvidence?.find(evidence => evidence.displayName === "Tony");
+  expect(tonyEvidence).toMatchObject({
+    state: "watched",
+    observationCount: 2,
+    sessionCount: 1,
+    viewingDayCount: 1,
+    replayCount: 0,
+    replayReason: null
+  });
+
+  await page.goto("/#overview?detail=" + encodeURIComponent(detailKey));
+  const dialog = page.locator("#detail-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByTestId("detail-workspace-playback")).toContainText("2 observations");
+  await expect(dialog.getByTestId("detail-workspace-playback")).toContainText(/1 session.*0 replays/);
+  await dialog.getByTestId("detail-hierarchy-group").first().locator("summary").click();
+  const pilotNode = dialog.getByTestId("detail-hierarchy-node").filter({ hasText: "Pilot Light" });
+  await expect(pilotNode).toBeVisible();
+  const tonyMarker = pilotNode.locator(`[data-detail-watcher-lane][data-person-id="${tonyEvidence.userId}"]`);
+  await expect(tonyMarker).toHaveAttribute("data-state", "watched");
+  await expect(tonyMarker).toHaveAttribute("aria-label", /2 observations .* 1 session .* 1 viewing day .* 0 replays/);
+  await expect(tonyMarker).not.toHaveAttribute("aria-label", /Repeated/i);
+});
+
 test("Movie detail groups canonical stale-key history and loads About independently", async ({ page }) => {
   const baseResponse = await page.request.get("/api/dashboard/detail-workspace/" + encodeURIComponent("movie:57417"));
   const baseBody = await baseResponse.json();

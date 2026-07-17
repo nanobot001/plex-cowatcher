@@ -82,6 +82,8 @@ export interface DashboardMovieHistoryRow {
   state: "completed" | "partial" | "confirmed";
   strongestPercent: number | null;
   observationCount: number;
+  sessionCount: number;
+  replayCount: number;
   evidenceKind: DashboardMovieHistoryEvidenceKind;
 }
 
@@ -91,7 +93,10 @@ export interface DashboardMovieHistory {
   people: Array<{ id: number; displayName: string }>;
   summary: {
     rawObservationCount: number;
+    sessionCount: number;
     viewingDayCount: number;
+    replayCount: number;
+    replayReason: ReplayReason | null;
     completedViewingDayCount: number;
     distinctViewerCount: number;
     firstViewedAt: string | null;
@@ -151,6 +156,11 @@ export interface DashboardDetailWorkspaceResponse {
   watcherPeople: Array<{ id: number; displayName: string }>;
   playbackSummary: {
     plays: number;
+    observationCount: number;
+    sessionCount: number;
+    viewingDayCount: number;
+    replayCount: number;
+    replayReason: ReplayReason | null;
     completedPlays: number;
     latestWatchedAt: string | null;
     observedMinutes: number;
@@ -194,6 +204,7 @@ export type ProgressUnit = "episode" | "movie" | "track" | "chapter" | "book" | 
 export type ProgressSource = "plex" | "audiobook_tool" | "unknown";
 export type ProgressNodeState = "watched" | "partial" | "repeated" | "unknown" | "source_uncertain";
 export type ProgressNodeStateSource = "verified_offset" | "book_completion" | "track_file" | "source_uncertain" | "none";
+export type ReplayReason = "different_viewing_day" | "same_day_completed_sessions" | "same_day_offset_reset";
 
 export interface ProgressWatcherEvidence {
   userId: number | null;
@@ -201,6 +212,11 @@ export interface ProgressWatcherEvidence {
   state: ProgressNodeState;
   latestObservedAt: string | null;
   watchCount: number;
+  observationCount: number;
+  sessionCount: number;
+  viewingDayCount: number;
+  replayCount: number;
+  replayReason: ReplayReason | null;
   stateSource?: ProgressNodeStateSource;
   partialPosition?: number;
 }
@@ -337,6 +353,10 @@ export interface DashboardProgressPersonContext {
   plexUsername: string;
   displayName: string;
   plays: number;
+  observationCount: number;
+  sessionCount: number;
+  viewingDayCount: number;
+  replayCount: number;
   completedPlays: number;
   partials: number;
   distinctItems: number;
@@ -364,6 +384,10 @@ export interface DashboardProgressGroup {
   distinctItems: number;
   distinctCompleted: number;
   plays: number;
+  observationCount: number;
+  sessionCount: number;
+  viewingDayCount: number;
+  replayCount: number;
   completedPlays: number;
   partials: number;
   observedMinutes: number;
