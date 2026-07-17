@@ -180,7 +180,8 @@ The corrective sequence is mandatory and ordered:
     7. **3-2n-6E-3 - Progress Migration And Cross-Surface Regression:** Implemented 2026-07-16. Progress now uses the shared canonical detail workspace, preserves legacy URL restoration, and has cross-surface parity/lazy-loading coverage.
     8. **3-2n-6E-3A - Replay Semantics And Session Provenance:** Implemented 2026-07-16. Raw observations, reconstructed sessions, household-local viewing days, and evidence-backed replays are separate across all replay-facing Progress and shared-detail projections.
     9. **3-2n-6E-3B - On-Demand Plex Metadata And Artwork Refresh:** Planned corrective block after 6E-3A. Add a title-scoped shared-detail refresh from Plex that updates CoWatcher catalog/artwork revisions without a restart or whole-library refresh.
-29. **3-2n-6D - Whisper-Assisted Audiobook Resume Context:** Planned umbrella. Convert source-backed audiobook history stops into private bounded transcript context and a useful resume modal after 6E establishes the shared Audiobook presenter, 6E-3A has corrected replay/session semantics, and 6E-3B provides explicit metadata/artwork revalidation; do not implement the umbrella directly.
+    10. **3-2n-6E-3C - Plex Historical Movie Backfill:** Planned corrective data-completeness block after 6E-3B. Supplement detailed post-2022 Tautulli observations with explicitly labeled pre-2022 Plex last-view evidence, beginning with movies.
+29. **3-2n-6D - Whisper-Assisted Audiobook Resume Context:** Planned umbrella. Convert source-backed audiobook history stops into private bounded transcript context and a useful resume modal after 6E establishes the shared Audiobook presenter, 6E-3A has corrected replay/session semantics, and 6E-3B/6E-3C provide explicit metadata/artwork revalidation and historical-source reconciliation; do not implement the umbrella directly.
     1. **3-2n-6D-1 - Bounded Resume Transcription Contract:** Add and verify a tool-agnostic read-only `transcribe-window` JSON command in the separate `audiobook` project, plus sanitized CoWatcher fixtures.
     2. **3-2n-6D-2 - Trusted Resume Adapter And State:** Validate the external transcript contract and add revision-safe durable jobs/results without connecting automatic execution.
     3. **3-2n-6D-3 - Stable-Stop Worker And Rollout:** Preserve explicit Tautulli stop evidence, coalesce candidates, run one bounded background job, expose safe operations, and verify resource behavior with a canary.
@@ -200,6 +201,17 @@ Extend the audiobook catalog so top-level series and subseries can be represente
 ### Block 3-5: Proactive Audiobook Scanner & Webhook Trigger
 
 Implemented on 2026-06-28. Added the full-library audiobook scanner service, CLI entrypoint, and webhook item-ingestion path.
+
+### Block 3-6 Umbrella: Historical Watch Archive
+
+Planned product foundation. Preserve the household memory of who saw what and when independently of current Plex library membership, then derive explainable achievements from the archive.
+
+1. **3-6-1 - Archive Evidence And Provenance Contract:** Define source, confidence, event-time, last-view-time, ingestion-time, unknown, and conflict semantics.
+2. **3-6-2 - Canonical Media Identity And Alias Registry:** Preserve exact identity across stale rating keys, renamed media, migrations, and removals.
+3. **3-6-3 - Tautulli Ingestion Completeness And Reconciliation:** Make detailed history backfill resumable, auditable, and distinguish source absence from local ingestion failure.
+4. **3-6-4 - Plex Supplemental Historical Recovery:** Extend the existing 6E-3C movie slice to episode-level and broader best-effort Plex recovery without downgrading Tautulli evidence.
+5. **3-6-5 - Archive Query, Export, And Backup:** Make the archive portable, queryable, privacy-safe, and recoverable.
+6. **3-6-6 - Achievements Engine v1:** Add versioned, evidence-backed, deterministic achievements after the archive foundation is stable.
 
 ### Block 3-2n-5c: Reliable Audiobook Discovery Automation
 
