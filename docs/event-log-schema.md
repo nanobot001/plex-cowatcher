@@ -49,6 +49,10 @@ Records applied, reversed, skipped, or failed pair-level review decisions. Metad
 
 ## Project-Specific Events
 
+### `dashboard_detail_refresh`
+
+Records a title-scoped metadata/artwork refresh requested from the shared detail workspace. Metadata contains only the canonical detail key, category, bounded status, and change flags. It must not contain Plex tokens, private URLs, local paths, or raw upstream errors.
+
 ### `audiobook_backfill_started`
 
 Recorded when `project.audiobook_backfill` runs in apply mode.

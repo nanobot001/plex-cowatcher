@@ -40,6 +40,7 @@ export function migrateDatabase(db: Db): void {
   migrateAudiobookDiscovery(db);
   migrateAudiobookRevisionManifests(db);
   migrateAudiobookProofJobs(db);
+  migrateContentCatalogArtworkFingerprints(db);
 }
 
 function migrateCowatchReviewPrompts(db: Db): void {
@@ -531,6 +532,22 @@ function migrateAudiobookProofJobs(db: Db): void {
         ON audiobook_proof_jobs(state, next_attempt_at, id);
     `);
     db.prepare("INSERT INTO schema_migrations (version, name) VALUES (16, ?)").run("audiobook_proof_jobs");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrateContentCatalogArtworkFingerprints(db: Db): void {
+  const applied = db.prepare("SELECT 1 FROM schema_migrations WHERE version = 17").get();
+  if (applied) return;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    ensureColumn(db, "content_catalog", "artwork_poster_fingerprint", "TEXT");
+    ensureColumn(db, "content_catalog", "artwork_backdrop_fingerprint", "TEXT");
+    db.prepare("INSERT INTO schema_migrations (version, name) VALUES (17, ?)")
+      .run("content_catalog_artwork_fingerprints");
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");

@@ -55,7 +55,11 @@ export function registerWebRoutes(router: Router): void {
                 <h2 id="detail-workspace-heading">Loading detail</h2>
                 <p id="detail-workspace-subtitle" hidden></p>
               </div>
-              <button type="button" class="dialog-close" aria-label="Close media detail">&times;</button>
+              <div class="detail-workspace-actions">
+                <span class="detail-refresh-status" data-testid="detail-refresh-status" role="status" aria-live="polite"></span>
+                <button type="button" class="detail-refresh-button btn" data-detail-refresh aria-label="Refresh from Plex" disabled></button>
+                <button type="button" class="dialog-close" aria-label="Close media detail">&times;</button>
+              </div>
             </header>
             <div id="detail-content" class="detail-workspace-scroll" data-testid="detail-workspace-scroll"></div>
           </section>

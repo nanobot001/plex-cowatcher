@@ -64,7 +64,7 @@ function revisionRows(db: Db, artworkKey: string): unknown[] {
     `).get(audiobookId) as Record<string, unknown> | undefined;
     const catalog = db.prepare(`
       SELECT rating_key, guid, parent_rating_key, parent_guid, grandparent_rating_key,
-        grandparent_guid, media_type, refreshed_at
+        grandparent_guid, media_type, artwork_poster_fingerprint, artwork_backdrop_fingerprint
       FROM content_catalog
       WHERE audiobook_id = ?
       ORDER BY rating_key
@@ -74,7 +74,7 @@ function revisionRows(db: Db, artworkKey: string): unknown[] {
 
   const rows = db.prepare(`
     SELECT rating_key, guid, parent_rating_key, parent_guid, grandparent_rating_key,
-      grandparent_guid, media_type, refreshed_at
+      grandparent_guid, media_type, artwork_poster_fingerprint, artwork_backdrop_fingerprint
     FROM content_catalog
     WHERE rating_key = ? OR parent_rating_key = ? OR grandparent_rating_key = ?
     ORDER BY rating_key

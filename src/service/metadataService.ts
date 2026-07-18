@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Db } from "../db/database.js";
 import type { PlexAdapter } from "../adapters/plexAdapter.js";
 import type { PlexRichMetadata } from "../types/index.js";
@@ -25,13 +26,52 @@ export interface CatalogEntry {
   leafCount: number | null;
   sourceProvenance: string;
   refreshedAt: string;
+  artworkPosterFingerprint: string | null;
+  artworkBackdropFingerprint: string | null;
   filePath?: string | null;
   audiobookId?: number | null;
 }
 
+export type ExplicitMetadataRefreshResult =
+  | { ok: true; entry: CatalogEntry; changed: boolean }
+  | { ok: false; errorCode: "METADATA_REFRESH_FAILED"; retryable: boolean; priorAvailable: boolean };
+
+type MetadataRefreshAttempt = { entry: CatalogEntry | null; error: unknown | null };
+
+function artworkFingerprint(source: string | undefined): string | null {
+  const normalized = source?.trim();
+  return normalized ? createHash("sha256").update(normalized).digest("hex").slice(0, 20) : null;
+}
+
+function catalogFingerprint(entry: CatalogEntry | null): string {
+  if (!entry) return "";
+  return JSON.stringify({
+    ratingKey: entry.ratingKey,
+    guid: entry.guid,
+    mediaType: entry.mediaType,
+    title: entry.title,
+    duration: entry.duration,
+    libraryId: entry.libraryId,
+    libraryTitle: entry.libraryTitle,
+    genres: entry.genres,
+    grandparentRatingKey: entry.grandparentRatingKey,
+    grandparentGuid: entry.grandparentGuid,
+    grandparentTitle: entry.grandparentTitle,
+    parentRatingKey: entry.parentRatingKey,
+    parentGuid: entry.parentGuid,
+    parentTitle: entry.parentTitle,
+    leafCount: entry.leafCount,
+    sourceProvenance: entry.sourceProvenance,
+    artworkPosterFingerprint: entry.artworkPosterFingerprint,
+    artworkBackdropFingerprint: entry.artworkBackdropFingerprint,
+    filePath: entry.filePath ?? null,
+    audiobookId: entry.audiobookId ?? null
+  });
+}
+
 export class MetadataService {
   private readonly audiobooks: AudiobookCatalogService;
-  private readonly refreshes = new Map<string, Promise<CatalogEntry | null>>();
+  private readonly refreshes = new Map<string, Promise<MetadataRefreshAttempt>>();
   constructor(
     private readonly db: Db,
     private readonly plex: PlexAdapter
@@ -54,16 +94,52 @@ export class MetadataService {
   }
 
   async refreshMetadata(ratingKey: string, plexGuid?: string): Promise<CatalogEntry | null> {
-    const inFlight = this.refreshes.get(ratingKey);
-    if (inFlight) return inFlight;
+    const prior = this.getCached(ratingKey);
+    const attempt = await this.runRefresh(ratingKey, plexGuid);
+    if (attempt.entry) return attempt.entry;
+    if (prior && !this.isFallback(prior)) return prior;
+    const now = nowIso();
+    const fallbackEntry: CatalogEntry = {
+      ratingKey,
+      guid: plexGuid ?? null,
+      mediaType: "unknown",
+      title: `Unknown Media (${ratingKey})`,
+      duration: null,
+      libraryId: null,
+      libraryTitle: null,
+      genres: [],
+      grandparentRatingKey: null,
+      grandparentGuid: null,
+      grandparentTitle: null,
+      parentRatingKey: null,
+      parentGuid: null,
+      parentTitle: null,
+      leafCount: null,
+      sourceProvenance: "fallback",
+      refreshedAt: now,
+      artworkPosterFingerprint: null,
+      artworkBackdropFingerprint: null
+    };
+    this.saveCatalogEntry(fallbackEntry);
+    return fallbackEntry;
+  }
 
-    const refresh = this.refreshMetadataUnshared(ratingKey, plexGuid);
-    this.refreshes.set(ratingKey, refresh);
-    try {
-      return await refresh;
-    } finally {
-      if (this.refreshes.get(ratingKey) === refresh) this.refreshes.delete(ratingKey);
+  async refreshMetadataExplicit(ratingKey: string, plexGuid?: string): Promise<ExplicitMetadataRefreshResult> {
+    const prior = this.getCached(ratingKey);
+    const attempt = await this.runRefresh(ratingKey, plexGuid);
+    if (attempt.entry) {
+      return {
+        ok: true,
+        entry: attempt.entry,
+        changed: catalogFingerprint(prior) !== catalogFingerprint(attempt.entry)
+      };
     }
+    return {
+      ok: false,
+      errorCode: "METADATA_REFRESH_FAILED",
+      retryable: true,
+      priorAvailable: Boolean(prior && !this.isFallback(prior))
+    };
   }
 
   ingestRichMetadata(plexMeta: PlexRichMetadata, scanId?: number): CatalogEntry {
@@ -120,42 +196,27 @@ export class MetadataService {
     return { attempted, refreshed, failed };
   }
 
-  private async refreshMetadataUnshared(ratingKey: string, plexGuid?: string): Promise<CatalogEntry | null> {
-    const prior = this.getCached(ratingKey);
-    try {
-      const plexMeta = await this.plex.getRichMetadataByRatingKey(ratingKey, plexGuid);
-      const entry = this.savePlexMetadata(plexMeta);
-      
-      if (entry.mediaType === "episode" && entry.grandparentRatingKey) {
-        await this.ensureShowMetadata(entry.grandparentRatingKey, entry.grandparentGuid);
+  private async runRefresh(ratingKey: string, plexGuid?: string): Promise<MetadataRefreshAttempt> {
+    const inFlight = this.refreshes.get(ratingKey);
+    if (inFlight) return inFlight;
+
+    const refresh = (async (): Promise<MetadataRefreshAttempt> => {
+      try {
+        const plexMeta = await this.plex.getRichMetadataByRatingKey(ratingKey, plexGuid);
+        const entry = this.savePlexMetadata(plexMeta);
+        if (entry.mediaType === "episode" && entry.grandparentRatingKey) {
+          await this.ensureShowMetadata(entry.grandparentRatingKey, entry.grandparentGuid);
+        }
+        return { entry, error: null };
+      } catch (error) {
+        return { entry: null, error };
       }
-      
-      return entry;
-    } catch (error) {
-      if (prior && !this.isFallback(prior)) return prior;
-      const now = nowIso();
-      const fallbackEntry: CatalogEntry = {
-        ratingKey,
-        guid: plexGuid ?? null,
-        mediaType: "unknown",
-        title: `Unknown Media (${ratingKey})`,
-        duration: null,
-        libraryId: null,
-        libraryTitle: null,
-        genres: [],
-        grandparentRatingKey: null,
-        grandparentGuid: null,
-        grandparentTitle: null,
-        parentRatingKey: null,
-        parentGuid: null,
-        parentTitle: null,
-        leafCount: null,
-        sourceProvenance: "fallback",
-        refreshedAt: now
-      };
-      
-      this.saveCatalogEntry(fallbackEntry);
-      return fallbackEntry;
+    })();
+    this.refreshes.set(ratingKey, refresh);
+    try {
+      return await refresh;
+    } finally {
+      if (this.refreshes.get(ratingKey) === refresh) this.refreshes.delete(ratingKey);
     }
   }
 
@@ -218,6 +279,8 @@ export class MetadataService {
       parentTitle: plexMeta.parentTitle ?? null,
       leafCount: plexMeta.leafCount ?? null,
       sourceProvenance: prepared.identity ? "folder_path" : "plex",
+      artworkPosterFingerprint: artworkFingerprint(plexMeta.thumb ?? plexMeta.parentThumb ?? plexMeta.grandparentThumb),
+      artworkBackdropFingerprint: artworkFingerprint(plexMeta.art ?? plexMeta.parentArt ?? plexMeta.grandparentArt),
       filePath: plexMeta.filePath ?? null,
       audiobookId,
       refreshedAt: now
@@ -235,8 +298,9 @@ export class MetadataService {
       INSERT INTO content_catalog (
         rating_key, guid, media_type, title, duration, library_id, library_title, genres_json,
         grandparent_rating_key, grandparent_guid, grandparent_title,
-        parent_rating_key, parent_guid, parent_title, leaf_count, source_provenance, refreshed_at, file_path, audiobook_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        parent_rating_key, parent_guid, parent_title, leaf_count, source_provenance, refreshed_at,
+        artwork_poster_fingerprint, artwork_backdrop_fingerprint, file_path, audiobook_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(rating_key) DO UPDATE SET
         guid = excluded.guid,
         media_type = excluded.media_type,
@@ -254,6 +318,8 @@ export class MetadataService {
         leaf_count = excluded.leaf_count,
         source_provenance = excluded.source_provenance,
         refreshed_at = excluded.refreshed_at,
+        artwork_poster_fingerprint = excluded.artwork_poster_fingerprint,
+        artwork_backdrop_fingerprint = excluded.artwork_backdrop_fingerprint,
         file_path = excluded.file_path,
         audiobook_id = excluded.audiobook_id
     `).run(
@@ -274,6 +340,8 @@ export class MetadataService {
       entry.leafCount,
       entry.sourceProvenance,
       entry.refreshedAt,
+      entry.artworkPosterFingerprint,
+      entry.artworkBackdropFingerprint,
       entry.filePath ?? null,
       entry.audiobookId ?? null
     );
@@ -305,6 +373,8 @@ export class MetadataService {
       leafCount: row.leaf_count,
       sourceProvenance: row.source_provenance,
       refreshedAt: row.refreshed_at,
+      artworkPosterFingerprint: row.artwork_poster_fingerprint ?? null,
+      artworkBackdropFingerprint: row.artwork_backdrop_fingerprint ?? null,
       filePath: row.file_path,
       audiobookId: row.audiobook_id
     };

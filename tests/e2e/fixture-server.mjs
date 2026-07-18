@@ -247,6 +247,13 @@ app.post("/__test/artwork/audiobook/:id", (req, res) => {
     .run(cover, new Date().toISOString(), audiobookId);
   res.json({ ok: Number(result.changes) === 1, variant });
 });
+app.post("/__test/reset-movie", (_req, res) => {
+  const result = db.prepare(`UPDATE content_catalog
+    SET title = 'Fixture Movie', genres_json = '[]',
+        artwork_poster_fingerprint = NULL, artwork_backdrop_fingerprint = NULL
+    WHERE rating_key = 'movie-regression'`).run();
+  res.json({ ok: Number(result.changes) === 1 });
+});
 const server = app.listen(port, "127.0.0.1");
 export const ready = new Promise((resolve, reject) => {
   server.once("listening", resolve);

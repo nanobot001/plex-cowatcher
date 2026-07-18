@@ -155,6 +155,34 @@ test("canonical artwork stays aligned across surfaces and refreshes after a know
   }
 });
 
+test("shared detail refresh updates one title in place and stays stable when unchanged", async ({ page }) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  try {
+    await page.goto("/");
+
+    const card = page.getByTestId("recent-playback-card").filter({ hasText: "Fixture Movie" }).first();
+    await card.click();
+    const dialog = page.locator("#detail-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator("#detail-workspace-heading")).toHaveText("Fixture Movie");
+
+    const refresh = dialog.getByRole("button", { name: "Refresh from Plex" });
+    await expect(refresh).toBeEnabled();
+    await refresh.click();
+    await expect(dialog.locator("#detail-workspace-heading")).toHaveText("Mock Movie");
+    await expect(dialog.getByTestId("detail-refresh-status")).toHaveText("Updated from Plex.");
+    await expect(refresh).toBeEnabled();
+
+    await refresh.click();
+    await expect(dialog.getByTestId("detail-refresh-status")).toHaveText("Already up to date.");
+    await expectNoVisualOverflow(page);
+    expect(pageErrors).toEqual([]);
+  } finally {
+    await page.request.post("/__test/reset-movie");
+  }
+});
+
 test("overview hides metadata gaps because ingestion repairs them automatically", async ({ page }) => {
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -882,8 +910,8 @@ test("Progress uses the shared detail workspace and preserves bounded lazy loadi
   await dialog.locator(".dialog-close").click();
   await expect(dialog).not.toBeVisible();
   await expect(tvCard).toBeFocused();
-  expect(page.url()).toContain("progressDetail=");
-  expect(page.url()).not.toContain("detail=");
+  expect(page.url()).toContain("detail=");
+  expect(page.url()).not.toContain("progressDetail=");
 
   await page.reload();
   await expect(dialog).toBeVisible();

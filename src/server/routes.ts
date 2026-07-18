@@ -19,6 +19,7 @@ import { AudiobookDiscoveryService } from "../service/audiobookDiscoveryService.
 import { ArtworkResolver, type ArtworkVariant } from "../service/artworkService.js";
 import { MovieProfileAdapter, type MovieProfileAdapterLike } from "../service/movieProfileAdapter.js";
 import { MovieProfileService } from "../service/movieProfileService.js";
+import { DashboardDetailRefreshService } from "../service/dashboardDetailRefreshService.js";
 import { appConfig } from "../utils/config.js";
 import { parseDays } from "../utils/time.js";
 
@@ -53,6 +54,7 @@ export function buildRouter(
     pythonVersion: appConfig.MEDIA_BOT_PROFILE_PYTHON_VERSION
   });
   const movieProfiles = new MovieProfileService(db, movieProfileAdapter);
+  const dashboardDetailRefresh = new DashboardDetailRefreshService(db, dashboardService, plex, audit);
   const cowatchAdjudications = new CowatchAdjudicationService(db);
   const audiobookDiscovery = new AudiobookDiscoveryService(db, plex);
   const handleDashboardReadError = (error: unknown, res: express.Response, next: express.NextFunction) => {
@@ -266,6 +268,27 @@ export function buildRouter(
       const selector = decodeURIComponent(req.params.detailKey);
       return sendDetailWorkspaceResult(dashboardService.getDetailWorkspace(selector), res);
     } catch (e) { next(e); }
+  });
+  router.post("/api/dashboard/detail-workspace/:detailKey/refresh", express.json(), async (req, res, next) => {
+    try {
+      const selector = decodeURIComponent(req.params.detailKey);
+      const result = await dashboardDetailRefresh.refresh(selector, {
+        apply: req.body?.apply === true,
+        confirm: req.body?.confirm === true,
+        actor: "web"
+      });
+      if (result.ok) return res.json(result);
+      const status = result.errorCode === "DETAIL_NOT_FOUND"
+        ? 404
+        : result.errorCode === "DETAIL_AMBIGUOUS"
+          ? 409
+          : result.errorCode === "DETAIL_REFRESH_FAILED"
+            ? 502
+            : 400;
+      return res.status(status).json({ ok: false, errorCode: result.errorCode, retryable: result.retryable ?? false, priorAvailable: result.priorAvailable ?? false, message: "Detail refresh could not be completed." });
+    } catch (error) {
+      next(error);
+    }
   });
   router.get("/api/dashboard/detail/:ratingKey", (req, res, next) => {
     try { res.json({ ok: true, data: dashboardService.getDetail(req.params.ratingKey) }); }

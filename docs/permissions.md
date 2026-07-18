@@ -25,6 +25,7 @@ Every tool must have a risk level.
 - Prompt dismiss and re-prompt endpoints are `write_action`. Both require explicit confirmation, lifecycle validation, idempotent retry behavior, and audit events.
 - Co-watch review decisions are `write_action`. They default to dry-run and require `apply=true`, explicit confirmation, and a stable request ID before appending an adjudication.
 - Asking for Discord review is a separate `write_action` with the same dry-run/apply confirmation contract. Discord interaction resolution is adjudication-only and has no Plex mutation authority.
+- Dashboard detail refresh is a `write_action`. It defaults to dry-run, requires `apply=true` and `confirm=true`, is limited to the resolved canonical title, and records a privacy-safe audit event without mutating Plex or Tautulli.
 
 ## Audiobook Proof Operations
 

@@ -1,5 +1,14 @@
 # Continue Here
 
+## 2026-07-17
+
+Current state:
+- Block **3-2n-6E-3B: On-Demand Plex Metadata And Artwork Refresh** (`docs/blocks/completed/block-3-2n-6e-3b-on-demand-plex-metadata-and-artwork-refresh.md`) is implemented and verified. The shared detail workspace now exposes a confirmed **Refresh from Plex** action that targets one canonical Movie, TV, Classic TV, Anime, or Audiobook identity, coalesces duplicate reads, refreshes local metadata/artwork without a library scan, keeps artwork revisions stable when sources are unchanged, and preserves the prior workspace on failure.
+- The 6E-3B deterministic gate passed with 115 service/integration tests and 55 dashboard regression tests plus one intentional viewport-matrix skip. Tool contracts and JavaScript syntax checks passed. Production was rebuilt/restarted under PM2, and `npm run verify:live-dashboard` passed.
+
+Next step:
+- Implement **6E-3C: Plex Historical Movie Backfill** (`docs/blocks/block-3-2n-6e-3c-plex-historical-movie-backfill.md`) next. Preserve the title-scoped refresh, exact identity/GUID targeting, stable artwork revision, and source-honest replay/session contracts.
+
 ## 2026-07-16
 
 Current state:
