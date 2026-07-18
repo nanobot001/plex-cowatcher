@@ -263,6 +263,8 @@ CREATE TABLE IF NOT EXISTS content_catalog (
   leaf_count INTEGER,
   source_provenance TEXT NOT NULL,
   refreshed_at TEXT NOT NULL,
+  artwork_poster_fingerprint TEXT,
+  artwork_backdrop_fingerprint TEXT,
   file_path TEXT,
   audiobook_id INTEGER REFERENCES audiobook_books(id),
   last_seen_at TEXT,

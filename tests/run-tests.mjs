@@ -17,6 +17,7 @@ import { AppError, errorResult } from "../dist/utils/errors.js";
 import { HistoryCopyService } from "../dist/service/historyCopyService.js";
 import { IngestionService } from "../dist/service/ingestionService.js";
 import { MetadataService } from "../dist/service/metadataService.js";
+import { DashboardDetailRefreshService } from "../dist/service/dashboardDetailRefreshService.js";
 import { QueryService } from "../dist/service/queryService.js";
 import { SummaryService } from "../dist/service/summaryService.js";
 import { SessionService } from "../dist/service/sessionService.js";
@@ -31,6 +32,7 @@ import { AudiobookProofAdapter } from "../dist/service/audiobookProofAdapter.js"
 import { AudiobookProofRuntime, AudiobookProofWorkerService } from "../dist/service/audiobookProofWorkerService.js";
 import { HealthService } from "../dist/service/healthService.js";
 import { DashboardService, deriveDashboardCategory } from "../dist/service/dashboardService.js";
+import { AuditService } from "../dist/service/auditService.js";
 import { MovieProfileAdapter } from "../dist/service/movieProfileAdapter.js";
 import { MovieProfileService } from "../dist/service/movieProfileService.js";
 import { DashboardPreferenceService } from "../dist/service/dashboardPreferenceService.js";
@@ -890,6 +892,110 @@ test("MetadataService Smart Auto-Healing triggers refresh on count discrepancy",
   });
 });
 
+test("dashboard detail refresh is title-scoped, confirmed, coalesced, and revision-stable", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (1,'refresh-movie','movie','Movies','Before Refresh',?,100,7200000,1,?,?)`).run(now, now, now);
+    db.prepare(`INSERT INTO content_catalog
+      (rating_key,guid,media_type,title,duration,library_title,genres_json,source_provenance,refreshed_at)
+      VALUES ('refresh-movie','plex://movie/refresh','movie','Before Refresh',7200000,'Movies','[]','fixture',?)`).run(now);
+
+    let calls = 0;
+    let responseTitle = "After Refresh";
+    let responsePoster = "data:image/svg+xml;utf8,REFRESH-ONE";
+    const plex = {
+      getUsers: async () => [],
+      getWatchedState: async () => ({ watched: false, source: "mock" }),
+      markWatched: async () => ({ ok: true, status: "mocked" }),
+      listLibraries: async () => [],
+      listShows: async () => [],
+      getRichMetadataByRatingKey: async (ratingKey) => {
+        calls++;
+        await new Promise(resolve => setTimeout(resolve, 10));
+        return {
+          ratingKey,
+          guid: "plex://movie/refresh",
+          mediaType: "movie",
+          title: responseTitle,
+          duration: 7200000,
+          librarySectionID: "1",
+          librarySectionTitle: "Movies",
+          genres: ["Drama"],
+          thumb: responsePoster,
+          art: responsePoster
+        };
+      }
+    };
+    const dashboard = new DashboardService(db);
+    const refresh = new DashboardDetailRefreshService(db, dashboard, plex, new AuditService(db));
+
+    const dryRun = await refresh.refresh("movie:refresh-movie", { apply: false, confirm: false });
+    assert.equal(dryRun.ok, true);
+    assert.equal(dryRun.data.dryRun, true);
+    assert.equal(calls, 0);
+
+    const denied = await refresh.refresh("movie:refresh-movie", { apply: true, confirm: false });
+    assert.equal(denied.ok, false);
+    assert.equal(denied.errorCode, "CONFIRMATION_REQUIRED");
+
+    const [first, coalesced] = await Promise.all([
+      refresh.refresh("movie:refresh-movie", { apply: true, confirm: true }),
+      refresh.refresh("movie:refresh-movie", { apply: true, confirm: true })
+    ]);
+    assert.equal(first.ok, true);
+    assert.equal(coalesced.ok, true);
+    assert.equal(calls, 1);
+    assert.equal(first.data.metadataChanged, true);
+    assert.equal(first.data.artworkChanged, true);
+    assert.equal(first.data.workspace.title, "After Refresh");
+    const firstRevision = first.data.artworkRevision;
+
+    const unchanged = await refresh.refresh("movie:refresh-movie", { apply: true, confirm: true });
+    assert.equal(unchanged.ok, true);
+    assert.equal(unchanged.data.status, "unchanged");
+    assert.equal(unchanged.data.artworkChanged, false);
+    assert.equal(unchanged.data.artworkRevision, firstRevision);
+    assert.equal(calls, 2);
+
+    responseTitle = "Changed Again";
+    responsePoster = "data:image/svg+xml;utf8:REFRESH-TWO";
+    const changedAgain = await refresh.refresh("movie:refresh-movie", { apply: true, confirm: true });
+    assert.equal(changedAgain.ok, true);
+    assert.equal(changedAgain.data.status, "refreshed");
+    assert.equal(changedAgain.data.artworkChanged, true);
+    assert.notEqual(changedAgain.data.artworkRevision, firstRevision);
+    assert.ok(db.prepare("SELECT id FROM audit_log WHERE action = 'dashboard_detail_refresh' AND status = 'ok'").get());
+  });
+});
+
+test("dashboard detail refresh preserves the usable workspace on Plex failure", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,media_type,library_name,title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (1,'refresh-failure','movie','Movies','Stable Movie',?,100,7200000,1,?,?)`).run(now, now, now);
+    db.prepare(`INSERT INTO content_catalog
+      (rating_key,media_type,title,duration,library_title,genres_json,source_provenance,refreshed_at)
+      VALUES ('refresh-failure','movie','Stable Movie',7200000,'Movies','[]','fixture',?)`).run(now);
+    const plex = {
+      getRichMetadataByRatingKey: async () => { throw new Error("private upstream failure"); }
+    };
+    const refresh = new DashboardDetailRefreshService(db, new DashboardService(db), plex, new AuditService(db));
+    const result = await refresh.refresh("movie:refresh-failure", { apply: true, confirm: true });
+    assert.equal(result.ok, false);
+    assert.equal(result.errorCode, "DETAIL_REFRESH_FAILED");
+    assert.equal(result.priorAvailable, true);
+    assert.equal(db.prepare("SELECT title FROM content_catalog WHERE rating_key = 'refresh-failure'").get().title, "Stable Movie");
+    const audit = db.prepare("SELECT payload_json, error FROM audit_log WHERE action = 'dashboard_detail_refresh' ORDER BY id DESC LIMIT 1").get();
+    assert.doesNotMatch(audit.payload_json, /private upstream failure|token|file/i);
+    assert.equal(audit.error, "METADATA_REFRESH_FAILED");
+  });
+});
+
 test("QueryService filters, orders, and paginates watch history deterministically", async () => {
   await withTestDb(async (db) => {
     seedUsers(db);
@@ -1404,6 +1510,7 @@ test("audiobook migration is repeatable and does not denormalize onto observatio
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 14").get().count, 1);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 15").get().count, 1);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 16").get().count, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 17").get().count, 1);
     const catalogColumns = db.prepare("PRAGMA table_info(content_catalog)").all().map((column) => column.name);
     const bookColumns = db.prepare("PRAGMA table_info(audiobook_books)").all().map((column) => column.name);
     const observationColumns = db.prepare("PRAGMA table_info(playback_observations)").all().map((column) => column.name);
@@ -3291,6 +3398,41 @@ test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed promp
       const rawWorkspace = await (await fetch(base+"/api/dashboard/detail-workspace/movie-http")).json();
       assert.equal(rawWorkspace.ok,true);
       assert.equal(rawWorkspace.data.detailKey,workspace.data.detailKey);
+      const refreshPreview = await fetch(base+"/api/dashboard/detail-workspace/"+encodeURIComponent("movie:movie-http")+"/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apply: false })
+      });
+      assert.equal(refreshPreview.status, 200);
+      assert.equal((await refreshPreview.json()).data.dryRun, true);
+      const refreshDenied = await fetch(base+"/api/dashboard/detail-workspace/"+encodeURIComponent("movie:movie-http")+"/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apply: true })
+      });
+      assert.equal(refreshDenied.status, 400);
+      assert.equal((await refreshDenied.json()).errorCode, "CONFIRMATION_REQUIRED");
+      const refreshApplied = await fetch(base+"/api/dashboard/detail-workspace/"+encodeURIComponent("movie:movie-http")+"/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apply: true, confirm: true })
+      });
+      assert.equal(refreshApplied.status, 200);
+      const refreshedWorkspace = await refreshApplied.json();
+      assert.equal(refreshedWorkspace.ok, true);
+      assert.equal(refreshedWorkspace.data.workspace.title, "Mock Movie");
+      assert.match(refreshedWorkspace.data.artworkRevision, /^[a-f0-9]{20}$/);
+      const refreshAgain = await fetch(base+"/api/dashboard/detail-workspace/"+encodeURIComponent("movie:movie-http")+"/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apply: true, confirm: true })
+      });
+      const refreshedAgain = await refreshAgain.json();
+      assert.equal(refreshAgain.status, 200);
+      assert.equal(refreshedAgain.data.status, "unchanged");
+      assert.equal(refreshedAgain.data.artworkRevision, refreshedWorkspace.data.artworkRevision);
+      assert.doesNotMatch(JSON.stringify(refreshedWorkspace), /file_path|X-Plex-Token|private/i);
+      assert.ok(db.prepare("SELECT id FROM audit_log WHERE action = 'dashboard_detail_refresh' AND status = 'ok'").get());
       const people = await (await fetch(base+"/api/dashboard/people?period=7d")).json();
       assert.equal(people.ok,true);
       assert.equal(people.data.window.period,"7d");

@@ -843,6 +843,21 @@ function renderDetailContent(d) {
 }
 
 let activeDetailWorkspace = null;
+let detailRefreshPending = false;
+
+function setDetailRefreshState(state, message = "") {
+  const button = document.querySelector("[data-detail-refresh]");
+  const status = document.querySelector("[data-testid='detail-refresh-status']");
+  if (button) {
+    button.disabled = !activeDetailWorkspace || state === "pending";
+    button.textContent = state === "pending" ? "Refreshing…" : "Refresh from Plex";
+    button.dataset.state = state;
+  }
+  if (status) {
+    status.textContent = message;
+    status.dataset.state = state;
+  }
+}
 
 function setDetailWorkspaceHeader(eyebrow, title, subtitle = "") {
   const eyebrowNode = document.querySelector("#detail-workspace-eyebrow");
@@ -858,7 +873,9 @@ function setDetailWorkspaceHeader(eyebrow, title, subtitle = "") {
 
 function renderDetailWorkspaceLoading(item) {
   activeDetailWorkspace = null;
+  detailRefreshPending = false;
   dialog.removeAttribute("data-detail-key");
+  setDetailRefreshState("loading", "");
   setDetailWorkspaceHeader("Media detail", item?.displayTitle || item?.showTitle || item?.title || "Loading detail", "");
   const artworkUrl = item ? posterFor(item) : "";
   document.querySelector("#detail-content").innerHTML = `
@@ -877,6 +894,8 @@ function renderDetailWorkspaceLoading(item) {
 
 function renderDetailWorkspaceFailure(title, message) {
   activeDetailWorkspace = null;
+  detailRefreshPending = false;
+  setDetailRefreshState("error", "");
   setDetailWorkspaceHeader("Media detail", title, "");
   document.querySelector("#detail-content").innerHTML = `
     <div class="detail-workspace-failure" data-testid="detail-workspace-error">
@@ -1206,8 +1225,10 @@ function renderDefaultDetailRail(workspace, people, playback, progress) {
 function renderDetailWorkspace(workspace, hierarchyState) {
   activeDetailWorkspace = workspace;
   activeDetailHierarchyState = hierarchyState;
+  detailRefreshPending = false;
   dialog.dataset.detailKey = workspace.detailKey;
   setDetailWorkspaceHeader(categoryLabel(workspace.category), workspace.title, workspace.subtitle || "");
+  setDetailRefreshState("ready", "");
   const people = (workspace.people || []).map(person => person.displayName).join(", ");
   const playback = workspace.playbackSummary;
   const progress = workspace.progressSummary;
@@ -1276,6 +1297,45 @@ function renderDetailWorkspace(workspace, hierarchyState) {
   }
   const firstWatcher = document.querySelector("[data-detail-watcher-lane]");
   if (firstWatcher) firstWatcher.setAttribute("tabindex", "0");
+}
+
+async function refreshActiveDetailWorkspace() {
+  if (!activeDetailWorkspace || detailRefreshPending) return;
+  const workspace = activeDetailWorkspace;
+  detailRefreshPending = true;
+  setDetailRefreshState("pending", "Refreshing metadata and artwork…");
+  try {
+    const response = await fetch(`/api/dashboard/detail-workspace/${encodeURIComponent(workspace.detailKey)}/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apply: true, confirm: true })
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok || result.data?.dryRun) {
+      detailRefreshPending = false;
+      setDetailRefreshState("error", result.message || "Refresh from Plex failed; the current detail is unchanged.");
+      return;
+    }
+    const refreshed = result.data.workspace;
+    if (!refreshed || activeDetailWorkspace?.detailKey !== workspace.detailKey) return;
+    detailHierarchyCache.delete(workspace.detailKey);
+    const nextHierarchyState = refreshed.category === "movie"
+      ? { status: "ready", data: { hierarchy: { type: "movie" } } }
+      : { status: "loading", data: null };
+    renderDetailWorkspace(refreshed, nextHierarchyState);
+    const controller = activeDetailFetchAbortController;
+    if (refreshed.category === "movie" && refreshed.movieProfile?.route && controller) {
+      void loadMovieProfile(refreshed, controller.signal);
+    }
+    if (refreshed.category !== "movie" && refreshed.hierarchy?.available && controller && !controller.signal.aborted) {
+      void loadDetailWorkspaceHierarchy(refreshed, controller.signal);
+    }
+    detailRefreshPending = false;
+    setDetailRefreshState("success", result.data.status === "unchanged" ? "Already up to date." : "Updated from Plex.");
+  } catch {
+    detailRefreshPending = false;
+    setDetailRefreshState("error", "Refresh from Plex failed; the current detail is unchanged.");
+  }
 }
 
 async function loadMovieProfile(workspace, signal) {
@@ -2792,6 +2852,9 @@ content.addEventListener("mouseleave", e => {
 });
 
 dialog.querySelector(".dialog-close").addEventListener("click",()=>dialog.close());
+dialog.querySelector("[data-detail-refresh]").addEventListener("click", () => {
+  void refreshActiveDetailWorkspace();
+});
 dialog.addEventListener("click",e=>{
   const watcherLane = e.target.closest?.("[data-detail-watcher-lane]");
   if (watcherLane && activeDetailWorkspace) {

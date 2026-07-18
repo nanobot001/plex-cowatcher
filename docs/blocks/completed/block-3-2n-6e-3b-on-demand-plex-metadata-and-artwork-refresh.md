@@ -1,8 +1,9 @@
 # Block 3-2n-6E-3B: On-Demand Plex Metadata And Artwork Refresh
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Corrective block after 6E-3A and before 6D. Let an operator refresh one canonical title from Plex and see updated metadata/artwork without restarting CoWatcher or refreshing the entire library.
+> Status: Implemented and verified 2026-07-17.
+> Result: Implemented.
+> Verification: `npm run verify:block` passed with 115 service/integration tests, 55 dashboard regression tests, one intentional viewport-matrix skip, JavaScript syntax verification, and tool-contract verification. After the PM2 rebuild/restart, `npm run verify:live-dashboard` passed.
+> Notes: Added a confirmed title-scoped refresh service and localhost route, shared detail-workspace control, exact identity/GUID targeting, request coalescing, revision-stable artwork fingerprints, privacy-safe audit/error handling, and regression coverage. The legacy CLI refresh path remains unchanged.
 
 ## Goal
 
