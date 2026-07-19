@@ -87,7 +87,9 @@ node dist/cli/cli.js verify-plex-watched-state --target-plex-user-id Ian --ratin
 
 # Phase 2 playback observations, ingestion, metadata catalog, and query APIs
 node dist/cli/cli.js ingest --pretty
-node dist/cli/cli.js backfill --user Tony --pages 3 --pretty
+node dist/cli/cli.js tautulli-backfill --user Tony --page-size 200 --pretty
+node dist/cli/cli.js tautulli-backfill --user Tony --apply --confirm --pretty
+node dist/cli/cli.js tautulli-backfill --report --run-id RUN_ID --pretty
 node dist/cli/cli.js refresh-catalog --show 12345 --pretty
 node dist/cli/cli.js watch-history --user Tony --limit 5 --pretty
 node dist/cli/cli.js watch-summary --user Tony --days 7 --pretty
@@ -138,7 +140,7 @@ This posts to the configured Discord channel. Keep `PLEX_MUTATION_MODE=mock` unt
 - `docs/project-charter.md` defines the project purpose, goals, success criteria, and document map.
 - `docs/blocks/` contains AI-buildable tickets for scoped implementation work.
 - `docs/continue-here.md` captures the current handoff state.
-- Current dashboard corrective work has completed through `3-2n-6c`. It resumes with `docs/blocks/block-3-2n-5d-3-durable-proof-worker-and-rollout.md` for the pending recurring-worker rollout, then 6E and 6D before the final `3-2o` accessibility/regression gate.
+- Current archive work has completed through `3-6-3`. The next archive block is `docs/blocks/block-3-6-4-plex-supplemental-historical-recovery.md`; audiobook resume work and the remaining dashboard release gate remain separate sequences.
 
 ## Known Limitations
 

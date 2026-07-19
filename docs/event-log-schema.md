@@ -120,3 +120,11 @@ Records an archive-owned external Plex view import with the run ID, mode, and bo
 ### `archive_identity_decision_recorded`
 
 Records an explicit, reversible archive-media identity review. Metadata contains only the decision ID, archive media ID, decision, and target rating key; it must not contain Plex paths, source payloads, account secrets, or raw diagnostics. Undo is represented by a later `unresolved` decision.
+
+### Tautulli ingestion events
+
+- `tautulli_backfill_started` records the run ID, selected user scope, page size, and apply mode.
+- `tautulli_backfill_page_failed` records the run ID, user ID, page offset, bounded attempt count, and allowlisted error code.
+- `tautulli_backfill_completed` records the run ID, completion status, and bounded source/import/skip/failure counts.
+
+These events must not contain raw Tautulli payloads, credentials, private paths, or unbounded upstream error text. An incomplete run is never recorded as completed.
