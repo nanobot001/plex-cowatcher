@@ -91,6 +91,58 @@ test("overview merges audiobook sessions when Plex changes the item key", async 
   expect(pageErrors).toEqual([]);
 });
 
+test("archive-only Plex views feed the shared activity read model", async ({ page }) => {
+  const response = await page.request.get("/api/dashboard/overview?ratingKey=archive-only-movie&limit=10");
+  const body = await response.json();
+  expect(response.status(), JSON.stringify(body)).toBe(200);
+  expect(body.ok).toBe(true);
+  expect(body.data.activity.total).toBe(1);
+  expect(body.data.activity.items).toHaveLength(1);
+  expect(body.data.activity.items[0]).toMatchObject({
+    title: "Archive-only Fixture Movie",
+    displayName: "Tony",
+    watchedAt: "2021-02-03T12:00:00.000Z",
+    completed: true
+  });
+  expect(body.data.activity.items[0].evidence.watchedAtProvenance).toBe("plex_archive_recovery");
+});
+
+test("historical identity review is conditional and reversible from movie detail", async ({ page }) => {
+  const response = await page.request.get("/api/dashboard/detail-workspace/movie%3Areview-movie");
+  const body = await response.json();
+  expect(response.status(), JSON.stringify(body)).toBe(200);
+  expect(body.data.archiveIdentityReview.candidates).toHaveLength(1);
+  const candidate = body.data.archiveIdentityReview.candidates[0];
+  await page.request.post("/api/dashboard/detail-workspace/movie%3Areview-movie/archive-identity-review", { data: { archiveMediaId: candidate.archiveMediaId, decision: "unresolved" } });
+  const resetResponse = await page.request.get("/api/dashboard/detail-workspace/movie%3Areview-movie");
+  const resetBody = await resetResponse.json();
+  expect(resetBody.data.archiveIdentityReview.candidates[0]).toMatchObject({ title: "Review Movie", decision: "unresolved", eventCount: 1 });
+
+  await page.goto("/#overview?category=movie&detail=movie%3Areview-movie");
+  const dialog = page.locator("#detail-dialog");
+  const review = dialog.getByTestId("archive-identity-review");
+  await expect(review).toBeVisible();
+  await expect(review.getByRole("button", { name: "Review" })).toBeVisible();
+  await review.getByRole("button", { name: "Review" }).click();
+  await expect(review.getByTestId("archive-identity-candidate")).toContainText("2018");
+  const reviewPanel = review.locator("[data-archive-review-panel]");
+  await expect(review.getByRole("button", { name: "Hide" })).toBeVisible();
+  await review.getByRole("button", { name: "Hide" }).click();
+  await expect(reviewPanel).toBeHidden();
+  await expect(review.getByRole("button", { name: "Review" })).toBeVisible();
+  await review.getByRole("button", { name: "Review" }).click();
+  await review.getByRole("button", { name: "Assign" }).click();
+  await expect(dialog.getByTestId("detail-movie-history-row").filter({ hasText: "2018-01-01" })).toBeVisible();
+  await expect(reviewPanel).toBeHidden();
+  await review.getByRole("button", { name: "Review" }).click();
+  await expect(review.getByRole("button", { name: "Undo correction" })).toBeVisible();
+  await review.getByRole("button", { name: "Undo correction" }).click();
+  await expect(reviewPanel).toBeHidden();
+  await review.getByRole("button", { name: "Review" }).click();
+  await expect(review.getByTestId("archive-identity-candidate")).toContainText("Needs review");
+  await expectNoVisualOverflow(page);
+});
+
 test("canonical artwork stays aligned across surfaces and refreshes after a known source change", async ({ page }) => {
   const setCover = async (variant) => {
     const response = await page.request.post("/__test/artwork/audiobook/20", { data: { variant } });
@@ -581,6 +633,9 @@ test("Movie detail groups canonical stale-key history and loads About independen
   await expect(dialog.getByTestId("detail-movie-history-row").filter({ hasText: "Ace" })).toContainText("2 observations");
   await expect(dialog.getByTestId("detail-movie-history-row").filter({ hasText: "Justin" })).toContainText("Confirmed together");
   await expect(dialog.getByTestId("detail-movie-history-row").filter({ hasText: "Tony" })).toContainText("2022-01-01");
+  const historicalTonyRow = dialog.getByTestId("detail-movie-history-row").filter({ hasText: "Tony" });
+  await expect(historicalTonyRow.getByTestId("movie-history-source-badge")).toHaveText("Plex history");
+  await expect(historicalTonyRow.getByTestId("movie-history-source-badge")).toHaveAttribute("title", "Plex historical last-view evidence");
   await expect(dialog).not.toContainText("Secret");
   await expect(dialog).not.toContainText("Observed time");
   await expect(dialog.getByTestId("detail-workspace-playback")).toHaveCount(0);

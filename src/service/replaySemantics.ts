@@ -13,6 +13,7 @@ export interface ReplayObservation {
   progressPercent?: number | null;
   startedAt?: string | null;
   endedAt?: string | null;
+  source?: "detailed_playback" | "historical_last_view";
 }
 
 export interface ReplaySemantics {
@@ -108,7 +109,8 @@ export function evaluateReplaySemantics(
 ): ReplaySemantics {
   const inactivityGapMs = options.inactivityGapMs ?? REPLAY_INACTIVITY_GAP_MS;
   const resetThreshold = options.resetThresholdPercentagePoints ?? REPLAY_RESET_THRESHOLD_PERCENTAGE_POINTS;
-  const sessions = reconstructSessions(observations, inactivityGapMs);
+  const detailedObservations = observations.filter((observation) => observation.source !== "historical_last_view");
+  const sessions = reconstructSessions(detailedObservations, inactivityGapMs);
   const completedSessions = sessions.filter(session => session.completed);
   let replayCount = 0;
   let replayReason: ReplayReason | null = null;

@@ -65,7 +65,7 @@ export function registerWebRoutes(router: Router): void {
           </section>
         </dialog>
       </div>
-      <script src="/static/dashboard.js?v=3-2n-6e-3-progress-workspace"></script>
+      <script src="/static/dashboard.js?v=3-6-2b-archive-identity-review"></script>
     `));
   });
 

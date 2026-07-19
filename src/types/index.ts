@@ -69,6 +69,37 @@ export interface PlexRichMetadata {
   filePath?: string;
 }
 
+export interface PlexHistoricalMovieState {
+  ratingKey: string;
+  guid?: string;
+  title: string;
+  mediaType: "movie";
+  librarySectionID?: string;
+  librarySectionTitle?: string;
+  viewCount?: number;
+  lastViewedAt?: string;
+}
+
+export interface PlexLibraryMovieViewRecord {
+  sourceRowId: number;
+  accountId?: number;
+  accountName?: string;
+  guid?: string;
+  title: string;
+  year?: number;
+  viewedAt: string;
+  stableIds: string[];
+}
+
+export type ArchiveImportOutcome =
+  | "imported"
+  | "already_covered"
+  | "reconciled"
+  | "unresolved"
+  | "ambiguous"
+  | "unknown_account"
+  | "failed";
+
 export type AudiobookProvenance = "audnexus" | "google_books" | "folder_path" | "plex" | "manual";
 export type AudiobookEnrichmentStatus = "enriched" | "partial" | "pending" | "retry_wait";
 

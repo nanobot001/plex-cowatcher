@@ -1,10 +1,11 @@
 import { z } from "zod";
 import type { Db } from "../db/database.js";
-import type { DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket, ProgressHierarchyExpansion, ProgressNodeState, ProgressNodeStateSource, ProgressWatcherEvidence, DashboardDetailIdentity, DashboardDetailIdentityInput, DashboardDetailResolution, DashboardDetailWorkspaceResult, DashboardDetailWorkspaceHierarchyResult, DashboardMovieHistory, DashboardMovieHistoryRow } from "../types/api.js";
+import type { DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket, ProgressHierarchyExpansion, ProgressNodeState, ProgressNodeStateSource, ProgressWatcherEvidence, DashboardDetailIdentity, DashboardDetailIdentityInput, DashboardDetailResolution, DashboardDetailWorkspaceResult, DashboardDetailWorkspaceHierarchyResult, DashboardMovieHistory, DashboardMovieHistoryRow, DashboardArchiveIdentityReview } from "../types/api.js";
 import { CowatchingIntelligenceService } from "./cowatchingIntelligenceService.js";
 import { CowatchAdjudicationService } from "./cowatchAdjudicationService.js";
 import { buildDashboardArtworkDescriptor, type DashboardArtworkDescriptor } from "./artworkService.js";
 import { evaluateReplaySemantics, type ReplayObservation, type ReplaySemantics } from "./replaySemantics.js";
+import { ArchivePlexViewRecoveryService } from "./archivePlexViewRecoveryService.js";
 
 const HOUSEHOLD_CATEGORIES = ["movie", "tv", "classic_tv", "anime", "audiobook"] as const;
 const SUMMARY_SAMPLE_LIMIT = 500;
@@ -382,11 +383,13 @@ export function deriveDashboardCategory(mediaType: string, libraryName?: string)
 export class DashboardService {
   private readonly cowatchingService: CowatchingIntelligenceService;
   private readonly adjudicationService: CowatchAdjudicationService;
+  private readonly archiveService: ArchivePlexViewRecoveryService;
   private readonly householdDateFormatter: Intl.DateTimeFormat;
 
   constructor(private readonly db: Db, options: DashboardServiceOptions = {}) {
     this.cowatchingService = new CowatchingIntelligenceService(db);
     this.adjudicationService = new CowatchAdjudicationService(db);
+    this.archiveService = new ArchivePlexViewRecoveryService(db);
     this.householdDateFormatter = new Intl.DateTimeFormat("en-US", {
       timeZone: options.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
       year: "numeric",
@@ -436,6 +439,12 @@ export class DashboardService {
       if (!metadata) return { ok: false, errorCode: "DETAIL_NOT_FOUND" as const };
 
       const movieHistory = identity.kind === "movie" ? this.getCanonicalMovieHistory(identity) : undefined;
+      const archiveIdentityReview: DashboardArchiveIdentityReview | undefined = identity.kind === "movie"
+        ? {
+          candidates: this.archiveService.queryIdentityCandidates(identity.ratingKey, this.currentMovieGuid(identity.ratingKey), metadata.title),
+          reviewable: true
+        }
+        : undefined;
       const activity = identity.kind === "movie"
         ? []
         : this.getActivity({ ...this.detailActivityFilter(identity), limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
@@ -542,6 +551,7 @@ export class DashboardService {
           },
           ...(movieHistory ? {
             movieHistory,
+            ...(archiveIdentityReview ? { archiveIdentityReview } : {}),
             movieProfile: { route: `/api/dashboard/detail-workspace/${encodeURIComponent(identity.detailKey)}/movie-profile` }
           } : {}),
           timingMs: 0
@@ -692,7 +702,7 @@ export class DashboardService {
   }
 
   private replayObservation(
-    row: { watchedAt: string; completed?: unknown; percentComplete?: unknown; viewOffset?: unknown; duration?: unknown; sessionStartAt?: string; sessionEndAt?: string },
+    row: { watchedAt: string; completed?: unknown; percentComplete?: unknown; viewOffset?: unknown; duration?: unknown; sessionStartAt?: string; sessionEndAt?: string; watchedAtProvenance?: string },
     completed = Boolean(row.completed),
     progressPercent = this.replayProgressPercent(row)
   ): ReplayObservation {
@@ -702,7 +712,8 @@ export class DashboardService {
       completed,
       progressPercent,
       startedAt: row.sessionStartAt ?? null,
-      endedAt: row.sessionEndAt ?? null
+      endedAt: row.sessionEndAt ?? null,
+      source: row.watchedAtProvenance === "plex_historical_last_view" ? "historical_last_view" : "detailed_playback"
     };
   }
 
@@ -764,6 +775,7 @@ export class DashboardService {
     const directRows = this.db.prepare(`
       SELECT po.id, po.user_id AS userId, po.rating_key AS ratingKey, po.watched_at AS watchedAt,
         po.percent_complete AS percentComplete, po.view_offset AS viewOffset, po.duration, po.completed,
+        po.watched_at_provenance AS watchedAtProvenance,
         COALESCE(NULLIF(u.dashboard_alias, ''), u.plex_username) AS displayName
       FROM playback_observations po
       JOIN users u ON u.id = po.user_id
@@ -775,6 +787,9 @@ export class DashboardService {
     `).all(...this.detailIdentityArgs(identity), MOVIE_HISTORY_OBSERVATION_LIMIT + 1) as any[];
     const directLimited = directRows.length > MOVIE_HISTORY_OBSERVATION_LIMIT;
     const observations = directRows.slice(0, MOVIE_HISTORY_OBSERVATION_LIMIT);
+    const archiveRows = this.archiveService.queryMovieHistory(identity.ratingKey, canonicalGuid ?? undefined, MOVIE_HISTORY_OBSERVATION_LIMIT);
+    const directObservationKeys = new Set(observations.map((row) => `${Number(row.userId)}:${String(row.watchedAt)}`));
+    const recoveredArchiveRows = archiveRows.filter((row) => !directObservationKeys.has(`${row.userId}:${row.eventTime}`));
     const groups = new Map<string, DashboardMovieHistoryRow>();
     const eligibleRatingKeys = new Set<string>([identity.ratingKey]);
     const evidenceTimestamps: string[] = [];
@@ -809,7 +824,8 @@ export class DashboardService {
           observationCount: 1,
           sessionCount: 0,
           replayCount: 0,
-          evidenceKind: "direct_observation"
+          evidenceKind: "direct_observation",
+          sourceLabel: row.watchedAtProvenance === "plex_historical_last_view" ? "Plex historical last-view" : undefined
         });
         continue;
       }
@@ -817,6 +833,46 @@ export class DashboardService {
       if (row.watchedAt > existing.latestWatchedAt) existing.latestWatchedAt = row.watchedAt;
       if (Number(row.completed) === 1) existing.state = "completed";
       if (percent != null && (existing.strongestPercent == null || percent > existing.strongestPercent)) existing.strongestPercent = percent;
+      if (row.watchedAtProvenance === "plex_historical_last_view") existing.sourceLabel = "Includes Plex historical last-view";
+    }
+
+    for (const row of recoveredArchiveRows) {
+      const localDate = this.householdLocalDate(row.eventTime);
+      const key = `${row.userId}:${localDate}`;
+      const replayObservation = this.replayObservation({
+        watchedAt: row.eventTime,
+        completed: true,
+        watchedAtProvenance: "plex_historical_last_view"
+      }, true);
+      const dayEvidence = directEvidenceByDay.get(key) ?? [];
+      dayEvidence.push(replayObservation);
+      directEvidenceByDay.set(key, dayEvidence);
+      const userEvidence = directEvidenceByUser.get(row.userId) ?? [];
+      userEvidence.push(replayObservation);
+      directEvidenceByUser.set(row.userId, userEvidence);
+      evidenceTimestamps.push(row.eventTime);
+      const existing = groups.get(key);
+      if (!existing) {
+        groups.set(key, {
+          userId: row.userId,
+          displayName: row.displayName,
+          localDate,
+          latestWatchedAt: row.eventTime,
+          state: "completed",
+          strongestPercent: 100,
+          observationCount: 1,
+          sessionCount: 0,
+          replayCount: 0,
+          evidenceKind: "direct_observation",
+          sourceLabel: "Plex archive recovery"
+        });
+        continue;
+      }
+      existing.observationCount += 1;
+      existing.state = "completed";
+      existing.strongestPercent = existing.strongestPercent == null ? 100 : Math.max(existing.strongestPercent, 100);
+      if (row.eventTime > existing.latestWatchedAt) existing.latestWatchedAt = row.eventTime;
+      existing.sourceLabel = existing.sourceLabel ? "Includes Plex archive recovery" : "Plex archive recovery";
     }
 
     for (const [key, replayObservations] of directEvidenceByDay.entries()) {
@@ -900,7 +956,7 @@ export class DashboardService {
       runtimeMinutes: Number.isFinite(duration) && duration > 0 ? Math.round(duration / 60_000) : null,
       people,
       summary: {
-        rawObservationCount: observations.length,
+        rawObservationCount: observations.length + recoveredArchiveRows.length,
         sessionCount: directReplaySummary.sessionCount,
         viewingDayCount: allRows.length,
         replayCount: directReplaySummary.replayCount,
@@ -930,8 +986,27 @@ export class DashboardService {
       ORDER BY CASE WHEN rating_key = ? THEN 0 ELSE 1 END, rating_key
       LIMIT 1
     `).get(key, key, key) as any;
-    if (catalog) return { title: catalog.title || catalog.grandparent_title || key, subtitle: catalog.library_title ?? null, ...artworkRoutes(key) };
+    const catalogTitle = typeof catalog?.title === "string" ? catalog.title.trim() : "";
+    if (catalog && catalogTitle && !/^Unknown Media \(/i.test(catalogTitle)) {
+      return { title: catalogTitle || catalog.grandparent_title || key, subtitle: catalog.library_title ?? null, ...artworkRoutes(key) };
+    }
     const observation = this.db.prepare(`SELECT title, show_title, library_name FROM playback_observations WHERE rating_key = ? OR grandparent_rating_key = ? ORDER BY watched_at DESC LIMIT 1`).get(key, key) as any;
+    const observationTitle = typeof observation?.title === "string" ? observation.title.trim() : "";
+    if (observation && observationTitle && !/^Unknown Media \(/i.test(observationTitle)) {
+      return { title: identity.kind === "series" ? (observation.show_title || observation.title) : observation.title, subtitle: observation.library_name ?? null, ...artworkRoutes(identity.kind === "series" ? identity.detailKey.replace(/^series:[^:]+:/, "") : key) };
+    }
+    if (identity.kind === "movie") {
+      const archive = this.db.prepare(`
+        SELECT am.title, am.year
+        FROM archive_media am
+        JOIN archive_media_aliases aa ON aa.archive_media_id = am.id
+        WHERE aa.alias_type = 'rating_key' AND aa.alias_value = ?
+        ORDER BY CASE WHEN am.status = 'resolved' THEN 0 ELSE 1 END, am.updated_at DESC, am.id DESC
+        LIMIT 1
+      `).get(key) as any;
+      if (archive?.title) return { title: archive.title, subtitle: null, ...artworkRoutes(key) };
+    }
+    if (catalog) return { title: catalog.title || catalog.grandparent_title || key, subtitle: catalog.library_title ?? null, ...artworkRoutes(key) };
     if (!observation) return null;
     return { title: identity.kind === "series" ? (observation.show_title || observation.title) : observation.title, subtitle: observation.library_name ?? null, ...artworkRoutes(identity.kind === "series" ? identity.detailKey.replace(/^series:[^:]+:/, "") : key) };
   }
@@ -999,12 +1074,32 @@ export class DashboardService {
     where += ` AND ${categorySql} != 'other'`;
     if (p.category) { where += ` AND ${categorySql} = ?`; args.push(p.category); }
     const from = ` FROM playback_observations po JOIN users u ON u.id=po.user_id LEFT JOIN content_catalog cat ON cat.rating_key=po.rating_key LEFT JOIN content_catalog groupcat ON groupcat.rating_key=po.grandparent_rating_key LEFT JOIN audiobook_books ab ON ab.id=cat.audiobook_id LEFT JOIN watch_events we ON we.rating_key=po.rating_key AND we.source_user_id=po.user_id AND we.watched_at >= strftime('%Y-%m-%dT%H:%M:%fZ', po.watched_at, '-600 seconds') AND we.watched_at <= strftime('%Y-%m-%dT%H:%M:%fZ', po.watched_at, '+600 seconds') LEFT JOIN cowatch_confirmations cc ON cc.watch_event_id=we.id AND cc.target_user_id=po.user_id`;
-    const total = Number((this.db.prepare(`SELECT count(*) total${from}${where}`).get(...args) as any).total);
+    const directTotal = Number((this.db.prepare(`SELECT count(*) total${from}${where}`).get(...args) as any).total);
     const order = p.sort === "title" ? "po.title COLLATE NOCASE, po.rating_key, po.watched_at DESC, po.id DESC" : p.sort === "progress" ? "po.percent_complete DESC, po.watched_at DESC, po.id DESC" : "po.watched_at DESC, po.id DESC";
     const confirmedUserFilter = p.user ? " AND confirmed_user.plex_username = ?" : "";
     const confirmedArgs = p.user ? [p.user] : [];
     const confirmedParticipantsSql = `(SELECT json_group_array(json_object('userId', confirmed_user.id, 'displayName', COALESCE(NULLIF(confirmed_user.dashboard_alias, ''), confirmed_user.plex_username))) FROM cowatch_confirmations confirmed JOIN users confirmed_user ON confirmed_user.id=confirmed.target_user_id WHERE confirmed.watch_event_id=we.id AND confirmed.status='confirmed' AND COALESCE(confirmed_user.dashboard_shown, confirmed_user.enabled)=1${confirmedUserFilter}) AS confirmed_participants_json`;
-    const rows = this.db.prepare(`SELECT po.*,u.plex_username,u.display_name AS synced_display_name,u.dashboard_alias,u.dashboard_shown,we.prompt_status,cc.status confirmation_status,cc.plex_sync_status,cat.library_title AS catalog_library_title,groupcat.library_title AS group_catalog_library_title,cat.audiobook_id AS audiobook_id,ab.title AS audiobook_title,cat.parent_title AS catalog_parent_title,cat.grandparent_title AS catalog_grandparent_title,${confirmedParticipantsSql}${from}${where} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...confirmedArgs, ...args, p.limit, p.offset) as any[];
+    const candidateLimit = Math.min(100_000, p.offset + p.limit);
+    const directRows = this.db.prepare(`SELECT po.*,u.plex_username,u.display_name AS synced_display_name,u.dashboard_alias,u.dashboard_shown,we.prompt_status,cc.status confirmation_status,cc.plex_sync_status,cat.library_title AS catalog_library_title,groupcat.library_title AS group_catalog_library_title,cat.audiobook_id AS audiobook_id,ab.title AS audiobook_title,cat.parent_title AS catalog_parent_title,cat.grandparent_title AS catalog_grandparent_title,${confirmedParticipantsSql}${from}${where} ORDER BY ${order} LIMIT ? OFFSET 0`).all(...confirmedArgs, ...args, candidateLimit) as any[];
+    const archiveRows = this.archiveService.queryDashboardActivity()
+      .filter((row) => this.archiveActivityMatchesFilters(row, p));
+    const rows = [...directRows, ...archiveRows]
+      .sort((a, b) => {
+        if (p.sort === "title") {
+          return String(a.title ?? "").localeCompare(String(b.title ?? ""), undefined, { sensitivity: "base" })
+            || String(a.rating_key ?? "").localeCompare(String(b.rating_key ?? ""), undefined, { sensitivity: "base" })
+            || String(b.watched_at ?? "").localeCompare(String(a.watched_at ?? ""))
+            || Number(b.id) - Number(a.id);
+        }
+        if (p.sort === "progress") {
+          return Number(b.percent_complete ?? -1) - Number(a.percent_complete ?? -1)
+            || String(b.watched_at ?? "").localeCompare(String(a.watched_at ?? ""))
+            || Number(b.id) - Number(a.id);
+        }
+        return String(b.watched_at ?? "").localeCompare(String(a.watched_at ?? "")) || Number(b.id) - Number(a.id);
+      })
+      .slice(p.offset, p.offset + p.limit);
+    const total = directTotal + archiveRows.length;
 
     const cowatchMap = new Map<number, { event: any; participant: any }>();
     if (rows.length > 0) {
@@ -1030,6 +1125,34 @@ export class DashboardService {
 
     const items = rows.map((row) => this.mapActivity(row, cowatchMap)).filter(Boolean) as DashboardActivityItem[];
     return { items, total, limit: p.limit, offset: p.offset };
+  }
+
+  recordArchiveIdentityDecision(input: {
+    archiveMediaId: number;
+    decision: "assign" | "unrelated" | "unresolved";
+    targetRatingKey?: string | null;
+    actor: string;
+    reason?: string | null;
+  }): { ok: true; data: unknown } | { ok: false; errorCode: string; message: string } {
+    const result = this.archiveService.recordIdentityDecision(input);
+    if ("ok" in result && result.ok === false) {
+      return { ok: false, errorCode: result.code, message: result.message };
+    }
+    return { ok: true, data: result };
+  }
+
+  private archiveActivityMatchesFilters(row: { user_id: number; plex_username: string; rating_key: string; media_type: string; title: string; library_name?: string | null; watched_at: string; completed: number }, p: ReturnType<typeof parseFilters>): boolean {
+    if (p.dateFrom && row.watched_at < new Date(p.dateFrom).toISOString()) return false;
+    if (p.dateTo && row.watched_at > new Date(p.dateTo).toISOString()) return false;
+    if (p.user && row.plex_username !== p.user) return false;
+    if (p.ratingKey && row.rating_key !== p.ratingKey) return false;
+    if (p.grandparentRatingKey) return false;
+    if (p.audiobookId) return false;
+    if (p.library && row.library_name !== p.library) return false;
+    if (p.completed !== undefined && row.completed !== (p.completed ? 1 : 0)) return false;
+    if (p.search && !String(row.title ?? "").toLocaleLowerCase().includes(p.search.toLocaleLowerCase())) return false;
+    const category = deriveDashboardCategory(row.media_type, row.library_name ?? undefined).category;
+    return isHouseholdCategory(category) && (!p.category || p.category === category);
   }
 
   getContinueWatching(input: unknown) {
@@ -1625,9 +1748,17 @@ export class DashboardService {
     let start: Date;
 
     if (period === "all") {
-      const earliest = this.db.prepare(`SELECT MIN(po.watched_at) AS watched_at
+      const earliest = this.db.prepare(`SELECT MIN(watched_at) AS watched_at FROM (
+        SELECT po.watched_at
         FROM playback_observations po JOIN users u ON u.id=po.user_id
-        WHERE COALESCE(u.dashboard_shown,u.enabled)=1`).get() as { watched_at?: string | null };
+        WHERE COALESCE(u.dashboard_shown,u.enabled)=1
+        UNION ALL
+        SELECT archiveEvent.event_time AS watched_at
+        FROM archive_watch_events archiveEvent JOIN users archiveUser ON archiveUser.id=archiveEvent.user_id
+        WHERE archiveEvent.source='plex_library_db'
+          AND archiveEvent.event_time IS NOT NULL
+          AND COALESCE(archiveUser.dashboard_shown,archiveUser.enabled)=1
+      )`).get() as { watched_at?: string | null };
       start = earliest.watched_at ? this.parsePeopleBoundary(earliest.watched_at, false) : new Date(end);
     } else if (period === "custom") {
       start = filters.dateFrom ? this.parsePeopleBoundary(filters.dateFrom, false) : new Date(0);
@@ -1685,11 +1816,25 @@ export class DashboardService {
       LEFT JOIN content_catalog groupcat ON groupcat.rating_key=po.grandparent_rating_key
       LEFT JOIN audiobook_books ab ON ab.id=cat.audiobook_id
       ${where} ORDER BY po.watched_at DESC,po.id DESC`).all(...args) as any[];
-    const allDirect: PeopleContribution[] = directRows.map((row) => ({
-      ...this.mapActivity(row),
-      contribution: "observed" as const,
-      confirmedTogether: false
-    }));
+    const archiveRows = this.archiveService.queryDashboardActivity().filter((row) =>
+      row.watched_at >= window.dateFrom && row.watched_at <= window.dateTo
+    );
+    const archiveContributions = archiveRows
+      .map((row) => this.mapActivity(row))
+      .filter(Boolean)
+      .map((item) => ({
+        ...item,
+        contribution: "observed" as const,
+        confirmedTogether: false
+      }));
+    const allDirect: PeopleContribution[] = [
+      ...directRows.map((row) => ({
+        ...this.mapActivity(row),
+        contribution: "observed" as const,
+        confirmedTogether: false
+      })),
+      ...archiveContributions
+    ];
     const contributions: PeopleContribution[] = allDirect.filter((item) => this.peopleItemMatchesFilters(item, filters));
     const includedDirectIds = new Set(contributions.map((item) => item.id));
     const directById = new Map(allDirect.map((item) => [item.id, item]));

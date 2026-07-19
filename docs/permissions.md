@@ -26,6 +26,8 @@ Every tool must have a risk level.
 - Co-watch review decisions are `write_action`. They default to dry-run and require `apply=true`, explicit confirmation, and a stable request ID before appending an adjudication.
 - Asking for Discord review is a separate `write_action` with the same dry-run/apply confirmation contract. Discord interaction resolution is adjudication-only and has no Plex mutation authority.
 - Dashboard detail refresh is a `write_action`. It defaults to dry-run, requires `apply=true` and `confirm=true`, is limited to the resolved canonical title, and records a privacy-safe audit event without mutating Plex or Tautulli.
+- Plex historical movie backfill is a `write_action`. It defaults to dry-run, requires `--apply` and `--confirm`, is CLI-only, reads only per-user Plex-visible movie metadata, and writes source-labeled derived observations without mutating Plex or Tautulli.
+- Archive Plex view recovery is a `write_action`. It defaults to dry-run, requires `--apply` and `--confirm`, is CLI-only, reads Plex's local SQLite movie view rows read-only, and writes only archive-owned CoWatcher tables without exposing the source path or mutating Plex/Tautulli.
 
 ## Audiobook Proof Operations
 

@@ -1,4 +1,4 @@
-import type { MarkWatchedResult, PlexMetadata, PlexRichMetadata, PlexUser, WatchedState } from "../types/index.js";
+import type { MarkWatchedResult, PlexHistoricalMovieState, PlexMetadata, PlexRichMetadata, PlexUser, WatchedState } from "../types/index.js";
 import { appConfig } from "../utils/config.js";
 
 export interface PlexAdapter {
@@ -8,6 +8,8 @@ export interface PlexAdapter {
   getWatchedState(userId: string, ratingKey: string, plexGuid?: string): Promise<WatchedState>;
   markWatched(userId: string, ratingKey: string, plexGuid?: string): Promise<MarkWatchedResult>;
   listLibraries(): Promise<Array<{ key: string; title: string; type: string }>>;
+  listUserMovieStates?(userId: string): Promise<PlexHistoricalMovieState[]>;
+  resolveActiveRatingKey?(originalRatingKey: string, plexGuid?: string): Promise<string>;
   listShows(libraryKey: string): Promise<string[]>;
   listLibraryTracks(libraryKey: string): Promise<PlexRichMetadata[]>;
 }
@@ -112,6 +114,10 @@ export class MockPlexAdapter implements PlexAdapter {
       { key: "4", title: "Classic TV", type: "show" },
       { key: "5", title: "Audiobooks", type: "artist" }
     ];
+  }
+
+  async listUserMovieStates(_userId: string): Promise<PlexHistoricalMovieState[]> {
+    return [];
   }
 
   async listShows(libraryKey: string): Promise<string[]> {
@@ -571,6 +577,52 @@ export class HttpPlexAdapter extends MockPlexAdapter {
       }
     }
     return directories;
+  }
+
+  async listUserMovieStates(userId: string): Promise<PlexHistoricalMovieState[]> {
+    const librariesResponse = await this.fetchAsUser(userId, "/library/sections");
+    if (!librariesResponse.ok) {
+      throw plexErrorFromResponse(librariesResponse, "PLEX_USER_LIBRARIES_FAILED", "Failed to retrieve Plex libraries for the user.");
+    }
+    const librariesXml = await librariesResponse.text();
+    const movieLibraries = (librariesXml.match(/<Directory\b[^>]*>/g) ?? [])
+      .map((tag) => ({
+        key: attr(tag, "key"),
+        title: attr(tag, "title"),
+        type: attr(tag, "type")
+      }))
+      .filter((library): library is { key: string; title: string; type: string } => library.type === "movie" && Boolean(library.key && library.title));
+
+    const movies: PlexHistoricalMovieState[] = [];
+    for (const library of movieLibraries) {
+      const response = await this.fetchAsUser(userId, `/library/sections/${encodeURIComponent(library.key)}/all`, { type: "1" });
+      if (!response.ok) {
+        throw plexErrorFromResponse(response, "PLEX_USER_MOVIES_FAILED", "Failed to retrieve Plex movies for the user.");
+      }
+      const xml = await response.text();
+      const tags = xml.match(/<(?:Video|Movie)\b[^>]*>/g) ?? [];
+      for (const tag of tags) {
+        const ratingKey = attr(tag, "ratingKey");
+        if (!ratingKey) continue;
+        const rawLastViewedAt = attr(tag, "lastViewedAt") ?? attr(tag, "viewedAt");
+        const lastViewedAt = rawLastViewedAt && /^\d+$/.test(rawLastViewedAt)
+          ? new Date(Number(rawLastViewedAt) * 1000).toISOString()
+          : rawLastViewedAt || undefined;
+        const rawViewCount = attr(tag, "viewCount");
+        const viewCount = rawViewCount == null || rawViewCount === "" ? undefined : Number(rawViewCount);
+        movies.push({
+          ratingKey,
+          guid: attr(tag, "guid") || undefined,
+          title: attr(tag, "title") ?? ratingKey,
+          mediaType: "movie",
+          librarySectionID: attr(tag, "librarySectionID") ?? library.key,
+          librarySectionTitle: attr(tag, "librarySectionTitle") ?? library.title,
+          viewCount: Number.isFinite(viewCount) ? viewCount : undefined,
+          lastViewedAt
+        });
+      }
+    }
+    return movies;
   }
 
   async listShows(libraryKey: string): Promise<string[]> {

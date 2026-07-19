@@ -3310,7 +3310,7 @@ body.detail-workspace-open {
 
 .detail-movie-history-row {
   display: grid;
-  grid-template-columns: minmax(92px, auto) minmax(120px, 1fr) minmax(112px, auto) minmax(132px, auto);
+  grid-template-columns: minmax(96px, 0.8fr) minmax(130px, 1fr) minmax(120px, 0.9fr) minmax(180px, 1.2fr);
   gap: 12px;
   align-items: center;
   min-width: 0;
@@ -3336,6 +3336,9 @@ body.detail-workspace-open {
 }
 
 .detail-movie-history-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
   justify-self: start;
   padding: 4px 8px;
   border: 1px solid rgba(255,255,255,0.12);
@@ -3359,9 +3362,115 @@ body.detail-workspace-open {
   font-size: 0.84rem;
 }
 
+.detail-movie-history-evidence {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.detail-movie-history-metrics {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-movie-history-source {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 4px 8px;
+  color: #67e8f9;
+  border-color: rgba(103,232,249,0.35);
+  background: rgba(6,182,212,0.12);
+  text-transform: none;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
 .detail-movie-history-more,
 .detail-movie-provenance {
   margin-top: 14px;
+}
+
+.detail-movie-archive-review {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid rgba(103,232,249,0.22);
+  border-radius: 14px;
+  background: rgba(8,47,73,0.2);
+}
+
+.detail-movie-archive-review-header,
+.detail-movie-review-candidate-heading,
+.detail-movie-review-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.detail-movie-archive-review h3 {
+  margin: 2px 0 0;
+}
+
+.detail-movie-archive-review-summary,
+.detail-movie-review-candidate p {
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.detail-movie-review-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.detail-movie-review-panel[hidden] {
+  display: none;
+}
+
+.detail-movie-review-candidate {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px;
+  background: rgba(15,23,42,0.42);
+}
+
+.detail-movie-review-state {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border: 1px solid rgba(103,232,249,0.3);
+  border-radius: 999px;
+  color: #a5f3fc;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.detail-movie-review-dates {
+  font-size: 0.82rem;
+}
+
+.detail-movie-review-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.detail-movie-review-actions label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.detail-movie-review-actions select {
+  min-width: 0;
+  max-width: 260px;
 }
 
 .detail-movie-history-more > summary,
@@ -3820,6 +3929,20 @@ body.detail-workspace-open {
   .detail-movie-profile-facts > div {
     grid-template-columns: minmax(0, 1fr);
     gap: 4px;
+  }
+
+  .detail-movie-review-candidate-heading,
+  .detail-movie-review-actions {
+    align-items: flex-start;
+  }
+
+  .detail-movie-review-actions label {
+    width: 100%;
+  }
+
+  .detail-movie-review-actions select {
+    flex: 1 1 auto;
+    max-width: none;
   }
 
   .detail-watcher-grid {

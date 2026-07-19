@@ -107,4 +107,16 @@ Discovery events must not contain file paths, authenticated URLs, tokens, raw Pl
 - `audiobook_proof_canary_requested` records a confirmed one-shot request and optional numeric audiobook ID.
 - `audiobook_proof_requeued` records the selected existing job ID and whether the confirmed request applied or was skipped.
 
+### `plex_historical_backfill_started` and `plex_historical_backfill_completed`
+
+These events record the bounded historical movie recovery run ID, cutoff, mode, and aggregate outcome counts. They never include Plex tokens, private paths, raw adapter errors, or full media payloads.
+
 Proof events never include manifests, media paths, chapter titles, raw child output, external messages, tags, or credentials.
+
+### `archive_plex_view_recovery_completed`
+
+Records an archive-owned external Plex view import with the run ID, mode, and bounded counts for imported, already-covered, unresolved, ambiguous, unknown-account, failed, archive-event links, and links to existing CoWatcher observations. It must not include the Plex database path, source payloads, credentials, or raw diagnostics.
+
+### `archive_identity_decision_recorded`
+
+Records an explicit, reversible archive-media identity review. Metadata contains only the decision ID, archive media ID, decision, and target rating key; it must not contain Plex paths, source payloads, account secrets, or raw diagnostics. Undo is represented by a later `unresolved` decision.

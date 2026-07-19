@@ -15,6 +15,7 @@ const envSchema = z.object({
   APP_BASE_URL: z.string().default("http://localhost:8787"),
   PLEX_BASE_URL: z.string().default("http://127.0.0.1:32400"),
   PLEX_TOKEN: z.string().default(""),
+  PLEX_LIBRARY_DB_PATH: z.string().default(""),
   PLEX_MUTATION_MODE: z.enum(["mock", "live"]).default("mock"),
   AUDIOBOOK_DISCOVERY_ENABLED: z
     .preprocess((value) => {

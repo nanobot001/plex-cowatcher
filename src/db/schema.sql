@@ -477,3 +477,188 @@ CREATE TABLE IF NOT EXISTS audiobook_proof_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_audiobook_proof_jobs_eligible
   ON audiobook_proof_jobs(state, next_attempt_at, id);
+
+CREATE TABLE IF NOT EXISTS plex_historical_backfill_runs (
+  id TEXT PRIMARY KEY,
+  cutoff_at TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK (mode IN ('dry_run', 'apply')),
+  status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  summary_json TEXT
+);
+
+CREATE TABLE IF NOT EXISTS plex_historical_backfill_users (
+  run_id TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  plex_user_id TEXT,
+  plex_username TEXT NOT NULL,
+  visibility_status TEXT NOT NULL,
+  status TEXT NOT NULL,
+  movie_count INTEGER NOT NULL DEFAULT 0,
+  imported_count INTEGER NOT NULL DEFAULT 0,
+  duplicate_count INTEGER NOT NULL DEFAULT 0,
+  skipped_count INTEGER NOT NULL DEFAULT 0,
+  failed_count INTEGER NOT NULL DEFAULT 0,
+  error_code TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (run_id, user_id),
+  FOREIGN KEY(run_id) REFERENCES plex_historical_backfill_runs(id) ON DELETE CASCADE,
+  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS plex_historical_movie_snapshots (
+  snapshot_key TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  plex_user_id TEXT,
+  rating_key TEXT NOT NULL,
+  plex_guid TEXT,
+  title TEXT NOT NULL,
+  library_name TEXT,
+  view_count INTEGER,
+  last_viewed_at TEXT,
+  cutoff_at TEXT NOT NULL,
+  queried_at TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  error_code TEXT,
+  imported_observation_id INTEGER,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  seen_count INTEGER NOT NULL DEFAULT 1,
+  FOREIGN KEY(run_id) REFERENCES plex_historical_backfill_runs(id) ON DELETE CASCADE,
+  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY(imported_observation_id) REFERENCES playback_observations(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_plex_historical_snapshots_user_time
+  ON plex_historical_movie_snapshots(user_id, last_viewed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_plex_historical_snapshots_guid
+  ON plex_historical_movie_snapshots(plex_guid);
+
+INSERT OR IGNORE INTO schema_migrations (version, name)
+VALUES (18, 'plex_historical_movie_backfill');
+
+CREATE TABLE IF NOT EXISTS archive_media (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  canonical_key TEXT NOT NULL UNIQUE,
+  media_type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  year INTEGER,
+  status TEXT NOT NULL DEFAULT 'resolved' CHECK (status IN ('resolved', 'unresolved', 'ambiguous', 'removed', 'metadata_incomplete')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS archive_media_aliases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  archive_media_id INTEGER NOT NULL,
+  source TEXT NOT NULL,
+  alias_type TEXT NOT NULL,
+  alias_value TEXT NOT NULL,
+  title_snapshot TEXT,
+  year_snapshot INTEGER,
+  resolution_method TEXT NOT NULL,
+  confidence TEXT NOT NULL CHECK (confidence IN ('high', 'medium', 'low', 'unknown')),
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  UNIQUE(source, alias_type, alias_value),
+  FOREIGN KEY(archive_media_id) REFERENCES archive_media(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_archive_alias_lookup
+  ON archive_media_aliases(alias_type, alias_value);
+
+CREATE TABLE IF NOT EXISTS archive_watch_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  archive_media_id INTEGER,
+  user_id INTEGER,
+  source TEXT NOT NULL,
+  source_record_key TEXT NOT NULL,
+  source_account_key TEXT,
+  source_guid TEXT,
+  source_rating_key TEXT,
+  title_snapshot TEXT NOT NULL,
+  event_time TEXT,
+  event_time_precision TEXT NOT NULL CHECK (event_time_precision IN ('second', 'day', 'unknown')),
+  completed INTEGER,
+  view_count INTEGER,
+  resolution_status TEXT NOT NULL CHECK (resolution_status IN ('resolved', 'unresolved', 'ambiguous', 'metadata_incomplete')),
+  account_resolution_method TEXT NOT NULL DEFAULT 'unknown',
+  account_confidence TEXT NOT NULL DEFAULT 'unknown',
+  captured_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  UNIQUE(source, source_record_key),
+  FOREIGN KEY(archive_media_id) REFERENCES archive_media(id) ON DELETE SET NULL,
+  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_archive_events_media_time
+  ON archive_watch_events(archive_media_id, event_time DESC);
+CREATE INDEX IF NOT EXISTS idx_archive_events_user_time
+  ON archive_watch_events(user_id, event_time DESC);
+
+CREATE TABLE IF NOT EXISTS archive_event_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  left_event_id INTEGER NOT NULL,
+  right_event_id INTEGER NOT NULL,
+  relation TEXT NOT NULL CHECK (relation IN ('same_event', 'same_media', 'duplicate')),
+  method TEXT NOT NULL,
+  confidence TEXT NOT NULL CHECK (confidence IN ('high', 'medium', 'low', 'unknown')),
+  created_at TEXT NOT NULL,
+  UNIQUE(left_event_id, right_event_id, relation),
+  FOREIGN KEY(left_event_id) REFERENCES archive_watch_events(id) ON DELETE CASCADE,
+  FOREIGN KEY(right_event_id) REFERENCES archive_watch_events(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS archive_observation_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  archive_event_id INTEGER NOT NULL,
+  playback_observation_id INTEGER NOT NULL,
+  relation TEXT NOT NULL CHECK (relation IN ('same_event', 'same_media', 'duplicate')),
+  method TEXT NOT NULL,
+  confidence TEXT NOT NULL CHECK (confidence IN ('high', 'medium', 'low', 'unknown')),
+  created_at TEXT NOT NULL,
+  UNIQUE(archive_event_id, playback_observation_id, relation),
+  FOREIGN KEY(archive_event_id) REFERENCES archive_watch_events(id) ON DELETE CASCADE,
+  FOREIGN KEY(playback_observation_id) REFERENCES playback_observations(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_archive_observation_links_observation
+  ON archive_observation_links(playback_observation_id);
+
+CREATE TABLE IF NOT EXISTS archive_identity_decisions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  archive_media_id INTEGER NOT NULL,
+  decision TEXT NOT NULL CHECK (decision IN ('assign', 'unrelated', 'unresolved')),
+  target_rating_key TEXT,
+  method TEXT NOT NULL,
+  confidence TEXT NOT NULL CHECK (confidence IN ('high', 'medium', 'low', 'unknown')),
+  actor TEXT NOT NULL,
+  reason TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(archive_media_id) REFERENCES archive_media(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_archive_identity_decisions_media
+  ON archive_identity_decisions(archive_media_id, id DESC);
+
+CREATE TABLE IF NOT EXISTS archive_ingest_runs (
+  id TEXT PRIMARY KEY,
+  source TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK (mode IN ('dry_run', 'apply')),
+  status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  summary_json TEXT
+);
+
+INSERT OR IGNORE INTO schema_migrations (version, name)
+VALUES (19, 'archive_owned_view_recovery');
+
+INSERT OR IGNORE INTO schema_migrations (version, name)
+VALUES (20, 'archive_external_observation_links');
+
+INSERT OR IGNORE INTO schema_migrations (version, name)
+VALUES (21, 'archive_identity_review');

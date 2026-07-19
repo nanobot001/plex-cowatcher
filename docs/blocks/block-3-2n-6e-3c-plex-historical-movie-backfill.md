@@ -1,7 +1,7 @@
 # Block 3-2n-6E-3C: Plex Historical Movie Backfill
 
-> Status: Planned.
-> Result: Not implemented.
+> Status: Implemented and verified (2026-07-18).
+> Result: Complete. Plex historical movie recovery is additive, exact-identity keyed, source-labeled, dry-run-first, and CLI-only.
 > Notes: Corrective data-completeness block after 6E-3B. Supplement detailed post-2022 Tautulli history with explicit pre-2022 Plex last-view evidence, beginning with movies.
 
 ## Goal
@@ -68,3 +68,17 @@ Recover defensible historical movie evidence that exists in Plex but is absent f
 - Fixture/database assertions showing Tautulli post-2022 observations and Plex pre-2022 evidence coexist without fabricated replay/session claims.
 - Read-only live canary for one known movie and one known Plex-visible user, confirming current rating-key resolution and returned `viewCount`/`lastViewedAt` are stored with explicit source labels.
 - `npm run verify:live-dashboard` after any production rebuild/restart.
+
+## Implementation Notes
+
+- Added per-user Plex movie enumeration through the existing user-token path, matching configured users by current Plex username when a stored Plex ID is stale.
+- Added schema version 18 for durable run summaries, per-user coverage, and raw per-movie snapshots. Derived rows use `watched_at_provenance = 'plex_historical_last_view'` and never receive a Tautulli row ID.
+- Added `plex-historical-backfill` with dry-run-by-default and `--apply --confirm`; apply creates a verified SQLite backup before writing and remains CLI-only.
+- Exact GUID identity is required for historical import. `viewCount` never creates additional plays, and historical observations are excluded from replay/session reconstruction while remaining visible as dated evidence.
+- Added explicit `Plex historical last-view` labels to activity/detail surfaces and regression coverage for the label and no-false-replay behavior.
+- Production canary: Tony, one Plex-visible movie (`68154`), dry-run reported one importable row; confirmed apply imported one observation with a verified backup; PM2 restart and live smoke then passed.
+
+## Verification Result
+
+- `npm run verify:block`: passed — 117/117 service/integration tests, 55 dashboard tests passed, 1 intentional narrow viewport skip, syntax and tool contracts passed.
+- `npm run verify:live-dashboard`: passed after the production rebuild/restart and bounded canary.

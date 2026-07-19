@@ -174,6 +174,51 @@ tools:
     output_schema:
       type: object
 
+  - name: project.plex_historical_backfill
+    risk: write_action
+    description: Preview or apply exact-GUID Plex per-user historical movie last-view recovery before the configured cutoff.
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        user:
+          type: string
+        rating_key:
+          type: string
+        plex_guid:
+          type: string
+        cutoff:
+          type: string
+          default: '2022-01-01T00:00:00.000Z'
+        apply:
+          type: boolean
+          default: false
+        confirm:
+          type: boolean
+          default: false
+    output_schema:
+      type: object
+
+  - name: project.archive_plex_view_recovery
+    risk: write_action
+    description: Preview or apply idempotent import of external Plex library movie view rows into archive-owned CoWatcher SQLite tables, linking exact matches to existing observations without copying them.
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        plex_db:
+          type: string
+        limit:
+          type: integer
+        apply:
+          type: boolean
+          default: false
+        confirm:
+          type: boolean
+          default: false
+    output_schema:
+      type: object
+
   - name: project.audiobook_import_chapters
     risk: write_action
     description: Import verified audiobook chapter boundaries from a JSON file.

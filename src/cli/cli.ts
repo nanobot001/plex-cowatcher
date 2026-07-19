@@ -28,7 +28,7 @@ function print(value: unknown): void {
 
 async function main(): Promise<void> {
   const users = new UserService(db);
-  if (!["audiobook-backfill", "audiobook-proof"].includes(command)) {
+  if (!["audiobook-backfill", "audiobook-proof", "plex-historical-backfill", "archive-plex-import"].includes(command)) {
     users.syncConfiguredUsers();
   }
   const plex = createPlexAdapter();
@@ -165,6 +165,67 @@ async function main(): Promise<void> {
           print({ ok: data.ok, tool: "project.audiobook_backfill", timestamp: new Date().toISOString(), data });
         } catch (error) {
           print({ ok: false, tool: "project.audiobook_backfill", timestamp: new Date().toISOString(), error: { code: error instanceof Error ? error.message : "AUDIOBOOK_BACKFILL_FAILED", message: "Audiobook backfill could not run.", retryable: false, severity: "error" } });
+          process.exitCode = 1;
+        }
+      }
+      break;
+    case "plex-historical-backfill":
+      {
+        const { PlexHistoricalMovieBackfillService } = await import("../service/plexHistoricalMovieBackfillService.js");
+        const timestamp = new Date().toISOString();
+        try {
+          const data = await new PlexHistoricalMovieBackfillService(db, plex).run({
+            apply: args.includes("--apply"),
+            confirm: args.includes("--confirm"),
+            user: arg("user"),
+            ratingKey: arg("rating-key"),
+            plexGuid: arg("plex-guid"),
+            cutoffAt: arg("cutoff")
+          });
+          print({ ok: data.ok, tool: "project.plex_historical_backfill", timestamp, data });
+        } catch (error) {
+          print({
+            ok: false,
+            tool: "project.plex_historical_backfill",
+            timestamp,
+            error: {
+              code: error instanceof Error ? error.message : "PLEX_HISTORICAL_BACKFILL_FAILED",
+              message: "Plex historical movie backfill could not run.",
+              retryable: false,
+              severity: "error"
+            }
+          });
+          process.exitCode = 1;
+        }
+      }
+      break;
+    case "archive-plex-import":
+      {
+        const { PlexLibraryDatabaseAdapter } = await import("../adapters/plexLibraryDatabaseAdapter.js");
+        const { ArchivePlexViewRecoveryService } = await import("../service/archivePlexViewRecoveryService.js");
+        const timestamp = new Date().toISOString();
+        try {
+          const data = new ArchivePlexViewRecoveryService(
+            db,
+            new PlexLibraryDatabaseAdapter(arg("plex-db") ?? appConfig.PLEX_LIBRARY_DB_PATH)
+          ).run({
+            apply: args.includes("--apply"),
+            confirm: args.includes("--confirm"),
+            limit: arg("limit") ? Number(arg("limit")) : undefined
+          });
+          print({ ok: data.ok, tool: "project.archive_plex_view_recovery", timestamp, data });
+        } catch (error) {
+          print({
+            ok: false,
+            tool: "project.archive_plex_view_recovery",
+            timestamp,
+            error: {
+              code: error instanceof Error ? error.message : "ARCHIVE_PLEX_IMPORT_FAILED",
+              message: "Archive Plex view recovery could not run.",
+              retryable: false,
+              severity: "error"
+            }
+          });
           process.exitCode = 1;
         }
       }
@@ -419,7 +480,7 @@ async function main(): Promise<void> {
       }
       break;
     default:
-      print({ ok: true, commands: ["health", "users", "recent", "pending", "preview-copy", "apply-copy", "audiobook-backfill", "scan-audiobooks", "audiobook-proof", "import-audiobook-chapters", "audit", "retry-failed", "verify-plex-watched-state", "test-discord-prompt"] });
+      print({ ok: true, commands: ["health", "users", "recent", "pending", "preview-copy", "apply-copy", "audiobook-backfill", "plex-historical-backfill", "archive-plex-import", "scan-audiobooks", "audiobook-proof", "import-audiobook-chapters", "audit", "retry-failed", "verify-plex-watched-state", "test-discord-prompt"] });
   }
 }
 
