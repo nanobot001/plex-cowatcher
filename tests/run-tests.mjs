@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { migrateDatabase, openMigratedDatabase } from "../dist/db/database.js";
@@ -37,6 +38,9 @@ import { MovieProfileAdapter } from "../dist/service/movieProfileAdapter.js";
 import { MovieProfileService } from "../dist/service/movieProfileService.js";
 import { DashboardPreferenceService } from "../dist/service/dashboardPreferenceService.js";
 import { CowatchAdjudicationService } from "../dist/service/cowatchAdjudicationService.js";
+import { PlexHistoricalMovieBackfillService } from "../dist/service/plexHistoricalMovieBackfillService.js";
+import { PlexLibraryDatabaseAdapter } from "../dist/adapters/plexLibraryDatabaseAdapter.js";
+import { ArchivePlexViewRecoveryService } from "../dist/service/archivePlexViewRecoveryService.js";
 import { buildCowatchReviewComponents, buildCowatchReviewEmbed } from "../dist/discord/prompts.js";
 
 const tests = [];
@@ -94,6 +98,187 @@ test("replay semantics do not fabricate replays from partial or ambiguous gaps",
   ]);
   assert.equal(oneSession.sessionCount, 1);
   assert.equal(oneSession.replayCount, 0);
+});
+
+test("historical Plex last-view evidence does not fabricate a replay", () => {
+  const result = evaluateReplaySemantics([
+    { observedAt: "2020-01-01T12:00:00Z", localDate: "2020-01-01", completed: true, progressPercent: 100, source: "historical_last_view" },
+    { observedAt: "2022-01-02T12:00:00Z", localDate: "2022-01-02", completed: true, progressPercent: 100, source: "detailed_playback" }
+  ]);
+  assert.equal(result.observationCount, 2);
+  assert.equal(result.sessionCount, 1);
+  assert.equal(result.viewingDayCount, 2);
+  assert.equal(result.replayCount, 0);
+});
+
+test("Plex historical movie backfill is dry-run safe and idempotent", async () => {
+  await withTestDb(async (db, dbPath) => {
+    new UserService(db).syncConfiguredUsers([
+      { plexUsername: "Tony", plexUserId: "plex-tony", displayName: "Tony", isSourceUser: true, enabled: true }
+    ]);
+    class HistoricalFixtureAdapter extends MockPlexAdapter {
+      async listUsers() { return [{ id: "plex-tony", username: "Tony", displayName: "Tony" }]; }
+      async listUserMovieStates() {
+        return [{
+          ratingKey: "current-civil-war",
+          guid: "plex://movie/civil-war",
+          title: "Civil War",
+          mediaType: "movie",
+          librarySectionTitle: "Movies",
+          viewCount: 3,
+          lastViewedAt: "2020-05-04T12:00:00.000Z"
+        }];
+      }
+    }
+    const service = new PlexHistoricalMovieBackfillService(db, new HistoricalFixtureAdapter(), dbPath);
+    const preview = await service.run({ apply: false, confirm: false });
+    assert.equal(preview.ok, true);
+    assert.equal(preview.summary.dryRunImportable, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM playback_observations").get().count, 0);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM plex_historical_movie_snapshots").get().count, 0);
+
+    const applied = await service.run({ apply: true, confirm: true });
+    assert.equal(applied.backupCreated, true);
+    assert.equal(applied.summary.imported, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM playback_observations").get().count, 1);
+    assert.equal(db.prepare("SELECT watched_at_provenance, completed, plex_guid FROM playback_observations").get().watched_at_provenance, "plex_historical_last_view");
+
+    const repeated = await service.run({ apply: true, confirm: true });
+    assert.equal(repeated.summary.alreadyCovered, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM playback_observations").get().count, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM plex_historical_movie_snapshots").get().count, 1);
+    assert.equal(db.prepare("SELECT seen_count FROM plex_historical_movie_snapshots").get().seen_count, 2);
+  });
+});
+
+test("archive Plex view recovery bridges legacy identities and preserves source events", async () => {
+  await withTestDb(async (db, dbPath) => {
+    new UserService(db).syncConfiguredUsers([
+      { plexUsername: "tonyhung", displayName: "Tony", isSourceUser: true, enabled: true }
+    ]);
+    const userId = db.prepare("SELECT id FROM users WHERE plex_username = 'tonyhung'").get().id;
+    db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, tautulli_row_id, rating_key, plex_guid, media_type, title,
+        watched_at, watched_at_provenance, completed, created_at, updated_at
+      ) VALUES (?, 'tautulli-ant-man', '52138', 'plex://movie/current-ant-man', 'movie', 'Ant-Man', ?, 'source', 1, ?, ?)
+    `).run(userId, "2020-07-24T02:32:06.000Z", new Date().toISOString(), new Date().toISOString());
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, guid, media_type, title, source_provenance, refreshed_at)
+      VALUES ('52138', 'plex://movie/current-ant-man', 'movie', 'Ant-Man', 'fixture', ?)
+    `).run(new Date().toISOString());
+    const plexPath = path.join(path.dirname(dbPath), "plex-library.sqlite");
+    const source = new DatabaseSync(plexPath);
+    source.exec(`
+      CREATE TABLE accounts (id INTEGER PRIMARY KEY, name TEXT);
+      CREATE TABLE metadata_item_views (
+        id INTEGER PRIMARY KEY,
+        account_id INTEGER,
+        guid TEXT,
+        metadata_type INTEGER,
+        title TEXT,
+        viewed_at INTEGER,
+        originally_available_at INTEGER
+      );
+      CREATE TABLE media_metadata_mappings (media_guid TEXT, metadata_guid TEXT);
+      INSERT INTO accounts (id, name) VALUES (1, 'tonyhung');
+      INSERT INTO metadata_item_views (id, account_id, guid, metadata_type, title, viewed_at, originally_available_at)
+      VALUES
+        (1, 1, 'com.plexapp.agents.imdb://tt0478970?lang=en', 1, 'Ant-Man', 1531708318, 1436832000),
+        (2, 1, 'plex://movie/current-ant-man', 1, 'Ant-Man', 1595557926, 1436832000),
+        (3, 1, NULL, 1, 'Removed Movie', 1595558000, NULL);
+      INSERT INTO media_metadata_mappings (media_guid, metadata_guid)
+      VALUES ('plex://movie/current-ant-man', 'com.plexapp.agents.imdb://tt0478970?lang=en');
+    `);
+    source.close();
+
+    const adapter = new PlexLibraryDatabaseAdapter(plexPath);
+    const service = new ArchivePlexViewRecoveryService(db, adapter);
+    const dryRun = service.run({ apply: false, confirm: false });
+    assert.equal(dryRun.ok, true);
+    assert.equal(dryRun.summary.unknownAccount, 0);
+    assert.equal(dryRun.summary.observationLinksCreated, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM archive_watch_events").get().count, 0);
+
+    const applied = service.run({ apply: true, confirm: true });
+    assert.equal(applied.ok, true);
+    assert.equal(applied.summary.imported + applied.summary.unresolved + applied.summary.ambiguous, 3);
+    assert.equal(applied.summary.observationLinksCreated, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM archive_watch_events").get().count, 3);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM archive_media").get().count, 2);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM archive_observation_links").get().count, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM archive_media_aliases WHERE alias_type = 'stable'").get().count, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM archive_event_links WHERE relation = 'same_event'").get().count, 0);
+
+    const history = service.queryMovieHistory(undefined, "plex://movie/current-ant-man");
+    assert.equal(history.length, 2);
+    assert.deepEqual(history.map((row) => row.sourceGuid).sort(), [
+      "com.plexapp.agents.imdb://tt0478970?lang=en",
+      "plex://movie/current-ant-man"
+    ]);
+    assert.equal(history.every((row) => row.canonicalTitle === "Ant-Man" && row.capturedAt && row.resolutionMethod && row.confidence), true);
+
+    const dashboard = new DashboardService(db, { timeZone: "UTC" });
+    const workspace = dashboard.getDetailWorkspace("movie:52138");
+    assert.equal(workspace.ok, true);
+    assert.equal(workspace.data.title, "Ant-Man");
+    assert.equal(workspace.data.movieHistory.summary.rawObservationCount, 2);
+    assert.equal(workspace.data.movieHistory.summary.viewingDayCount, 2);
+    assert.equal(workspace.data.movieHistory.rows.some((row) => row.localDate === "2018-07-16" && row.sourceLabel === "Plex archive recovery"), true);
+    const activity = dashboard.getActivity({ ratingKey: "52138", limit: 10 });
+    assert.equal(activity.total, 2);
+    assert.equal(activity.items.some((item) => item.watchedAt === "2018-07-16T02:31:58.000Z" && item.evidence.watchedAtProvenance === "plex_archive_recovery"), true);
+    const people = dashboard.getPeople({ period: "all", user: "tonyhung" });
+    assert.equal(people.people.find((person) => person.plex_username === "tonyhung").plays, 2);
+
+    const rerun = service.run({ apply: true, confirm: true });
+    assert.equal(rerun.ok, true);
+    assert.equal(rerun.summary.alreadyCovered, 3);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM archive_watch_events").get().count, 3);
+  });
+});
+
+test("archive identity review is explicit, reversible, and does not duplicate playback evidence", async () => {
+  await withTestDb(async (db) => {
+    new UserService(db).syncConfiguredUsers([
+      { plexUsername: "tonyhung", displayName: "Tony", isSourceUser: true, enabled: true }
+    ]);
+    const userId = Number(db.prepare("SELECT id FROM users WHERE plex_username = 'tonyhung'").get().id);
+    db.prepare(`INSERT INTO content_catalog (rating_key,guid,media_type,title,library_title,source_provenance,refreshed_at)
+      VALUES ('review-current','plex://movie/review-current','movie','Review Movie','Movies','fixture',?)`).run(new Date().toISOString());
+    const archiveMediaId = Number(db.prepare(`INSERT INTO archive_media
+      (canonical_key,media_type,title,status,created_at,updated_at)
+      VALUES ('fixture:review-old','movie','Review Movie','resolved',?,?)`).run(new Date().toISOString(), new Date().toISOString()).lastInsertRowid);
+    db.prepare(`INSERT INTO archive_media_aliases
+      (archive_media_id,source,alias_type,alias_value,title_snapshot,resolution_method,confidence,first_seen_at,last_seen_at)
+      VALUES (?,?,?,?,?,?,?,?,?)`).run(archiveMediaId, "plex", "guid", "com.plexapp.agents.imdb://tt-review?lang=en", "Review Movie", "legacy_guid", "medium", "2018-01-01T00:00:00.000Z", new Date().toISOString());
+    db.prepare(`INSERT INTO archive_watch_events
+      (archive_media_id,user_id,source,source_record_key,source_account_key,source_guid,title_snapshot,event_time,event_time_precision,completed,resolution_status,account_resolution_method,account_confidence,captured_at,metadata_json)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(archiveMediaId, userId, "plex_library_db", "fixture:review-old-view", "tonyhung", "com.plexapp.agents.imdb://tt-review?lang=en", "Review Movie", "2018-01-02T00:00:00.000Z", "second", 1, "resolved", "exact_account_key", "high", new Date().toISOString(), "{}");
+
+    const service = new ArchivePlexViewRecoveryService(db);
+    const candidates = service.queryIdentityCandidates("review-current", "plex://movie/review-current", "Review Movie");
+    assert.equal(candidates.length, 1);
+    assert.equal(candidates[0].viewers[0], "Tony");
+    assert.equal(candidates[0].decision, null);
+    const beforeEvents = Number(db.prepare("SELECT COUNT(*) AS count FROM archive_watch_events").get().count);
+    const beforeObservations = Number(db.prepare("SELECT COUNT(*) AS count FROM playback_observations").get().count);
+
+    const assigned = service.recordIdentityDecision({ archiveMediaId, decision: "assign", targetRatingKey: "review-current", actor: "web" });
+    assert.equal("ok" in assigned, false);
+    const repeated = service.recordIdentityDecision({ archiveMediaId, decision: "assign", targetRatingKey: "review-current", actor: "web" });
+    assert.equal("alreadyApplied" in repeated && repeated.alreadyApplied, true);
+    const workspace = new DashboardService(db, { timeZone: "UTC" }).getDetailWorkspace("movie:review-current");
+    assert.equal(workspace.ok, true);
+    assert.equal(workspace.data.movieHistory.rows.some((row) => row.localDate === "2018-01-02"), true);
+    assert.equal(Number(db.prepare("SELECT COUNT(*) AS count FROM archive_watch_events").get().count), beforeEvents);
+    assert.equal(Number(db.prepare("SELECT COUNT(*) AS count FROM playback_observations").get().count), beforeObservations);
+
+    service.recordIdentityDecision({ archiveMediaId, decision: "unrelated", actor: "web", reason: "reviewed" });
+    const unresolved = service.recordIdentityDecision({ archiveMediaId, decision: "unresolved", actor: "web" });
+    assert.equal("ok" in unresolved, false);
+    assert.equal(service.queryIdentityCandidates("review-current", "plex://movie/review-current", "Review Movie")[0].decision, "unresolved");
+  });
 });
 
 test("watch completion accepts explicit completed rows", () => {
@@ -1511,6 +1696,7 @@ test("audiobook migration is repeatable and does not denormalize onto observatio
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 15").get().count, 1);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 16").get().count, 1);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 17").get().count, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 18").get().count, 1);
     const catalogColumns = db.prepare("PRAGMA table_info(content_catalog)").all().map((column) => column.name);
     const bookColumns = db.prepare("PRAGMA table_info(audiobook_books)").all().map((column) => column.name);
     const observationColumns = db.prepare("PRAGMA table_info(playback_observations)").all().map((column) => column.name);

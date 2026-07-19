@@ -163,8 +163,33 @@ db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,source_provenance,refreshed_at)
   VALUES ('movie-regression','movie','Fixture Movie',7200000,'1','Movies','[]','fixture',?)`).run(isoMinutesAgo(5));
 db.prepare(`INSERT INTO content_catalog
+  (rating_key,guid,media_type,title,duration,library_id,library_title,genres_json,source_provenance,refreshed_at)
+  VALUES ('archive-only-movie','plex://movie/archive-only-movie','movie','Archive-only Fixture Movie',7200000,'1','Movies','[]','fixture',?)`).run(isoMinutesAgo(5));
+const archiveMediaId = Number(db.prepare(`INSERT INTO archive_media
+  (canonical_key,media_type,title,status,created_at,updated_at)
+  VALUES ('fixture:archive-only-movie','movie','Archive-only Fixture Movie','resolved',?,?)`).run(isoMinutesAgo(5), isoMinutesAgo(5)).lastInsertRowid);
+db.prepare(`INSERT INTO archive_media_aliases
+  (archive_media_id,source,alias_type,alias_value,title_snapshot,resolution_method,confidence,first_seen_at,last_seen_at)
+  VALUES (?,?,?,?,?,?,?,?,?)`).run(archiveMediaId, 'plex', 'guid', 'plex://movie/archive-only-movie', 'Archive-only Fixture Movie', 'exact_guid', 'medium', '2021-02-03T12:00:00.000Z', isoMinutesAgo(5));
+db.prepare(`INSERT INTO archive_watch_events
+  (archive_media_id,user_id,source,source_record_key,source_account_key,source_guid,title_snapshot,event_time,event_time_precision,completed,resolution_status,captured_at,metadata_json)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+  archiveMediaId, userIds.Tony, 'plex_library_db', 'fixture:archive-only-view', 'Tony', 'plex://movie/archive-only-movie', 'Archive-only Fixture Movie', '2021-02-03T12:00:00.000Z', 'second', 1, 'resolved', isoMinutesAgo(5), '{}'
+);
+db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,source_provenance,refreshed_at)
   VALUES ('review-movie','movie','Review Movie',7200000,'1','Movies','[]','fixture',?)`).run(isoMinutesAgo(5));
+const reviewArchiveMediaId = Number(db.prepare(`INSERT INTO archive_media
+  (canonical_key,media_type,title,status,created_at,updated_at)
+  VALUES ('fixture:review-identity','movie','Review Movie','resolved',?,?)`).run(isoMinutesAgo(5), isoMinutesAgo(5)).lastInsertRowid);
+db.prepare(`INSERT INTO archive_media_aliases
+  (archive_media_id,source,alias_type,alias_value,title_snapshot,resolution_method,confidence,first_seen_at,last_seen_at)
+  VALUES (?,?,?,?,?,?,?,?,?)`).run(reviewArchiveMediaId, 'plex', 'guid', 'com.plexapp.agents.imdb://tt-review-identity?lang=en', 'Review Movie', 'legacy_guid', 'medium', '2018-01-01T00:00:00.000Z', isoMinutesAgo(5));
+db.prepare(`INSERT INTO archive_watch_events
+  (archive_media_id,user_id,source,source_record_key,source_account_key,source_guid,title_snapshot,event_time,event_time_precision,completed,resolution_status,captured_at,metadata_json)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+  reviewArchiveMediaId, userIds.Tony, 'plex_library_db', 'fixture:review-identity-view', 'Tony', 'com.plexapp.agents.imdb://tt-review-identity?lang=en', 'Review Movie', '2018-01-02T00:00:00.000Z', 'second', 1, 'resolved', isoMinutesAgo(5), '{}'
+);
 const shangChiGuid = "plex://movie/shang-chi-canonical";
 db.prepare(`INSERT INTO content_catalog
   (rating_key,guid,media_type,title,duration,library_id,library_title,genres_json,source_provenance,refreshed_at)
@@ -172,7 +197,7 @@ db.prepare(`INSERT INTO content_catalog
 const insertCanonicalMovieObservation = db.prepare(`INSERT INTO playback_observations
   (user_id,rating_key,plex_guid,media_type,library_name,title,watched_at,watched_at_provenance,percent_complete,percent_complete_provenance,duration,completed,created_at,updated_at)
   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-insertCanonicalMovieObservation.run(userIds.Tony, "23917", shangChiGuid, "movie", "Movies", "Shang-Chi and the Legend of the Ten Rings", "2022-01-02T02:00:00.000Z", "fixture", 100, "fixture", 7920000, 1, isoMinutesAgo(5), isoMinutesAgo(5));
+insertCanonicalMovieObservation.run(userIds.Tony, "23917", shangChiGuid, "movie", "Movies", "Shang-Chi and the Legend of the Ten Rings", "2022-01-02T02:00:00.000Z", "plex_historical_last_view", 100, "unknown", 7920000, 1, isoMinutesAgo(5), isoMinutesAgo(5));
 insertCanonicalMovieObservation.run(userIds.Alex, "57417", shangChiGuid, "movie", "Movies", "Shang-Chi and the Legend of the Ten Rings", "2023-07-14T18:00:00.000Z", "fixture", 35, "fixture", 7920000, 0, isoMinutesAgo(5), isoMinutesAgo(5));
 insertCanonicalMovieObservation.run(userIds.Alex, "57417", shangChiGuid, "movie", "Movies", "Shang-Chi and the Legend of the Ten Rings", "2023-07-14T20:00:00.000Z", "fixture", 100, "fixture", 7920000, 1, isoMinutesAgo(5), isoMinutesAgo(5));
 insertCanonicalMovieObservation.run(userIds.Hidden, "57417", shangChiGuid, "movie", "Movies", "Shang-Chi and the Legend of the Ten Rings", "2023-07-14T21:00:00.000Z", "fixture", 100, "fixture", 7920000, 1, isoMinutesAgo(5), isoMinutesAgo(5));

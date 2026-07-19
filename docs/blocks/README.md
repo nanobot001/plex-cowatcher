@@ -65,7 +65,7 @@ Corrective sequence:
    7. `completed/block-3-2n-6e-3-progress-migration-and-regression.md` - implemented and verified; Progress now uses the shared canonical detail workspace with legacy URL compatibility and parity coverage.
    8. `completed/block-3-2n-6e-3a-replay-semantics-and-session-provenance.md` - implemented and verified; separates raw observations, reconstructed sessions, household-local viewing days, and evidence-backed replays across Progress and shared detail.
    9. `completed/block-3-2n-6e-3b-on-demand-plex-metadata-and-artwork-refresh.md` - implemented and verified; adds confirmed title-scoped Plex metadata/artwork refresh from the shared detail workspace with stable revisions, privacy-safe errors, and regression coverage.
-   10. `block-3-2n-6e-3c-plex-historical-movie-backfill.md` - planned corrective data-completeness block after 6E-3B; supplement post-2022 Tautulli history with explicitly labeled pre-2022 Plex movie evidence.
+   10. `block-3-2n-6e-3c-plex-historical-movie-backfill.md` - implemented and verified; supplements post-2022 Tautulli history with exact-GUID, explicitly labeled pre-2022 Plex movie evidence, durable raw snapshots, and idempotent CLI apply.
 29. `block-3-2n-6d-audiobook-resume-context.md` - planned umbrella; do not implement directly. Turn source-backed audiobook history stops into private bounded transcript context and a useful resume modal after 6E establishes the shared Audiobook presenter.
    1. `block-3-2n-6d-1-bounded-resume-transcription-contract.md` - add and verify the separate `audiobook` project's bounded read-only transcription command.
    2. `block-3-2n-6d-2-trusted-resume-adapter-and-state.md` - add CoWatcher's bounded trusted adapter and revision-safe durable job/result state without automatic execution.
@@ -75,7 +75,7 @@ Corrective sequence:
 
 Do not implement a later corrective block until the previous block's exit gate is recorded as passing. A later block must not conceal, waive, or silently absorb a failed earlier acceptance criterion.
 
-The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n code is implemented through 3-2n-5d-3, corrective 5D-2A plus the disabled Eric canary passed, and 6E-1/6E-2/6E-2A/6E-2B/6E-2C1/6E-2C2/6E-2C3/6E-2D/6E-3/6E-3A/6E-3B are implemented and verified. Implement 6E-3C before 6D-1 through 6D-4 and 3-2o. The explicit 5D-3 recurring-worker enablement decision remains pending. The pre-implementation reviews are `docs/process/block-3-2n-6e-design-review.md` and `docs/process/block-3-2n-6d-design-review.md`.
+The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n code is implemented through 3-2n-5d-3, corrective 5D-2A plus the disabled Eric canary passed, and 6E-1/6E-2/6E-2A/6E-2B/6E-2C1/6E-2C2/6E-2C3/6E-2D/6E-3/6E-3A/6E-3B/6E-3C are implemented and verified. Continue with 6D-1 through 6D-4 and 3-2o. The explicit 5D-3 recurring-worker enablement decision remains pending. The pre-implementation reviews are `docs/process/block-3-2n-6e-design-review.md` and `docs/process/block-3-2n-6d-design-review.md`.
 
 ## Umbrella Specifications
 
@@ -125,10 +125,12 @@ The full 3-2m sequence is implemented and verified: household profiles, person p
 - `block-3-6-historical-watch-archive.md` - umbrella only; establish the durable watch archive before achievements.
   1. `block-3-6-1-archive-evidence-and-provenance-contract.md`
   2. `block-3-6-2-canonical-media-identity-and-alias-registry.md`
-  3. `block-3-6-3-tautulli-ingestion-completeness-and-reconciliation.md`
-  4. `block-3-6-4-plex-supplemental-historical-recovery.md`
-  5. `block-3-6-5-archive-query-export-and-backup.md`
-  6. `block-3-6-6-achievements-engine-v1.md`
+   3. `block-3-6-2a-legacy-plex-identity-bridge-and-archive-owned-view-recovery.md`
+   4. `block-3-6-2b-archive-identity-review-and-account-context.md`
+   5. `block-3-6-3-tautulli-ingestion-completeness-and-reconciliation.md`
+  5. `block-3-6-4-plex-supplemental-historical-recovery.md`
+  6. `block-3-6-5-archive-query-export-and-backup.md`
+  7. `block-3-6-6-achievements-engine-v1.md`
 - `block-3-2n-5d-automatic-audiobook-chapter-proof-handoff.md` - planned umbrella.
 - `completed/block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md` - implemented historical reference.
 - `completed/block-3-2n-5d-2-trusted-external-proof-adapter.md` - implemented historical reference.

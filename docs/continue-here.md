@@ -1,5 +1,27 @@
 # Continue Here
 
+## 2026-07-19
+
+Current state:
+- Block **3-6-2B: Archive Identity Review And Account Context** is implemented in the current checkout. Migration 21 records exact Plex-account resolution metadata and append-only archive identity decisions. Movie detail now conditionally exposes a compact **Review identity** affordance for uncertain title-matched archive candidates; assign/unrelated/unresolved/undo decisions are auditable and archive-only.
+- `npm run verify:block` passed: 119/119 service tests, 59 dashboard tests with one pre-existing intentional narrow skip, JavaScript syntax, and tool contracts. After the PM2 rebuild/restart, `npm run verify:live-dashboard` passed; the live database migration also confirmed both account-resolution columns.
+
+Next step:
+- Continue with **3-6-3: Tautulli Ingestion Completeness And Reconciliation**. Keep source evidence immutable and do not promote title-only matches.
+
+## 2026-07-18
+
+Current state:
+- Block **3-6-2A: Legacy Plex Identity Bridge And Archive-Owned View Recovery** (`docs/blocks/block-3-6-2a-legacy-plex-identity-bridge-and-archive-owned-view-recovery.md`) is implemented and verified. The existing CoWatcher SQLite database now owns external Plex archive media, aliases, source events, ingest runs, and explicit links back to canonical `playback_observations`; existing CoWatcher observations and historical snapshot rows are not copied into the archive event table. A read-only Plex SQLite adapter imports movie `metadata_item_views`, bridges exact legacy/current identities when stable IDs or mapping rows prove equivalence, preserves unresolved records, and feeds resolved archive-only events additively into shared activity, Overview, People, and movie-detail read paths without fabricating sessions or replays.
+- Block **3-2n-6E-3C: Plex Historical Movie Backfill** (`docs/blocks/block-3-2n-6e-3c-plex-historical-movie-backfill.md`) is implemented and verified. The CLI now reads per-user Plex movie metadata, stores raw snapshots and per-user coverage, imports at most one exact-GUID pre-2022 last-view observation, preserves Tautulli evidence, and labels the source in dashboard activity/detail surfaces.
+- The deterministic gate passed with 118/118 service/integration tests and 57 dashboard regression tests plus one intentional narrow viewport skip; syntax and tool contracts passed. The live dashboard smoke also passed. No live archive apply was performed.
+- The canary also corrected a stale local Plex ID by matching Tony’s exact Plex username to the currently visible Plex user before querying.
+
+Next step:
+- Implement **3-6-2B: Archive Identity Review And Account Context** next. Automate exact Plex-account attribution and provide a compact reversible identity review for uncertain archive media; keep unresolved Plex rows as unknown evidence and do not promote title-only matches.
+- Continue with **3-6-3: Tautulli Ingestion Completeness And Reconciliation** after 3-6-2B. Keep source evidence immutable and do not promote title-only matches.
+- Implement **6D-1: Bounded Resume Transcription Contract** after reviewing the remaining 6D design gate. Preserve the verified 6E shared detail, replay/session, and historical-source contracts; keep 3-6-4 as the later extension path for broader archive recovery.
+
 ## 2026-07-17
 
 Current state:
@@ -7,7 +29,7 @@ Current state:
 - The 6E-3B deterministic gate passed with 115 service/integration tests and 55 dashboard regression tests plus one intentional viewport-matrix skip. Tool contracts and JavaScript syntax checks passed. Production was rebuilt/restarted under PM2, and `npm run verify:live-dashboard` passed.
 
 Next step:
-- Implement **6E-3C: Plex Historical Movie Backfill** (`docs/blocks/block-3-2n-6e-3c-plex-historical-movie-backfill.md`) next. Preserve the title-scoped refresh, exact identity/GUID targeting, stable artwork revision, and source-honest replay/session contracts.
+- Implement **6D-1: Bounded Resume Transcription Contract** after 6E-3C. Preserve the title-scoped refresh, exact identity/GUID targeting, stable artwork revision, source-honest replay/session contracts, and historical-source labels.
 
 ## 2026-07-16
 

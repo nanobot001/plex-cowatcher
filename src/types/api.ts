@@ -85,6 +85,7 @@ export interface DashboardMovieHistoryRow {
   sessionCount: number;
   replayCount: number;
   evidenceKind: DashboardMovieHistoryEvidenceKind;
+  sourceLabel?: string;
 }
 
 export interface DashboardMovieHistory {
@@ -104,6 +105,28 @@ export interface DashboardMovieHistory {
   };
   rows: DashboardMovieHistoryRow[];
   rowsLimited: boolean;
+}
+
+export interface DashboardArchiveIdentityCandidate {
+  archiveMediaId: number;
+  title: string;
+  year: number | null;
+  status: string;
+  eventCount: number;
+  firstEventTime: string | null;
+  lastEventTime: string | null;
+  viewers: string[];
+  unknownAccountCount: number;
+  sourceGuids: string[];
+  confidence: string;
+  decision: "assign" | "unrelated" | "unresolved" | null;
+  targetRatingKey: string | null;
+  targetOptions: Array<{ ratingKey: string; title: string; year: number | null }>;
+}
+
+export interface DashboardArchiveIdentityReview {
+  candidates: DashboardArchiveIdentityCandidate[];
+  reviewable: boolean;
 }
 
 export interface DashboardMovieProfile {
@@ -178,6 +201,7 @@ export interface DashboardDetailWorkspaceResponse {
     route: string;
   };
   movieHistory?: DashboardMovieHistory;
+  archiveIdentityReview?: DashboardArchiveIdentityReview;
   movieProfile?: {
     route: string;
   };

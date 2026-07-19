@@ -269,6 +269,33 @@ export function buildRouter(
       return sendDetailWorkspaceResult(dashboardService.getDetailWorkspace(selector), res);
     } catch (e) { next(e); }
   });
+  router.post("/api/dashboard/detail-workspace/:detailKey/archive-identity-review", express.json(), (req, res, next) => {
+    try {
+      const selector = decodeURIComponent(req.params.detailKey);
+      const resolution = dashboardService.resolveDetailIdentity(selector);
+      if (!resolution.ok) return sendDetailWorkspaceResult(resolution, res);
+      if (resolution.identity.kind !== "movie") {
+        return res.status(400).json({ ok: false, errorCode: "DETAIL_UNSUPPORTED", message: "Archive identity review is only available for Movie detail." });
+      }
+      const decision = req.body?.decision;
+      if (!["assign", "unrelated", "unresolved"].includes(decision)) {
+        return res.status(400).json({ ok: false, errorCode: "ARCHIVE_DECISION_INVALID", message: "Decision must be assign, unrelated, or unresolved." });
+      }
+      const archiveMediaId = Number(req.body?.archiveMediaId);
+      if (!Number.isInteger(archiveMediaId) || archiveMediaId < 1) {
+        return res.status(400).json({ ok: false, errorCode: "ARCHIVE_MEDIA_INVALID", message: "Archive media candidate is invalid." });
+      }
+      const result = dashboardService.recordArchiveIdentityDecision({
+        archiveMediaId,
+        decision,
+        targetRatingKey: decision === "assign" ? String(req.body?.targetRatingKey ?? resolution.identity.ratingKey) : null,
+        actor: "web",
+        reason: typeof req.body?.reason === "string" ? req.body.reason.slice(0, 500) : null
+      });
+      if (!result.ok) return res.status(result.errorCode === "ARCHIVE_MEDIA_NOT_FOUND" ? 404 : 400).json(result);
+      return res.json({ ok: true, data: { decision: result.data, workspace: dashboardService.getDetailWorkspace(resolution.identity.detailKey) } });
+    } catch (e) { next(e); }
+  });
   router.post("/api/dashboard/detail-workspace/:detailKey/refresh", express.json(), async (req, res, next) => {
     try {
       const selector = decodeURIComponent(req.params.detailKey);

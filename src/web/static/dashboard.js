@@ -29,7 +29,7 @@ const save=()=>{try{localStorage.setItem("cowatch.dashboard",JSON.stringify({lay
 const query=(extra={})=>{const p=new URLSearchParams();Object.entries({...state.filters,...extra}).forEach(([k,v])=>{if(v!==""&&v!=null)p.set(k,String(v));});return p;};
 const peopleQuery=(extra={})=>{const p=query(extra);p.delete("dateFrom");p.delete("dateTo");p.set("period",state.people.period||"30d");if(state.people.period==="custom"){if(state.people.dateFrom)p.set("dateFrom",state.people.dateFrom);if(state.people.dateTo)p.set("dateTo",state.people.dateTo);}return p;};
 const fetchJson=async (url,options={})=>{const r=await fetch(url,{cache:"no-store",...options});const j=await r.json();if(!r.ok||!j.ok){const error=new Error(j.message||"Panel could not load.");error.code=j.errorCode||"REQUEST_FAILED";throw error;}return j.data;};
-const evidence=x=>{const e=x.evidence||{};return '<div class="evidence"><span class="proof observed">Observed</span>'+(e.confirmed?'<span class="proof confirmed">Confirmed</span>':'')+(e.promptStatus?'<span class="proof">Prompt '+esc(e.promptStatus)+'</span>':'')+(e.plexSyncStatus?'<span class="proof synced">Plex '+esc(e.plexSyncStatus)+'</span>':'')+'</div>';};
+const evidence=x=>{const e=x.evidence||{};return '<div class="evidence"><span class="proof observed">Observed</span>'+(e.watchedAtProvenance==='plex_historical_last_view'?'<span class="proof">Plex historical last-view</span>':'')+(e.confirmed?'<span class="proof confirmed">Confirmed</span>':'')+(e.promptStatus?'<span class="proof">Prompt '+esc(e.promptStatus)+'</span>':'')+(e.plexSyncStatus?'<span class="proof synced">Plex '+esc(e.plexSyncStatus)+'</span>':'')+'</div>';};
 const posterFor=x=>x?.posterUrl||x?.artworkUrl||"/static/icon.svg";
 const art=x=>'<img class="poster" src="'+esc(posterFor(x))+'" alt="'+esc((x.displayTitle||x.title||x.showTitle||"Title")+" "+categoryLabel(x.category)+" artwork")+'" loading="lazy" onerror="this.src=\'/static/icon.svg\';this.classList.add(\'artwork-fallback\')">';
 const mediaTitle=x=>esc(x.displayTitle||x.title||x.showTitle||"");
@@ -843,6 +843,7 @@ function renderDetailContent(d) {
 }
 
 let activeDetailWorkspace = null;
+let archiveReviewOpen = false;
 let detailRefreshPending = false;
 
 function setDetailRefreshState(state, message = "") {
@@ -1071,17 +1072,21 @@ function renderCanonicalMovieDetailPresenter(workspace) {
     const evidence = row.evidenceKind === "attributed_confirmed"
       ? "Household confirmation"
       : `${row.observationCount} ${row.observationCount === 1 ? "observation" : "observations"} · ${row.sessionCount ?? 0} ${(row.sessionCount ?? 0) === 1 ? "session" : "sessions"}${Number(row.replayCount) > 0 ? ` · ${row.replayCount} ${Number(row.replayCount) === 1 ? "replay" : "replays"}` : ""}`;
+    const sourceBadge = row.sourceLabel
+      ? `<span class="proof detail-movie-history-source" data-testid="movie-history-source-badge" title="${esc(row.sourceLabel)} evidence" aria-label="${esc(row.sourceLabel)} evidence">Plex history</span>`
+      : "";
     return `<div class="detail-movie-history-row" role="row" data-testid="detail-movie-history-row" data-evidence-kind="${esc(row.evidenceKind)}">
       <span role="cell" class="detail-movie-history-date">${esc(row.localDate)}</span>
       <strong role="cell" class="detail-movie-history-person">${esc(row.displayName)}</strong>
       <span role="cell" class="detail-movie-history-status state-${esc(row.state)}">${esc(status)}</span>
-      <span role="cell" class="detail-movie-history-evidence">${esc(evidence)}</span>
+      <span role="cell" class="detail-movie-history-evidence"><span class="detail-movie-history-metrics">${esc(evidence)}</span>${sourceBadge}</span>
     </div>`;
   };
   const people = (history.people || []).map(person => person.displayName).filter(Boolean);
   const boundedNote = history.rowsLimited
     ? `<p class="text-muted detail-movie-bounded-note">Showing the ${rows.length} most recent viewing days from a bounded history read.</p>`
     : "";
+  const archiveReview = renderArchiveIdentityReview(workspace);
   return `<div data-testid="detail-presenter-movie" class="detail-movie-presenter">
     <section class="detail-movie-record" data-testid="detail-movie-history" aria-labelledby="detail-movie-history-heading">
       <span class="eyebrow">Household record</span>
@@ -1096,6 +1101,7 @@ function renderCanonicalMovieDetailPresenter(workspace) {
       ${extraRows.length ? `<details class="detail-movie-history-more"><summary>Show ${extraRows.length} older viewing ${extraRows.length === 1 ? "day" : "days"}</summary><div class="detail-movie-history-table" role="table">${extraRows.map(rowHtml).join("")}</div></details>` : ""}
       ${boundedNote}
     </section>
+    ${archiveReview}
     <section class="detail-movie-about" data-testid="detail-movie-about" data-profile-state="loading" aria-live="polite" aria-labelledby="detail-movie-about-heading">
       <h3 id="detail-movie-about-heading">About this movie</h3>
       <p class="text-muted" data-testid="detail-movie-about-loading">Loading source-backed movie facts...</p>
@@ -1110,6 +1116,39 @@ function renderCanonicalMovieDetailPresenter(workspace) {
       </dl>
     </details>
   </div>`;
+}
+
+function renderArchiveIdentityReview(workspace) {
+  const review = workspace.archiveIdentityReview;
+  const candidates = Array.isArray(review?.candidates) ? review.candidates : [];
+  if (!candidates.length) return "";
+  const candidateHtml = candidates.map(candidate => {
+    const state = candidate.decision === "unrelated"
+      ? "Marked unrelated"
+      : candidate.decision === "assign" ? "Assigned" : "Needs review";
+    const accounts = candidate.viewers?.length ? candidate.viewers.join(", ") : "Unknown account";
+    const targetOptions = (candidate.targetOptions || []).map(option => `<option value="${esc(option.ratingKey)}"${option.ratingKey === workspace.identity.ratingKey ? " selected" : ""}>${esc(option.title)} (${esc(option.ratingKey)})</option>`).join("");
+    const undo = candidate.decision === "unrelated" || candidate.decision === "assign"
+      ? `<button type="button" class="text-button" data-archive-review-action="unresolved" data-archive-media-id="${esc(candidate.archiveMediaId)}">Undo correction</button>`
+      : "";
+    return `<article class="detail-movie-review-candidate" data-testid="archive-identity-candidate">
+      <div class="detail-movie-review-candidate-heading"><strong>${esc(candidate.title)}</strong><span class="detail-movie-review-state">${esc(state)}</span></div>
+      <p>${esc(candidate.eventCount)} Plex-recorded ${candidate.eventCount === 1 ? "event" : "events"} · ${esc(accounts)}${candidate.unknownAccountCount ? " · some account context is unknown" : ""}</p>
+      <p class="detail-movie-review-dates">Media confidence: ${esc(candidate.confidence)} · Source identity: ${esc(candidate.sourceGuids?.join(", ") || "unavailable")}</p>
+      <p class="detail-movie-review-dates">${candidate.firstEventTime ? `From ${esc(fmtDate(candidate.firstEventTime))}` : "Date unavailable"}${candidate.lastEventTime && candidate.lastEventTime !== candidate.firstEventTime ? ` to ${esc(fmtDate(candidate.lastEventTime))}` : ""}</p>
+      <div class="detail-movie-review-actions">
+        <label>Attach to <select data-archive-target-for="${esc(candidate.archiveMediaId)}">${targetOptions}</select></label>
+        <button type="button" class="btn" data-archive-review-action="assign" data-archive-media-id="${esc(candidate.archiveMediaId)}">Assign</button>
+        <button type="button" class="text-button" data-archive-review-action="unrelated" data-archive-media-id="${esc(candidate.archiveMediaId)}">Mark unrelated</button>
+        ${undo}
+      </div>
+    </article>`;
+  }).join("");
+  return `<section class="detail-movie-archive-review" data-testid="archive-identity-review" aria-labelledby="archive-identity-review-heading">
+    <div class="detail-movie-archive-review-header"><div><span class="eyebrow">Historical evidence</span><h3 id="archive-identity-review-heading">Review identity</h3></div><button type="button" class="text-button" data-archive-review-open aria-expanded="${archiveReviewOpen ? "true" : "false"}">${archiveReviewOpen ? "Hide" : "Review"}</button></div>
+    <p class="detail-movie-archive-review-summary">Plex has recorded history that is not confidently attached to this title. Review it before it changes the household record.</p>
+    <div class="detail-movie-review-panel" data-archive-review-panel${archiveReviewOpen ? "" : " hidden"}>${candidateHtml}</div>
+  </section>`;
 }
 
 function renderTvDetailPresenter(workspace, state) {
@@ -1297,6 +1336,33 @@ function renderDetailWorkspace(workspace, hierarchyState) {
   }
   const firstWatcher = document.querySelector("[data-detail-watcher-lane]");
   if (firstWatcher) firstWatcher.setAttribute("tabindex", "0");
+}
+
+async function submitArchiveIdentityDecision(workspace, archiveMediaId, decision, targetRatingKey) {
+  const buttons = [...dialog.querySelectorAll(`[data-archive-media-id="${archiveMediaId}"]`)].filter(node => node instanceof HTMLButtonElement);
+  buttons.forEach(button => { button.disabled = true; });
+  try {
+    const result = await fetchJson(`/api/dashboard/detail-workspace/${encodeURIComponent(workspace.detailKey)}/archive-identity-review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archiveMediaId, decision, targetRatingKey })
+    });
+    const refreshed = result?.workspace?.ok ? result.workspace.data : await fetchJson(`/api/dashboard/detail-workspace/${encodeURIComponent(workspace.detailKey)}`);
+    if (refreshed?.detailKey !== workspace.detailKey) return;
+    activeDetailWorkspace = refreshed;
+    archiveReviewOpen = false;
+    renderDetailWorkspace(refreshed, activeDetailHierarchyState || { status: "loading", data: null });
+  } catch (error) {
+    buttons.forEach(button => { button.disabled = false; });
+    const panel = dialog.querySelector("[data-archive-review-panel]");
+    if (panel) {
+      const message = document.createElement("p");
+      message.className = "panel-state compact error";
+      message.setAttribute("role", "alert");
+      message.textContent = error instanceof Error ? error.message : "Identity review could not be saved.";
+      panel.prepend(message);
+    }
+  }
 }
 
 async function refreshActiveDetailWorkspace() {
@@ -2856,6 +2922,20 @@ dialog.querySelector("[data-detail-refresh]").addEventListener("click", () => {
   void refreshActiveDetailWorkspace();
 });
 dialog.addEventListener("click",e=>{
+  const reviewToggle = e.target.closest?.("[data-archive-review-open]");
+  if (reviewToggle && activeDetailWorkspace) {
+    archiveReviewOpen = !archiveReviewOpen;
+    renderDetailWorkspace(activeDetailWorkspace, activeDetailHierarchyState || { status: "loading", data: null });
+    return;
+  }
+  const reviewAction = e.target.closest?.("[data-archive-review-action]");
+  if (reviewAction && activeDetailWorkspace) {
+    const archiveMediaId = Number(reviewAction.dataset.archiveMediaId);
+    const decision = reviewAction.dataset.archiveReviewAction;
+    const target = dialog.querySelector(`[data-archive-target-for="${archiveMediaId}"]`);
+    void submitArchiveIdentityDecision(activeDetailWorkspace, archiveMediaId, decision, target?.value || activeDetailWorkspace.identity.ratingKey);
+    return;
+  }
   const watcherLane = e.target.closest?.("[data-detail-watcher-lane]");
   if (watcherLane && activeDetailWorkspace) {
     const personId = String(watcherLane.dataset.personId || "");
@@ -2926,6 +3006,7 @@ dialog.addEventListener("close",()=>{
   activeDetailWorkspace=null;
   activeDetailHierarchyState=null;
   detailWatcherSelection=null;
+  archiveReviewOpen=false;
   if(state.explorer.selected || state.detail.key){
     const closedKey = state.explorer.selected;
     state.explorer.selected="";
