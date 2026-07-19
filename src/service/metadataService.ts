@@ -4,6 +4,7 @@ import type { PlexAdapter } from "../adapters/plexAdapter.js";
 import type { PlexRichMetadata } from "../types/index.js";
 import { nowIso } from "../utils/time.js";
 import { AudiobookCatalogService, prepareAudiobookMetadata } from "./audiobookService.js";
+import { clearMovieIdentityCache, getCanonicalMovieRatingKey } from "./plexMovieIdentityService.js";
 
 export const METADATA_RETRY_COOLDOWN_MS = 15 * 60 * 1000;
 export const METADATA_REPAIR_BATCH_SIZE = 20;
@@ -81,8 +82,10 @@ export class MetadataService {
 
   async getMetadata(ratingKey: string, plexGuid?: string): Promise<CatalogEntry | null> {
     const cached = this.getCached(ratingKey);
-    if (cached && !this.shouldRetry(cached)) {
-      return cached;
+    const canonicalKey = cached?.mediaType === "movie" ? getCanonicalMovieRatingKey(this.db, ratingKey) : ratingKey;
+    const canonicalCached = canonicalKey === ratingKey ? cached : this.getCached(canonicalKey);
+    if (canonicalCached && !this.shouldRetry(canonicalCached)) {
+      return canonicalCached;
     }
     return this.refreshMetadata(ratingKey, plexGuid);
   }
@@ -202,7 +205,9 @@ export class MetadataService {
 
     const refresh = (async (): Promise<MetadataRefreshAttempt> => {
       try {
-        const plexMeta = await this.plex.getRichMetadataByRatingKey(ratingKey, plexGuid);
+        const cached = this.getCached(ratingKey);
+        const effectiveRatingKey = cached?.mediaType === "movie" ? getCanonicalMovieRatingKey(this.db, ratingKey) : ratingKey;
+        const plexMeta = await this.plex.getRichMetadataByRatingKey(effectiveRatingKey, plexGuid);
         const entry = this.savePlexMetadata(plexMeta);
         if (entry.mediaType === "episode" && entry.grandparentRatingKey) {
           await this.ensureShowMetadata(entry.grandparentRatingKey, entry.grandparentGuid);
@@ -287,6 +292,7 @@ export class MetadataService {
     };
     
     this.saveCatalogEntry(entry);
+    clearMovieIdentityCache(this.db);
     if (audiobookId) {
       this.audiobooks.refreshAggregates(audiobookId);
     }

@@ -121,6 +121,10 @@ Records an archive-owned external Plex view import with the run ID, mode, and bo
 
 Records an explicit, reversible archive-media identity review. Metadata contains only the decision ID, archive media ID, decision, and target rating key; it must not contain Plex paths, source payloads, account secrets, or raw diagnostics. Undo is represented by a later `unresolved` decision.
 
+### `plex_movie_identity_repair`
+
+Records an explicitly confirmed local canonical Plex movie identity repair with only bounded aggregate counts. It preserves source rating keys as aliases, does not rewrite playback observations, and never includes Plex paths, tokens, source payloads, or raw diagnostics.
+
 ### Tautulli ingestion events
 
 - `tautulli_backfill_started` records the run ID, selected user scope, page size, and apply mode.

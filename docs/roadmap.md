@@ -210,10 +210,11 @@ Planned product foundation. Preserve the household memory of who saw what and wh
 2. **3-6-2 - Canonical Media Identity And Alias Registry:** Preserve exact identity across stale rating keys, renamed media, migrations, and removals.
 3. **3-6-2A - Legacy Plex Identity Bridge And Archive-Owned View Recovery:** Implemented 2026-07-18. Import external Plex view rows into CoWatcher's archive tables, bridge legacy/current identities, and link exact matches back to canonical CoWatcher observations without duplicating them.
 4. **3-6-2B - Archive Identity Review And Account Context:** Implemented 2026-07-19. Automate exact account attribution and add a compact, reversible identity-review overlay for uncertain archive media without mutating source evidence.
-5. **3-6-3 - Tautulli Ingestion Completeness And Reconciliation:** Implemented 2026-07-19. Durable per-user Tautulli backfill checkpoints, bounded retries, source-row outcomes, and exact-identity reconciliation distinguish source absence from local ingestion failure.
-6. **3-6-4 - Plex Supplemental Historical Recovery:** Extend the existing 6E-3C movie slice to episode-level and broader best-effort Plex recovery without downgrading Tautulli evidence.
-7. **3-6-5 - Archive Query, Export, And Backup:** Make the archive portable, queryable, privacy-safe, and recoverable.
-8. **3-6-6 - Achievements Engine v1:** Add versioned, evidence-backed, deterministic achievements after the archive foundation is stable.
+5. **3-6-2C - Canonical Plex Movie Identity And Stale-Key Adoption:** Implemented 2026-07-19. Use exact Plex GUIDs to preserve stale rating keys as aliases while making movie grouping, refresh, poster, and backdrop resolution canonical and revision-safe. The local repair CLI is dry-run by default; live apply remains deferred for operator review.
+6. **3-6-3 - Tautulli Ingestion Completeness And Reconciliation:** Implemented 2026-07-19. Durable per-user Tautulli backfill checkpoints, bounded retries, source-row outcomes, and exact-identity reconciliation distinguish source absence from local ingestion failure.
+7. **3-6-4 - Plex Supplemental Historical Recovery:** Extend the existing 6E-3C movie slice to episode-level and broader best-effort Plex recovery without downgrading Tautulli evidence.
+8. **3-6-5 - Archive Query, Export, And Backup:** Make the archive portable, queryable, privacy-safe, and recoverable.
+9. **3-6-6 - Achievements Engine v1:** Add versioned, evidence-backed, deterministic achievements after the archive foundation is stable.
 
 ### Block 3-2n-5c: Reliable Audiobook Discovery Automation
 

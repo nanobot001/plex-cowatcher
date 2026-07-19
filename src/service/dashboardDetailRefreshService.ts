@@ -4,6 +4,7 @@ import type { DashboardDetailIdentity, DashboardDetailWorkspaceResponse } from "
 import { AuditService } from "./auditService.js";
 import { DashboardService } from "./dashboardService.js";
 import { MetadataService } from "./metadataService.js";
+import { getCanonicalMovieRatingKey, getMovieIdentityGuid, getMovieIdentityKeys } from "./plexMovieIdentityService.js";
 
 type RefreshTarget = {
   ratingKey: string;
@@ -123,22 +124,26 @@ export class DashboardDetailRefreshService {
 
   private resolveTarget(identity: DashboardDetailIdentity): RefreshTarget | null {
     if (identity.kind === "movie") {
+      const ratingKey = getCanonicalMovieRatingKey(this.db, identity.ratingKey);
+      const keys = getMovieIdentityKeys(this.db, ratingKey);
+      const placeholders = keys.map(() => "?").join(",");
       const catalog = this.db.prepare(`
         SELECT rating_key, guid
         FROM content_catalog
-        WHERE rating_key = ?
+        WHERE rating_key IN (${placeholders})
+        ORDER BY CASE WHEN rating_key = ? THEN 0 ELSE 1 END
         LIMIT 1
-      `).get(identity.ratingKey) as { rating_key: string; guid: string | null } | undefined;
+      `).get(...keys, ratingKey) as { rating_key: string; guid: string | null } | undefined;
       const observation = this.db.prepare(`
         SELECT plex_guid
         FROM playback_observations
-        WHERE rating_key = ? AND plex_guid IS NOT NULL AND trim(plex_guid) <> ''
+        WHERE rating_key IN (${placeholders}) AND plex_guid IS NOT NULL AND trim(plex_guid) <> ''
         ORDER BY watched_at DESC, id DESC
         LIMIT 1
-      `).get(identity.ratingKey) as { plex_guid: string } | undefined;
+      `).get(...keys) as { plex_guid: string } | undefined;
       return {
-        ratingKey: identity.ratingKey,
-        plexGuid: catalog?.guid ?? observation?.plex_guid ?? null
+        ratingKey,
+        plexGuid: getMovieIdentityGuid(this.db, ratingKey) ?? catalog?.guid ?? observation?.plex_guid ?? null
       };
     }
 

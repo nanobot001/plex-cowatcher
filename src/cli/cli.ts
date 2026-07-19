@@ -83,7 +83,7 @@ async function runTautulliBackfillCommand(tautulli: TautulliAdapter): Promise<vo
 
 async function main(): Promise<void> {
   const users = new UserService(db);
-  if (!["audiobook-backfill", "audiobook-proof", "plex-historical-backfill", "archive-plex-import", "tautulli-backfill", "backfill"].includes(command)) {
+  if (!["audiobook-backfill", "audiobook-proof", "plex-historical-backfill", "archive-plex-import", "plex-movie-identity", "tautulli-backfill", "backfill"].includes(command)) {
     users.syncConfiguredUsers();
   }
   const plex = createPlexAdapter();
@@ -277,6 +277,43 @@ async function main(): Promise<void> {
             error: {
               code: error instanceof Error ? error.message : "ARCHIVE_PLEX_IMPORT_FAILED",
               message: "Archive Plex view recovery could not run.",
+              retryable: false,
+              severity: "error"
+            }
+          });
+          process.exitCode = 1;
+        }
+      }
+      break;
+    case "plex-movie-identity":
+      {
+        const { PlexMovieIdentityService } = await import("../service/plexMovieIdentityService.js");
+        const timestamp = new Date().toISOString();
+        try {
+          const data = await new PlexMovieIdentityService(db, plex).run({
+            apply: args.includes("--apply"),
+            confirm: args.includes("--confirm"),
+            actor: arg("actor") ?? "cli"
+          });
+          if (!data.ok) {
+            print({
+              ok: false,
+              tool: "project.plex_movie_identity_repair",
+              timestamp,
+              error: { code: data.errorCode, message: data.message, retryable: data.retryable, severity: "error" }
+            });
+            process.exitCode = 1;
+          } else {
+            print({ ok: true, tool: "project.plex_movie_identity_repair", timestamp, data });
+          }
+        } catch (error) {
+          print({
+            ok: false,
+            tool: "project.plex_movie_identity_repair",
+            timestamp,
+            error: {
+              code: error instanceof Error ? error.message : "PLEX_MOVIE_IDENTITY_REPAIR_FAILED",
+              message: "Canonical Plex movie identity repair could not run.",
               retryable: false,
               severity: "error"
             }
@@ -521,7 +558,7 @@ async function main(): Promise<void> {
       }
       break;
     default:
-      print({ ok: true, commands: ["health", "users", "recent", "pending", "preview-copy", "apply-copy", "tautulli-backfill", "audiobook-backfill", "plex-historical-backfill", "archive-plex-import", "scan-audiobooks", "audiobook-proof", "import-audiobook-chapters", "audit", "retry-failed", "verify-plex-watched-state", "test-discord-prompt"] });
+      print({ ok: true, commands: ["health", "users", "recent", "pending", "preview-copy", "apply-copy", "tautulli-backfill", "audiobook-backfill", "plex-historical-backfill", "archive-plex-import", "plex-movie-identity", "scan-audiobooks", "audiobook-proof", "import-audiobook-chapters", "audit", "retry-failed", "verify-plex-watched-state", "test-discord-prompt"] });
   }
 }
 
