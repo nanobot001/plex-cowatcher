@@ -3,7 +3,7 @@
 > Status: Implemented on 2026-07-19.
 > Result: Implemented.
 > Verification: `npm run verify:block` - passed with 122 service tests, 59 dashboard tests, one intentional narrow-viewport skip, JavaScript syntax, and tool-contract verification.
-> Notes: Added dry-run/apply Tautulli backfill with durable per-user checkpoints, bounded page retries, source-row outcomes, and exact-identity reconciliation; no automatic PM2 backfill or Tautulli writes.
+> Notes: Added dry-run/apply Tautulli backfill with durable per-user checkpoints, bounded page retries, source-row outcomes, and exact-identity reconciliation; no automatic PM2 backfill or Tautulli writes. Live apply run `2c831401-24ec-4fc7-82f8-7ce1ead0d144` completed with 7,020 rows scanned, 364 imported, 6,656 already present, and zero failures after resumable recovery from a transient SQLite error.
 
 ## Goal
 

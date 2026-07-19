@@ -5,7 +5,7 @@
 Current state:
 - Block **3-6-2B: Archive Identity Review And Account Context** remains implemented in the current checkout. Migration 21 records exact Plex-account resolution metadata and append-only archive identity decisions.
 - Block **3-6-3: Tautulli Ingestion Completeness And Reconciliation** is implemented. Migration 22 adds durable run, per-user checkpoint, page-attempt, and source-row outcome state. The new CLI path is dry-run by default, resumes interrupted apply runs, bounds retries, and reports returned-but-not-stored versus source-not-returned evidence without title-only matching.
-- `npm run verify:block` passed: 122 service tests, 59 dashboard tests with one intentional narrow-viewport skip, JavaScript syntax, and tool contracts. No live Tautulli apply or PM2 restart was performed.
+- `npm run verify:block` passed: 122 service tests, 59 dashboard tests with one intentional narrow-viewport skip, JavaScript syntax, and tool contracts. A live Tautulli apply then completed run `2c831401-24ec-4fc7-82f8-7ce1ead0d144`: 7,020 source rows scanned, 364 imported, 6,656 already present, and zero failures. The first apply invocation hit a transient SQLite error after partial progress and was safely resumed; no PM2 restart was performed.
 
 Next step:
 - Continue with **3-6-4: Plex Supplemental Historical Recovery**. Reuse the existing 6E-3C movie recovery and 3-6-3 reconciliation contracts; keep source evidence immutable and do not promote title-only matches.
