@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { PlexAdapter } from "../adapters/plexAdapter.js";
 import type { Db } from "../db/database.js";
+import { getCanonicalMovieRatingKey, getMovieIdentityGuid, getMovieIdentityKeys } from "./plexMovieIdentityService.js";
 
 export type ArtworkVariant = "poster" | "backdrop";
 export type ArtworkResolutionOutcome =
@@ -72,13 +73,17 @@ function revisionRows(db: Db, artworkKey: string): unknown[] {
     return [{ artworkKey }, book ?? null, ...catalog];
   }
 
+  const movieKey = artworkKey.startsWith("movie:") ? artworkKey.slice("movie:".length) : artworkKey;
+  const canonicalMovieKey = getMovieIdentityGuid(db, movieKey) ? getCanonicalMovieRatingKey(db, movieKey) : artworkKey;
+  const movieKeys = getMovieIdentityGuid(db, canonicalMovieKey) ? getMovieIdentityKeys(db, canonicalMovieKey) : [canonicalMovieKey];
+  const placeholders = movieKeys.map(() => "?").join(",");
   const rows = db.prepare(`
     SELECT rating_key, guid, parent_rating_key, parent_guid, grandparent_rating_key,
       grandparent_guid, media_type, artwork_poster_fingerprint, artwork_backdrop_fingerprint
     FROM content_catalog
-    WHERE rating_key = ? OR parent_rating_key = ? OR grandparent_rating_key = ?
+    WHERE rating_key IN (${placeholders}) OR parent_rating_key = ? OR grandparent_rating_key = ?
     ORDER BY rating_key
-  `).all(artworkKey, artworkKey, artworkKey) as Record<string, unknown>[];
+  `).all(...movieKeys, canonicalMovieKey, canonicalMovieKey) as Record<string, unknown>[];
   return [{ artworkKey }, ...rows];
 }
 
@@ -87,11 +92,14 @@ export function getArtworkRevisionSeed(db: Db, artworkKey: string): string {
 }
 
 export function buildDashboardArtworkDescriptor(db: Db, artworkKey: string): DashboardArtworkDescriptor {
-  const encodedKey = encodeURIComponent(artworkKey);
-  const artworkRevision = getArtworkRevisionSeed(db, artworkKey);
+  const normalizedKey = artworkKey.startsWith("movie:")
+    ? `movie:${getCanonicalMovieRatingKey(db, artworkKey.slice("movie:".length))}`
+    : getMovieIdentityGuid(db, artworkKey) ? getCanonicalMovieRatingKey(db, artworkKey) : artworkKey;
+  const encodedKey = encodeURIComponent(normalizedKey);
+  const artworkRevision = getArtworkRevisionSeed(db, normalizedKey);
   const posterUrl = `/api/artwork/${encodedKey}?variant=poster&v=${artworkRevision}`;
   return {
-    artworkKey,
+    artworkKey: normalizedKey,
     artworkRevision,
     artworkUrl: posterUrl,
     posterUrl,
@@ -123,9 +131,12 @@ export class ArtworkResolver {
     variant: ArtworkVariant,
     options: { skipLocalCover?: boolean } = {}
   ): Promise<ArtworkResolution | null> {
-    const revisionSeed = this.getRevisionSeed(artworkKey);
+    const normalizedKey = artworkKey.startsWith("movie:")
+      ? getCanonicalMovieRatingKey(this.db, artworkKey.slice("movie:".length))
+      : getMovieIdentityGuid(this.db, artworkKey) ? getCanonicalMovieRatingKey(this.db, artworkKey) : artworkKey;
+    const revisionSeed = this.getRevisionSeed(normalizedKey);
     const mode = options.skipLocalCover ? "fallback" : "primary";
-    const cacheKey = `${variant}:${mode}:${artworkKey}:${revisionSeed}`;
+    const cacheKey = `${variant}:${mode}:${normalizedKey}:${revisionSeed}`;
     const now = this.options.now?.() ?? Date.now();
     const cached = this.cache.get(cacheKey);
     if (cached && cached.expiresAt > now) {
@@ -138,7 +149,7 @@ export class ArtworkResolver {
     const existing = this.inflight.get(cacheKey);
     if (existing) return existing;
 
-    const pending = this.resolveUncached(artworkKey, variant, options.skipLocalCover === true)
+    const pending = this.resolveUncached(normalizedKey, variant, options.skipLocalCover === true)
       .then((value) => {
         const ttl = value
           ? (this.options.positiveTtlMs ?? DEFAULT_POSITIVE_TTL_MS)
@@ -227,12 +238,13 @@ export class ArtworkResolver {
       return { ratingKey: row.rating_key, plexGuid: row.guid ?? null, expectedFamily: "audio" };
     }
 
+    const canonicalKey = getMovieIdentityGuid(this.db, artworkKey) ? getCanonicalMovieRatingKey(this.db, artworkKey) : artworkKey;
     const direct = this.db.prepare(`
       SELECT rating_key, guid, media_type
       FROM content_catalog
       WHERE rating_key = ?
       LIMIT 1
-    `).get(artworkKey) as { rating_key: string; guid: string | null; media_type: string } | undefined;
+    `).get(canonicalKey) as { rating_key: string; guid: string | null; media_type: string } | undefined;
     if (direct) {
       return {
         ratingKey: direct.rating_key,
@@ -259,7 +271,7 @@ export class ArtworkResolver {
       };
     }
 
-    return { ratingKey: artworkKey, plexGuid: null, expectedFamily: "unknown" };
+    return { ratingKey: canonicalKey, plexGuid: null, expectedFamily: "unknown" };
   }
 }
 

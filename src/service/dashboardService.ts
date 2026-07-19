@@ -6,6 +6,7 @@ import { CowatchAdjudicationService } from "./cowatchAdjudicationService.js";
 import { buildDashboardArtworkDescriptor, type DashboardArtworkDescriptor } from "./artworkService.js";
 import { evaluateReplaySemantics, type ReplayObservation, type ReplaySemantics } from "./replaySemantics.js";
 import { ArchivePlexViewRecoveryService } from "./archivePlexViewRecoveryService.js";
+import { getCanonicalMovieRatingKey, getMovieIdentityGuid, getMovieIdentityKeys, warmMovieIdentityCache } from "./plexMovieIdentityService.js";
 
 const HOUSEHOLD_CATEGORIES = ["movie", "tv", "classic_tv", "anime", "audiobook"] as const;
 const SUMMARY_SAMPLE_LIMIT = 500;
@@ -387,6 +388,7 @@ export class DashboardService {
   private readonly householdDateFormatter: Intl.DateTimeFormat;
 
   constructor(private readonly db: Db, options: DashboardServiceOptions = {}) {
+    warmMovieIdentityCache(db);
     this.cowatchingService = new CowatchingIntelligenceService(db);
     this.adjudicationService = new CowatchAdjudicationService(db);
     this.archiveService = new ArchivePlexViewRecoveryService(db);
@@ -403,10 +405,10 @@ export class DashboardService {
     if (!selector || selector.length > 300) return { ok: false, errorCode: "DETAIL_INVALID" };
 
     const canonical = this.parseCanonicalDetailKey(selector);
-    if (canonical) return this.validateDetailIdentity(canonical, selector);
+    if (canonical) return this.validateDetailIdentity(this.canonicalizeMovieIdentity(canonical), selector);
 
     const progressKey = this.parseProgressGroupKey(selector);
-    if (progressKey) return this.validateDetailIdentity(progressKey, selector);
+    if (progressKey) return this.validateDetailIdentity(this.canonicalizeMovieIdentity(progressKey), selector);
 
     const identities = new Map<string, DashboardDetailIdentity>();
     const catalogRows = this.db.prepare(`
@@ -427,7 +429,7 @@ export class DashboardService {
 
     if (identities.size === 0) return { ok: false, errorCode: "DETAIL_NOT_FOUND" };
     if (identities.size > 1) return { ok: false, errorCode: "DETAIL_AMBIGUOUS" };
-    return this.validateDetailIdentity([...identities.values()][0], selector);
+    return this.validateDetailIdentity(this.canonicalizeMovieIdentity([...identities.values()][0]), selector);
   }
 
   getDetailWorkspace(input: string): DashboardDetailWorkspaceResult {
@@ -608,7 +610,7 @@ export class DashboardService {
     const category = deriveDashboardCategory(String(row.media_type ?? ""), row.library_title).category;
     let identity: DashboardDetailIdentity | null = null;
     if (category === "movie") {
-      identity = withDetailKey({ kind: "movie", category: "movie", ratingKey: rawRatingKey });
+      identity = this.canonicalizeMovieIdentity(withDetailKey({ kind: "movie", category: "movie", ratingKey: rawRatingKey }));
     } else if (category === "audiobook" && Number.isInteger(Number(row.audiobook_id))) {
       identity = withDetailKey({ kind: "audiobook", category: "audiobook", audiobookId: Number(row.audiobook_id) });
     } else if ((category === "tv" || category === "classic_tv" || category === "anime") && row.grandparent_rating_key) {
@@ -620,6 +622,31 @@ export class DashboardService {
   }
 
   private validateDetailIdentity(identity: DashboardDetailIdentity, input: string): DashboardDetailResolution {
+    if (identity.kind === "movie") {
+      const keys = getMovieIdentityKeys(this.db, identity.ratingKey);
+      const placeholders = keys.map(() => "?").join(",");
+      const guid = getMovieIdentityGuid(this.db, identity.ratingKey);
+      const guidClause = guid ? " OR po.plex_guid = ?" : "";
+      const catalogRecords = this.db.prepare(`
+        SELECT COUNT(*) AS count FROM content_catalog
+        WHERE rating_key IN (${placeholders}) AND lower(media_type) = 'movie'
+      `).get(...keys) as any;
+      const observationRecords = this.db.prepare(`
+        SELECT COUNT(*) AS count FROM playback_observations po
+        WHERE po.rating_key IN (${placeholders}) AND lower(po.media_type) = 'movie'${guidClause}
+      `).get(...keys, ...(guid ? [guid] : [])) as any;
+      const records = Number(catalogRecords?.count ?? 0) + Number(observationRecords?.count ?? 0);
+      if (records === 0) return { ok: false, errorCode: "DETAIL_NOT_FOUND" };
+      const visibility = this.db.prepare(`
+        SELECT COUNT(*) AS total,
+          SUM(CASE WHEN COALESCE(u.dashboard_shown, u.enabled) = 1 THEN 1 ELSE 0 END) AS visible
+        FROM playback_observations po
+        LEFT JOIN users u ON u.id = po.user_id
+        WHERE po.rating_key IN (${placeholders})${guidClause}
+      `).get(...keys, ...(guid ? [guid] : [])) as any;
+      if (Number(visibility?.total ?? 0) > 0 && Number(visibility?.visible ?? 0) === 0) return { ok: false, errorCode: "DETAIL_NOT_FOUND" };
+      return { ok: true, identity, input };
+    }
     const records = this.db.prepare(`SELECT COUNT(*) AS count FROM (
       SELECT rating_key FROM content_catalog WHERE ${this.identityRecordWhere(identity)}
       UNION
@@ -653,17 +680,17 @@ export class DashboardService {
 
   private detailIdentityWhere(identity: DashboardDetailIdentity): string {
     if (identity.kind === "movie") {
-      return this.currentMovieGuid(identity.ratingKey)
-        ? "(po.rating_key = ? OR po.plex_guid = ?)"
-        : "po.rating_key = ?";
+      const keys = getMovieIdentityKeys(this.db, identity.ratingKey);
+      const placeholders = keys.map(() => "?").join(",");
+      return `(po.rating_key IN (${placeholders})${getMovieIdentityGuid(this.db, identity.ratingKey) ? " OR po.plex_guid = ?" : ""})`;
     }
     return this.identityRecordWhere(identity, "po", "cat");
   }
 
   private detailIdentityArgs(identity: DashboardDetailIdentity): any[] {
     if (identity.kind === "movie") {
-      const guid = this.currentMovieGuid(identity.ratingKey);
-      return guid ? [identity.ratingKey, guid] : [identity.ratingKey];
+      const guid = getMovieIdentityGuid(this.db, identity.ratingKey);
+      return [...getMovieIdentityKeys(this.db, identity.ratingKey), ...(guid ? [guid] : [])];
     }
     return this.identityRecordArgs(identity);
   }
@@ -675,13 +702,13 @@ export class DashboardService {
   }
 
   private currentMovieGuid(ratingKey: string): string | null {
-    const row = this.db.prepare(`
-      SELECT guid
-      FROM content_catalog
-      WHERE rating_key = ? AND lower(media_type) = 'movie'
-      LIMIT 1
-    `).get(ratingKey) as any;
-    return typeof row?.guid === "string" && row.guid.trim() ? row.guid.trim() : null;
+    return getMovieIdentityGuid(this.db, ratingKey);
+  }
+
+  private canonicalizeMovieIdentity(identity: DashboardDetailIdentity): DashboardDetailIdentity {
+    if (identity.kind !== "movie") return identity;
+    const ratingKey = getCanonicalMovieRatingKey(this.db, identity.ratingKey);
+    return withDetailKey({ kind: "movie", category: "movie", ratingKey });
   }
 
   private householdLocalDate(value: string): string {
@@ -791,7 +818,7 @@ export class DashboardService {
     const directObservationKeys = new Set(observations.map((row) => `${Number(row.userId)}:${String(row.watchedAt)}`));
     const recoveredArchiveRows = archiveRows.filter((row) => !directObservationKeys.has(`${row.userId}:${row.eventTime}`));
     const groups = new Map<string, DashboardMovieHistoryRow>();
-    const eligibleRatingKeys = new Set<string>([identity.ratingKey]);
+    const eligibleRatingKeys = new Set<string>(getMovieIdentityKeys(this.db, identity.ratingKey));
     const evidenceTimestamps: string[] = [];
     const directEvidenceByDay = new Map<string, ReplayObservation[]>();
     const directEvidenceByUser = new Map<number, ReplayObservation[]>();
@@ -949,7 +976,9 @@ export class DashboardService {
       }
       return summary;
     }, { observationCount: 0, sessionCount: 0, viewingDayCount: 0, replayCount: 0, replayReason: null, latestObservedAt: null });
-    const catalog = this.db.prepare(`SELECT duration FROM content_catalog WHERE rating_key = ? LIMIT 1`).get(identity.ratingKey) as any;
+    const movieKeys = getMovieIdentityKeys(this.db, identity.ratingKey);
+    const movieKeyPlaceholders = movieKeys.map(() => "?").join(",");
+    const catalog = this.db.prepare(`SELECT duration FROM content_catalog WHERE rating_key IN (${movieKeyPlaceholders}) ORDER BY CASE WHEN rating_key = ? THEN 0 ELSE 1 END LIMIT 1`).get(...movieKeys, identity.ratingKey) as any;
     const duration = Number(catalog?.duration);
     return {
       canonicalGuid,
@@ -979,18 +1008,42 @@ export class DashboardService {
       return { title: book.title, subtitle: book.subtitle ?? null, ...artworkRoutes(identity.detailKey) };
     }
     const key = identity.kind === "movie" ? identity.ratingKey : identity.grandparentRatingKey;
-    const catalog = this.db.prepare(`
-      SELECT title, library_title, grandparent_title
-      FROM content_catalog
-      WHERE rating_key = ? OR grandparent_rating_key = ?
-      ORDER BY CASE WHEN rating_key = ? THEN 0 ELSE 1 END, rating_key
-      LIMIT 1
-    `).get(key, key, key) as any;
+    const catalog = identity.kind === "movie"
+      ? (() => {
+        const keys = getMovieIdentityKeys(this.db, key);
+        const placeholders = keys.map(() => "?").join(",");
+        return this.db.prepare(`
+          SELECT title, library_title, grandparent_title
+          FROM content_catalog
+          WHERE rating_key IN (${placeholders})
+          ORDER BY CASE WHEN rating_key = ? THEN 0 ELSE 1 END, rating_key
+          LIMIT 1
+        `).get(...keys, key) as any;
+      })()
+      : this.db.prepare(`
+        SELECT title, library_title, grandparent_title
+        FROM content_catalog
+        WHERE rating_key = ? OR grandparent_rating_key = ?
+        ORDER BY CASE WHEN rating_key = ? THEN 0 ELSE 1 END, rating_key
+        LIMIT 1
+      `).get(key, key, key) as any;
     const catalogTitle = typeof catalog?.title === "string" ? catalog.title.trim() : "";
     if (catalog && catalogTitle && !/^Unknown Media \(/i.test(catalogTitle)) {
       return { title: catalogTitle || catalog.grandparent_title || key, subtitle: catalog.library_title ?? null, ...artworkRoutes(key) };
     }
-    const observation = this.db.prepare(`SELECT title, show_title, library_name FROM playback_observations WHERE rating_key = ? OR grandparent_rating_key = ? ORDER BY watched_at DESC LIMIT 1`).get(key, key) as any;
+    const observation = identity.kind === "movie"
+      ? (() => {
+        const keys = getMovieIdentityKeys(this.db, key);
+        const placeholders = keys.map(() => "?").join(",");
+        const guid = getMovieIdentityGuid(this.db, key);
+        return this.db.prepare(`
+          SELECT title, show_title, library_name
+          FROM playback_observations
+          WHERE rating_key IN (${placeholders})${guid ? " OR plex_guid = ?" : ""}
+          ORDER BY watched_at DESC, id DESC LIMIT 1
+        `).get(...keys, ...(guid ? [guid] : [])) as any;
+      })()
+      : this.db.prepare(`SELECT title, show_title, library_name FROM playback_observations WHERE rating_key = ? OR grandparent_rating_key = ? ORDER BY watched_at DESC LIMIT 1`).get(key, key) as any;
     const observationTitle = typeof observation?.title === "string" ? observation.title.trim() : "";
     if (observation && observationTitle && !/^Unknown Media \(/i.test(observationTitle)) {
       return { title: identity.kind === "series" ? (observation.show_title || observation.title) : observation.title, subtitle: observation.library_name ?? null, ...artworkRoutes(identity.kind === "series" ? identity.detailKey.replace(/^series:[^:]+:/, "") : key) };
@@ -1049,7 +1102,7 @@ export class DashboardService {
 
   private legacyProgressGroupKey(identity: DashboardDetailIdentity): string {
     if (identity.kind === "audiobook") return `audiobook:Audiobooks:${identity.audiobookId}`;
-    const key = identity.kind === "movie" ? identity.ratingKey : identity.grandparentRatingKey;
+    const key = identity.kind === "movie" ? getCanonicalMovieRatingKey(this.db, identity.ratingKey) : identity.grandparentRatingKey;
     const row = this.db.prepare(`SELECT library_title FROM content_catalog WHERE rating_key = ? LIMIT 1`).get(key) as any;
     const library = row?.library_title || (identity.kind === "movie" ? "Movies" : "TV Shows");
     if (identity.kind === "movie") return `movie:${library}:${key}`;
@@ -1063,7 +1116,12 @@ export class DashboardService {
     if (p.dateFrom) { where += " AND po.watched_at >= ?"; args.push(new Date(p.dateFrom).toISOString()); }
     if (p.dateTo) { where += " AND po.watched_at <= ?"; args.push(new Date(p.dateTo).toISOString()); }
     if (p.user) { where += " AND u.plex_username = ?"; args.push(p.user); }
-    if (p.ratingKey) { where += " AND po.rating_key = ?"; args.push(p.ratingKey); }
+    if (p.ratingKey) {
+      const movieKeys = getMovieIdentityKeys(this.db, p.ratingKey);
+      const placeholders = movieKeys.map(() => "?").join(",");
+      where += ` AND po.rating_key IN (${placeholders})`;
+      args.push(...movieKeys);
+    }
     if (p.grandparentRatingKey) { where += " AND (po.grandparent_rating_key = ? OR po.rating_key = ?)"; args.push(p.grandparentRatingKey, p.grandparentRatingKey); }
     if (p.audiobookId) { where += " AND cat.audiobook_id = ?"; args.push(p.audiobookId); }
     if (p.library) { where += " AND COALESCE(NULLIF(po.library_name, ''), cat.library_title, groupcat.library_title) = ?"; args.push(p.library); }
@@ -3439,12 +3497,16 @@ export class DashboardService {
 
       const mvMatch = groupKey.match(/^movie:([^:]+):(.+)$/);
       if (mvMatch) {
-        const ratingKey = mvMatch[2];
+        const ratingKey = getCanonicalMovieRatingKey(this.db, mvMatch[2]);
+        const movieKeys = getMovieIdentityKeys(this.db, ratingKey);
+        const movieKeyPlaceholders = movieKeys.map(() => "?").join(",");
         const catalog = this.db.prepare(`
           SELECT title, duration, library_title, media_type, leaf_count, source_provenance
           FROM content_catalog
-          WHERE rating_key = ?
-        `).get(ratingKey) as any;
+          WHERE rating_key IN (${movieKeyPlaceholders})
+          ORDER BY CASE WHEN rating_key = ? THEN 0 ELSE 1 END
+          LIMIT 1
+        `).get(...movieKeys, ratingKey) as any;
 
         if (!catalog) return null;
 
@@ -3492,7 +3554,8 @@ export class DashboardService {
     const libraryName = resolveLibraryName(row.library_name, row.catalog_library_title ?? row.group_catalog_library_title);
     const category = deriveDashboardCategory(row.media_type, libraryName);
     if (!isHouseholdCategory(category.category)) return null as any;
-    const artworkKey = this.resolveArtworkKey(row, category.category);
+    const canonicalRatingKey = category.category === "movie" ? getCanonicalMovieRatingKey(this.db, String(row.rating_key)) : String(row.rating_key);
+    const artworkKey = this.resolveArtworkKey({ ...row, rating_key: canonicalRatingKey }, category.category);
     const artwork = buildDashboardArtworkDescriptor(this.db, artworkKey);
     const displayName = resolveDashboardAlias(row.dashboard_alias, row.plex_username);
     
@@ -3546,8 +3609,8 @@ export class DashboardService {
         audiobookTitle: row.audiobook_title ?? undefined,
         parentTitle: row.catalog_parent_title ?? undefined
       }),
-      ratingKey: row.rating_key, 
-      detailKey: activityDetailKey(category.category, row.rating_key, row.grandparent_rating_key, row.audiobook_id),
+      ratingKey: canonicalRatingKey,
+      detailKey: activityDetailKey(category.category, canonicalRatingKey, row.grandparent_rating_key, row.audiobook_id),
       title: row.title, 
       showTitle: row.show_title ?? undefined, 
       parentTitle: row.catalog_parent_title ?? undefined,
@@ -3586,6 +3649,8 @@ export class DashboardService {
           confidence: cowatch?.participant.confidence ?? (relationship === "together" ? 1.0 : 0.0),
           promptStatus: row.prompt_status ?? null, 
           plexSyncStatus: row.plex_sync_status ?? null, 
+          sourceRatingKey: row.rating_key,
+          sourcePlexGuid: row.plex_guid ?? null,
           watchedAtProvenance: row.watched_at_provenance ?? "unknown", 
         percentCompleteProvenance: row.percent_complete_provenance ?? "unknown" 
       } 
@@ -3599,7 +3664,7 @@ export class DashboardService {
     if (category === "tv" || category === "anime" || category === "classic_tv") {
       return row.grandparent_rating_key ?? row.rating_key;
     }
-    return row.rating_key;
+    return category === "movie" ? getCanonicalMovieRatingKey(this.db, String(row.rating_key)) : row.rating_key;
   }
 
   private resolveArtworkDescriptor(item: DashboardActivityItem, fallbackKey: string): Pick<DashboardArtworkDescriptor, "artworkUrl" | "posterUrl" | "artworkRevision"> {

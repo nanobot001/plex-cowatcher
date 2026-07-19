@@ -5,11 +5,11 @@
 Current state:
 - Block **3-6-2B: Archive Identity Review And Account Context** remains implemented in the current checkout. Migration 21 records exact Plex-account resolution metadata and append-only archive identity decisions.
 - Block **3-6-3: Tautulli Ingestion Completeness And Reconciliation** is implemented. Migration 22 adds durable run, per-user checkpoint, page-attempt, and source-row outcome state. The new CLI path is dry-run by default, resumes interrupted apply runs, bounds retries, and reports returned-but-not-stored versus source-not-returned evidence without title-only matching.
-- Block **3-6-2C: Canonical Plex Movie Identity And Stale-Key Adoption** is now planned as the corrective next block. A live exact-GUID inventory found eight affected movie identities, including Black Panther, where stale visible keys lack local artwork fingerprints while current exact-GUID siblings have artwork.
+- Block **3-6-2C: Canonical Plex Movie Identity And Stale-Key Adoption** is implemented with a dry-run-only live rollout. Migration 23 adds canonical movie identities and stale rating-key aliases; the repair CLI routes exact-GUID identity through dashboard grouping, detail, refresh, poster, backdrop, and revision paths. The live dry run found 2,237 exact-GUID candidates, proposed 2,237 repairs, and wrote zero identity rows.
 - `npm run verify:block` passed: 122 service tests, 59 dashboard tests with one intentional narrow-viewport skip, JavaScript syntax, and tool contracts. A live Tautulli apply then completed run `2c831401-24ec-4fc7-82f8-7ce1ead0d144`: 7,020 source rows scanned, 364 imported, 6,656 already present, and zero failures. The first apply invocation hit a transient SQLite error after partial progress and was safely resumed; no PM2 restart was performed.
 
 Next step:
-- Implement **3-6-2C: Canonical Plex Movie Identity And Stale-Key Adoption** before continuing with **3-6-4: Plex Supplemental Historical Recovery**. Keep source evidence immutable, preserve stale keys as aliases, and do not promote title-only matches.
+- Review the live 3-6-2C dry-run report, then explicitly apply the local identity repair if approved. After that, continue with **3-6-4: Plex Supplemental Historical Recovery**. Keep source evidence immutable, preserve stale keys as aliases, and do not promote title-only matches.
 
 ## 2026-07-18
 

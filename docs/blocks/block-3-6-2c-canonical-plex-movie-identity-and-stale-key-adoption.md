@@ -1,8 +1,9 @@
 # Block 3-6-2C: Canonical Plex Movie Identity And Stale-Key Adoption
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Corrective follow-on to 3-6-2A/2B; establish one local movie identity across exact Plex rating-key churn before broader Plex historical recovery in 3-6-4.
+> Status: Implemented with limitations on 2026-07-19.
+> Result: Implemented with limitations.
+> Verification: `npm run verify:block` - passed; live read-only dry run passed with 2,237 exact-GUID candidates and 0 identity rows written.
+> Notes: Added exact-GUID canonical movie identities, stale-key aliases, canonical dashboard/artwork/refresh routing, and an explicit local repair CLI; live apply remains deferred for operator review.
 
 ## Goal
 

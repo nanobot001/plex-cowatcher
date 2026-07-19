@@ -42,6 +42,7 @@ import { PlexHistoricalMovieBackfillService } from "../dist/service/plexHistoric
 import { PlexLibraryDatabaseAdapter } from "../dist/adapters/plexLibraryDatabaseAdapter.js";
 import { ArchivePlexViewRecoveryService } from "../dist/service/archivePlexViewRecoveryService.js";
 import { TautulliBackfillService } from "../dist/service/tautulliBackfillService.js";
+import { PlexMovieIdentityService } from "../dist/service/plexMovieIdentityService.js";
 import { buildCowatchReviewComponents, buildCowatchReviewEmbed } from "../dist/discord/prompts.js";
 
 const tests = [];
@@ -4910,6 +4911,69 @@ test("audiobook proof health and runtime seams remain bounded while automatic pr
     await new Promise((resolve) => setTimeout(resolve, 10));
     runtime.stop();
     assert.ok(calls >= 2);
+  });
+});
+
+test("canonical Plex movie identity repair is exact-GUID, dry-run safe, idempotent, and dashboard-visible", async () => {
+  await withTestDb(async (db) => {
+    new UserService(db).syncConfiguredUsers([
+      { plexUsername: "tony", displayName: "Tony", isSourceUser: true, enabled: true }
+    ]);
+    const userId = Number(db.prepare("SELECT id FROM users WHERE plex_username = 'tony'").get().id);
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO content_catalog
+      (rating_key,guid,media_type,title,library_title,source_provenance,refreshed_at,artwork_poster_fingerprint,artwork_backdrop_fingerprint)
+      VALUES (?,?,?,?,?,?,?,?,?)`).run("stale-panther", "plex://movie/panther", "movie", "Black Panther", "Movies", "fixture", "2020-01-01T00:00:00.000Z", null, null);
+    db.prepare(`INSERT INTO content_catalog
+      (rating_key,guid,media_type,title,library_title,source_provenance,refreshed_at,artwork_poster_fingerprint,artwork_backdrop_fingerprint)
+      VALUES (?,?,?,?,?,?,?,?,?)`).run("current-panther", "plex://movie/panther", "movie", "Black Panther", "Movies", "fixture", "2026-07-19T00:00:00.000Z", "poster-current", "backdrop-current");
+    db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,plex_guid,media_type,title,library_name,watched_at,watched_at_provenance,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(userId, "stale-panther", "plex://movie/panther", "movie", "Black Panther", "Movies", "2020-01-02T00:00:00.000Z", "source", 1, now, now);
+    db.prepare(`INSERT INTO playback_observations
+      (user_id,rating_key,plex_guid,media_type,title,library_name,watched_at,watched_at_provenance,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(userId, "current-panther", "plex://movie/panther", "movie", "Black Panther", "Movies", "2026-07-18T00:00:00.000Z", "source", 1, now, now);
+    db.prepare(`INSERT INTO content_catalog
+      (rating_key,guid,media_type,title,library_title,source_provenance,refreshed_at)
+      VALUES (?,?,?,?,?,?,?)`).run("ambiguous-a", "plex://movie/ambiguous", "movie", "Ambiguous", "Movies", "fixture", "2020-01-01T00:00:00.000Z");
+    db.prepare(`INSERT INTO content_catalog
+      (rating_key,guid,media_type,title,library_title,source_provenance,refreshed_at)
+      VALUES (?,?,?,?,?,?,?)`).run("ambiguous-b", "plex://movie/ambiguous", "movie", "Ambiguous", "Movies", "fixture", "2020-01-01T00:00:00.000Z");
+
+    class IdentityFixtureAdapter extends MockPlexAdapter {
+      async resolveActiveRatingKey(originalRatingKey, plexGuid) {
+        if (plexGuid === "plex://movie/panther") return "current-panther";
+        return "";
+      }
+    }
+    const service = new PlexMovieIdentityService(db, new IdentityFixtureAdapter());
+    const dryRun = await service.run({ apply: false, confirm: false });
+    const pantherDryRun = dryRun.ok && dryRun.candidates.find((candidate) => candidate.plexGuid === "plex://movie/panther");
+    assert.equal(dryRun.ok, true);
+    assert.equal(pantherDryRun.canonicalRatingKey, "current-panther");
+    assert.equal(pantherDryRun.outcome, "repaired");
+    assert.equal(dryRun.ok && dryRun.candidates.some((candidate) => candidate.plexGuid === "plex://movie/ambiguous" && candidate.outcome === "ambiguous"), true);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM movie_canonical_identities").get().count, 0);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM playback_observations").get().count, 2);
+
+    const applied = await service.run({ apply: true, confirm: true, actor: "test" });
+    assert.equal(applied.ok, true);
+    assert.equal(applied.ok && applied.summary.repaired, 1);
+    assert.equal(db.prepare("SELECT canonical_rating_key FROM movie_canonical_identities WHERE plex_guid = 'plex://movie/panther'").get().canonical_rating_key, "current-panther");
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM movie_identity_aliases WHERE canonical_movie_id = (SELECT id FROM movie_canonical_identities WHERE plex_guid = 'plex://movie/panther')").get().count, 2);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM playback_observations").get().count, 2);
+
+    const repeated = await service.run({ apply: true, confirm: true, actor: "test" });
+    assert.equal(repeated.ok, true);
+    assert.equal(repeated.ok && repeated.summary.alreadyCanonical, 1);
+
+    const dashboard = new DashboardService(db, { timeZone: "UTC" });
+    const workspace = dashboard.getDetailWorkspace("movie:stale-panther");
+    assert.equal(workspace.ok, true);
+    assert.equal(workspace.ok && workspace.data.detailKey, "movie:current-panther");
+    assert.equal(workspace.ok && workspace.data.movieHistory.summary.rawObservationCount, 2);
+    const media = dashboard.getMedia({ category: "movie", limit: 50, offset: 0 });
+    assert.equal(media.items.filter((item) => item.groupKey.includes("current-panther")).length, 1);
   });
 });
 

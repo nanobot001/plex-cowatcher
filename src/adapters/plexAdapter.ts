@@ -546,7 +546,7 @@ export class HttpPlexAdapter extends MockPlexAdapter {
         if (tag) {
           const resolvedKey = attr(tag, "ratingKey");
           if (resolvedKey && resolvedKey !== originalRatingKey) {
-            console.log(`[PlexAdapter] Resolved stale ratingKey ${originalRatingKey} to active ratingKey ${resolvedKey} using GUID ${plexGuid}`);
+            console.error(`[PlexAdapter] Resolved stale ratingKey ${originalRatingKey} to active ratingKey ${resolvedKey} using GUID ${plexGuid}`);
             return resolvedKey;
           }
         }

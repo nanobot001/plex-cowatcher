@@ -616,6 +616,12 @@ test("same-session observations never become a replay across API and detail UI",
 });
 
 test("Movie detail groups canonical stale-key history and loads About independently", async ({ page }) => {
+  const staleKeyResponse = await page.request.get("/api/dashboard/detail-workspace/" + encodeURIComponent("movie:23917"));
+  const staleKeyBody = await staleKeyResponse.json();
+  expect(staleKeyResponse.status(), JSON.stringify(staleKeyBody)).toBe(200);
+  expect(staleKeyBody.data.detailKey).toBe("movie:57417");
+  expect(staleKeyBody.data.movieHistory.summary.rawObservationCount).toBe(3);
+
   const baseResponse = await page.request.get("/api/dashboard/detail-workspace/" + encodeURIComponent("movie:57417"));
   const baseBody = await baseResponse.json();
   expect(baseBody.ok).toBeTruthy();
