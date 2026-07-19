@@ -41,6 +41,7 @@ import { CowatchAdjudicationService } from "../dist/service/cowatchAdjudicationS
 import { PlexHistoricalMovieBackfillService } from "../dist/service/plexHistoricalMovieBackfillService.js";
 import { PlexLibraryDatabaseAdapter } from "../dist/adapters/plexLibraryDatabaseAdapter.js";
 import { ArchivePlexViewRecoveryService } from "../dist/service/archivePlexViewRecoveryService.js";
+import { TautulliBackfillService } from "../dist/service/tautulliBackfillService.js";
 import { buildCowatchReviewComponents, buildCowatchReviewEmbed } from "../dist/discord/prompts.js";
 
 const tests = [];
@@ -985,6 +986,92 @@ test("IngestionService backfillHistory paginated is idempotent", async () => {
     const result2 = await ingestion.backfillHistory(1, 10);
     assert.equal(result2.inserted, 0);
     assert.equal(result2.skipped, 1);
+  });
+});
+
+test("Tautulli backfill dry-run is pure and scans all pages", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const tony = db.prepare("SELECT id FROM users WHERE plex_username = 'Tony'").get();
+    const tautulli = {
+      getUsers: async () => [],
+      getActivity: async () => ({ streamCount: 0 }),
+      getMetadata: async (ratingKey) => ({ ratingKey, title: "" }),
+      getRecentHistory: async ({ start, user }) => start === 0
+        ? [{ rowId: "tautulli-1", user, ratingKey: "movie-dry", mediaType: "movie", title: "Dry Movie", watchedAt: "2026-06-01T12:00:00.000Z" }]
+        : []
+    };
+    const service = new TautulliBackfillService(db, tautulli, async () => {});
+
+    const result = await service.run({ userId: tony.id, pageSize: 1 });
+    assert.equal(result.mode, "dry_run");
+    assert.equal(result.status, "completed");
+    assert.equal(result.totals.imported, 1);
+    assert.equal(result.totals.skipped, 0);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM playback_observations").get().count, 0);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM tautulli_ingestion_runs").get().count, 0);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audit_log").get().count, 0);
+  });
+});
+
+test("Tautulli backfill resumes an incomplete page without duplicating observations", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const tony = db.prepare("SELECT id FROM users WHERE plex_username = 'Tony'").get();
+    let failedPage = true;
+    const tautulli = {
+      getUsers: async () => [],
+      getActivity: async () => ({ streamCount: 0 }),
+      getMetadata: async (ratingKey) => ({ ratingKey, title: "" }),
+      getRecentHistory: async ({ start, user }) => {
+        if (start === 0) return [{ rowId: "tautulli-resume-1", user, ratingKey: "movie-resume", mediaType: "movie", title: "Resume Movie", watchedAt: "2026-06-02T12:00:00.000Z" }];
+        if (failedPage) throw new Error("temporary Tautulli failure");
+        return [];
+      }
+    };
+    const service = new TautulliBackfillService(db, tautulli, async () => {});
+
+    const first = await service.run({ userId: tony.id, pageSize: 1, apply: true, confirm: true });
+    assert.equal(first.status, "incomplete");
+    assert.equal(first.users[0].cursor, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM playback_observations").get().count, 1);
+
+    failedPage = false;
+    const second = await service.run({ userId: tony.id, pageSize: 1, apply: true, confirm: true });
+    assert.equal(second.status, "completed");
+    assert.equal(second.users[0].imported, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM playback_observations").get().count, 1);
+    assert.equal(db.prepare("SELECT status FROM tautulli_ingestion_runs").get().status, "completed");
+  });
+});
+
+test("Tautulli reconciliation distinguishes returned-but-not-stored from unknown coverage", async () => {
+  await withTestDb(async (db) => {
+    seedUsers(db);
+    const tony = db.prepare("SELECT id FROM users WHERE plex_username = 'Tony'").get();
+    const tautulli = {
+      getUsers: async () => [],
+      getActivity: async () => ({ streamCount: 0 }),
+      getMetadata: async (ratingKey) => ({ ratingKey, title: "" }),
+      getRecentHistory: async ({ user }) => [{ rowId: "tautulli-failed-row", user, ratingKey: "movie-failed", mediaType: "movie", title: undefined, watchedAt: "2026-06-03T12:00:00.000Z" }]
+    };
+    const service = new TautulliBackfillService(db, tautulli, async () => {});
+    const result = await service.run({ userId: tony.id, pageSize: 1, apply: true, confirm: true });
+    assert.equal(result.status, "incomplete");
+    assert.equal(result.report.returnedButNotStored.length, 1);
+    assert.equal(result.report.returnedButNotStored[0].status, "returned_but_not_stored");
+
+    const localRow = { rowId: "tautulli-local-row", user: "Tony", ratingKey: "movie-local", mediaType: "movie", title: "Local Movie", watchedAt: "2026-06-04T12:00:00.000Z" };
+    new IngestionService(db, tautulli).ingestRow(tony.id, localRow);
+    const completeTautulli = {
+      getUsers: async () => [],
+      getActivity: async () => ({ streamCount: 0 }),
+      getMetadata: async (ratingKey) => ({ ratingKey, title: "" }),
+      getRecentHistory: async () => []
+    };
+    const complete = await new TautulliBackfillService(db, completeTautulli, async () => {}).run({ userId: tony.id, pageSize: 1, apply: true, confirm: true });
+    assert.equal(complete.status, "completed");
+    assert.equal(complete.report.notReturnedByTautulli.some(row => row.ratingKey === "movie-local"), true);
   });
 });
 

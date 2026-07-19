@@ -25,6 +25,7 @@ const expectedTools = [
   "project.viewing_sessions",
   "project.cowatching",
   "project.audiobook_backfill",
+  "project.tautulli_backfill",
   "project.archive_plex_view_recovery",
   "project.audiobook_proof"
 ];
@@ -49,6 +50,7 @@ const expectedCliCommands = [
   "viewing-sessions",
   "cowatching",
   "audiobook-backfill",
+  "tautulli-backfill",
   "archive-plex-import",
   "audiobook-proof"
 ];

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { openMigratedDatabase } from "../db/database.js";
 import { createPlexAdapter } from "../adapters/plexAdapter.js";
 import { createTautulliAdapter } from "../adapters/tautulliAdapter.js";
+import type { TautulliAdapter } from "../adapters/tautulliAdapter.js";
 import { DiscordBot } from "../discord/bot.js";
 import { AuditService } from "../service/auditService.js";
 import { CowatchService } from "../service/cowatchService.js";
@@ -26,9 +27,63 @@ function print(value: unknown): void {
   console.log(JSON.stringify(value, null, args.includes("--pretty") ? 2 : 0));
 }
 
+async function runTautulliBackfillCommand(tautulli: TautulliAdapter): Promise<void> {
+  const { TautulliBackfillService } = await import("../service/tautulliBackfillService.js");
+  const timestamp = new Date().toISOString();
+  try {
+    const username = arg("user");
+    const userRecord = username
+      ? db.prepare(`
+          SELECT id, plex_username, plex_user_id
+          FROM users
+          WHERE enabled = 1
+            AND (
+              lower(plex_username) = lower(?)
+              OR lower(display_name) = lower(?)
+              OR lower(COALESCE(dashboard_alias, '')) = lower(?)
+            )
+          ORDER BY CASE
+            WHEN lower(plex_username) = lower(?) THEN 0
+            WHEN lower(display_name) = lower(?) THEN 1
+            ELSE 2
+          END
+          LIMIT 1
+        `).get(username, username, username, username, username) as { id: number; plex_username: string; plex_user_id: string | null } | undefined
+      : undefined;
+    if (username && !userRecord) {
+      print({
+        ok: false,
+        tool: "project.tautulli_backfill",
+        timestamp,
+        error: { code: "TAUTULLI_BACKFILL_USER_NOT_FOUND", message: "The selected user is not enabled.", retryable: false, severity: "error" }
+      });
+      process.exitCode = 1;
+      return;
+    }
+    const data = await new TautulliBackfillService(db, tautulli).run({
+      userId: userRecord?.id,
+      pageSize: arg("page-size") ? Number(arg("page-size")) : undefined,
+      apply: args.includes("--apply"),
+      confirm: args.includes("--confirm"),
+      report: args.includes("--report"),
+      runId: arg("run-id")
+    });
+    print({ ok: true, tool: "project.tautulli_backfill", timestamp, data });
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? String((error as { code: unknown }).code) : "TAUTULLI_BACKFILL_FAILED";
+    print({
+      ok: false,
+      tool: "project.tautulli_backfill",
+      timestamp,
+      error: { code, message: "Tautulli backfill could not run.", retryable: false, severity: "error" }
+    });
+    process.exitCode = 1;
+  }
+}
+
 async function main(): Promise<void> {
   const users = new UserService(db);
-  if (!["audiobook-backfill", "audiobook-proof", "plex-historical-backfill", "archive-plex-import"].includes(command)) {
+  if (!["audiobook-backfill", "audiobook-proof", "plex-historical-backfill", "archive-plex-import", "tautulli-backfill", "backfill"].includes(command)) {
     users.syncConfiguredUsers();
   }
   const plex = createPlexAdapter();
@@ -230,23 +285,9 @@ async function main(): Promise<void> {
         }
       }
       break;
+    case "tautulli-backfill":
     case "backfill":
-      {
-        const { IngestionService } = await import("../service/ingestionService.js");
-        const ingestion = new IngestionService(db, tautulli);
-        let targetId: number | undefined;
-        const username = arg("user");
-        if (username) {
-          const userRecord = users.findByUsername(username);
-          if (!userRecord) {
-            print({ ok: false, message: `User ${username} not found or not enabled` });
-            break;
-          }
-          targetId = userRecord.id;
-        }
-        const result = await ingestion.backfillHistory(targetId, arg("page-size") ? Number(arg("page-size")) : 200);
-        print({ ok: true, ...result });
-      }
+      await runTautulliBackfillCommand(tautulli);
       break;
     case "sync-users":
       {
@@ -480,7 +521,7 @@ async function main(): Promise<void> {
       }
       break;
     default:
-      print({ ok: true, commands: ["health", "users", "recent", "pending", "preview-copy", "apply-copy", "audiobook-backfill", "plex-historical-backfill", "archive-plex-import", "scan-audiobooks", "audiobook-proof", "import-audiobook-chapters", "audit", "retry-failed", "verify-plex-watched-state", "test-discord-prompt"] });
+      print({ ok: true, commands: ["health", "users", "recent", "pending", "preview-copy", "apply-copy", "tautulli-backfill", "audiobook-backfill", "plex-historical-backfill", "archive-plex-import", "scan-audiobooks", "audiobook-proof", "import-audiobook-chapters", "audit", "retry-failed", "verify-plex-watched-state", "test-discord-prompt"] });
   }
 }
 

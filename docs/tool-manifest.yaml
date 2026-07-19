@@ -161,6 +161,32 @@ tools:
     output_schema:
       type: object
 
+  - name: project.tautulli_backfill
+    risk: write_action
+    description: Preview or apply resumable, auditable Tautulli history ingestion and read reconciliation results.
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        user:
+          type: string
+        page_size:
+          type: integer
+          default: 200
+        run_id:
+          type: string
+        report:
+          type: boolean
+          default: false
+        apply:
+          type: boolean
+          default: false
+        confirm:
+          type: boolean
+          default: false
+    output_schema:
+      type: object
+
   - name: project.audiobook_scan
     risk: write_action
     description: Proactively crawl Plex library tracks or receive Plex webhook triggers to index and enrich audiobooks.

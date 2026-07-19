@@ -1,8 +1,9 @@
 # Block 3-6-3: Tautulli Ingestion Completeness And Reconciliation
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Make the detailed source path resumable and measurable before using Plex to fill its gaps.
+> Status: Implemented on 2026-07-19.
+> Result: Implemented.
+> Verification: `npm run verify:block` - passed with 122 service tests, 59 dashboard tests, one intentional narrow-viewport skip, JavaScript syntax, and tool-contract verification.
+> Notes: Added dry-run/apply Tautulli backfill with durable per-user checkpoints, bounded page retries, source-row outcomes, and exact-identity reconciliation; no automatic PM2 backfill or Tautulli writes.
 
 ## Goal
 
