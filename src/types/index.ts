@@ -80,6 +80,27 @@ export interface PlexHistoricalMovieState {
   lastViewedAt?: string;
 }
 
+export interface PlexHistoricalEpisodeState {
+  ratingKey: string;
+  guid?: string;
+  title: string;
+  mediaType: "episode";
+  librarySectionID?: string;
+  librarySectionTitle?: string;
+  grandparentRatingKey?: string;
+  grandparentGuid?: string;
+  grandparentTitle?: string;
+  parentRatingKey?: string;
+  parentGuid?: string;
+  parentTitle?: string;
+  seasonNumber?: number;
+  episodeNumber?: number;
+  viewCount?: number;
+  lastViewedAt?: string;
+}
+
+export type PlexHistoricalMediaState = PlexHistoricalMovieState | PlexHistoricalEpisodeState;
+
 export interface PlexLibraryMovieViewRecord {
   sourceRowId: number;
   accountId?: number;

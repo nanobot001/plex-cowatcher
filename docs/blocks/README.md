@@ -4,9 +4,9 @@ Blocks are numbered, bounded AI-buildable tickets for code, logic, docs, folder 
 
 ## Active Phase
 
-The project is currently in the Phase 3 refinement set and has completed the 3-6-2C canonical movie identity correction and 3-6-3 Tautulli ingestion foundation. The immediate next selected block is:
+The project is currently in the Phase 3 refinement set and has completed the 3-6-2C canonical movie identity correction, 3-6-3 Tautulli ingestion foundation, and the aggregate portion of 3-6-4 supplemental recovery. The immediate next selected block is:
 
-- `block-3-6-4-plex-supplemental-historical-recovery.md` - extend source-aware Plex recovery after canonical identity and Tautulli completeness are in place.
+- `block-3-6-4a-plex-play-history-recovery-and-reconciliation.md` - recover Plex's dated multi-play history and reconcile it with Tautulli before archive export/backup.
 
 Phase 3 builds on the completed playback-intelligence foundation with domain-specific refinement, richer operator ergonomics, and reporting.
 Blocks 3-2a through 3-2e form one sequential dashboard implementation path:
@@ -129,7 +129,8 @@ The full 3-2m sequence is implemented and verified: household profiles, person p
    4. `block-3-6-2b-archive-identity-review-and-account-context.md`
    5. `block-3-6-2c-canonical-plex-movie-identity-and-stale-key-adoption.md` - implemented 2026-07-19; live apply remains intentionally deferred.
    6. `block-3-6-3-tautulli-ingestion-completeness-and-reconciliation.md` - implemented 2026-07-19.
-   7. `block-3-6-4-plex-supplemental-historical-recovery.md`
+   7. `block-3-6-4-plex-supplemental-historical-recovery.md` - implemented 2026-07-20; live apply remains intentionally deferred.
+   7a. `block-3-6-4a-plex-play-history-recovery-and-reconciliation.md` - planned corrective child; Plex play-history ingestion is still outstanding.
    8. `block-3-6-5-archive-query-export-and-backup.md`
    9. `block-3-6-6-achievements-engine-v1.md`
 - `block-3-2n-5d-automatic-audiobook-chapter-proof-handoff.md` - planned umbrella.

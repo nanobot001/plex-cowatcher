@@ -67,7 +67,8 @@ export class QueryService {
         cc.status AS confirmation_status,
         cc.plex_sync_status,
         cc.plex_sync_error,
-        cat.genres_json
+        cat.genres_json,
+        recovery.source_status AS historical_source_status
       FROM playback_observations po
       JOIN users u ON po.user_id = u.id
       LEFT JOIN content_catalog cat ON po.rating_key = cat.rating_key
@@ -78,6 +79,9 @@ export class QueryService {
       LEFT JOIN cowatch_confirmations cc ON 
         cc.watch_event_id = we.id 
         AND cc.target_user_id = po.user_id
+      LEFT JOIN plex_historical_recovery_items recovery ON
+        recovery.imported_observation_id = po.id
+        AND recovery.media_type = po.media_type
       WHERE 1=1
     `;
 
@@ -169,6 +173,8 @@ export class QueryService {
           confirmed: isConfirmed,
           plexSynced: isPlexSynced,
           inferred: false,
+          sourceStatus: row.historical_source_status
+            || (row.watched_at_provenance === "plex_historical_last_view" ? "plex_only" : "tautulli_backed"),
           provenance: {
             watchedAt: row.watched_at_provenance || "unknown",
             percentComplete: row.percent_complete_provenance || "unknown"

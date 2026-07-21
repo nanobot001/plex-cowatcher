@@ -212,8 +212,9 @@ Planned product foundation. Preserve the household memory of who saw what and wh
 4. **3-6-2B - Archive Identity Review And Account Context:** Implemented 2026-07-19. Automate exact account attribution and add a compact, reversible identity-review overlay for uncertain archive media without mutating source evidence.
 5. **3-6-2C - Canonical Plex Movie Identity And Stale-Key Adoption:** Implemented 2026-07-19. Use exact Plex GUIDs to preserve stale rating keys as aliases while making movie grouping, refresh, poster, and backdrop resolution canonical and revision-safe. The local repair CLI is dry-run by default; live apply remains deferred for operator review.
 6. **3-6-3 - Tautulli Ingestion Completeness And Reconciliation:** Implemented 2026-07-19. Durable per-user Tautulli backfill checkpoints, bounded retries, source-row outcomes, and exact-identity reconciliation distinguish source absence from local ingestion failure.
-7. **3-6-4 - Plex Supplemental Historical Recovery:** Extend the existing 6E-3C movie slice to episode-level and broader best-effort Plex recovery without downgrading Tautulli evidence.
-8. **3-6-5 - Archive Query, Export, And Backup:** Make the archive portable, queryable, privacy-safe, and recoverable.
+7. **3-6-4 - Plex Supplemental Historical Recovery:** Implemented 2026-07-20 for aggregate movie/episode last-view recovery; live apply remains operator-controlled.
+8. **3-6-4A - Plex Play-History Recovery And Reconciliation:** Planned corrective child. Import Plex's paginated dated play-history rows for movies and episodes, preserve multiple plays, and reconcile overlapping Tautulli evidence without source loss.
+9. **3-6-5 - Archive Query, Export, And Backup:** Make the archive portable, queryable, privacy-safe, and recoverable.
 9. **3-6-6 - Achievements Engine v1:** Add versioned, evidence-backed, deterministic achievements after the archive foundation is stable.
 
 ### Block 3-2n-5c: Reliable Audiobook Discovery Automation

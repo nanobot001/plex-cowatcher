@@ -235,7 +235,8 @@ async function main(): Promise<void> {
             user: arg("user"),
             ratingKey: arg("rating-key"),
             plexGuid: arg("plex-guid"),
-            cutoffAt: arg("cutoff")
+            cutoffAt: arg("cutoff"),
+            mediaType: arg("media-type") as "movie" | "episode" | "all" | undefined
           });
           print({ ok: data.ok, tool: "project.plex_historical_backfill", timestamp, data });
         } catch (error) {
@@ -245,7 +246,7 @@ async function main(): Promise<void> {
             timestamp,
             error: {
               code: error instanceof Error ? error.message : "PLEX_HISTORICAL_BACKFILL_FAILED",
-              message: "Plex historical movie backfill could not run.",
+              message: "Plex supplemental historical recovery could not run.",
               retryable: false,
               severity: "error"
             }

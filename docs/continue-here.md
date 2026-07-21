@@ -1,5 +1,27 @@
 # Continue Here
 
+## 2026-07-21
+
+Current state:
+- Live validation found that Plex's `/status/sessions/history/all` returns multiple dated play-history rows for an exact TV episode, while 3-6-4 currently reads only aggregate episode metadata (`viewCount` and `lastViewedAt`). The exact Cheers S1E1 reproduction returned two Tony history rows; SQLite currently contains only the newer Tautulli-backed observation.
+- The 3-6-4 implementation therefore achieved aggregate last-view recovery but not complete Plex play-history recovery. The prior claim that Plex could not expose play-by-play history was incorrect and has been replaced by the corrective plan below.
+- A new planned child block, **3-6-4A: Plex Play-History Recovery And Reconciliation**, covers paginated Plex history ingestion, local account mapping, source-row idempotency, exact reconciliation with Tautulli, and per-play TV detail presentation.
+
+Next step:
+- Implement only `docs/blocks/block-3-6-4a-plex-play-history-recovery-and-reconciliation.md` using the global `implement-block` skill. Keep the current 3-6-4 aggregate path compatible and do not apply live history writes until the read-only canary and deterministic gates pass.
+
+## 2026-07-20
+
+Current state:
+- A dedicated planning branch `codex/3-6-4-plex-supplemental-historical-recovery-plan` was created from `origin/main` for **3-6-4: Plex Supplemental Historical Recovery**.
+- **3-6-4 is implemented.** The existing 6E-3C coordinator now supports `--media-type movie|episode|all`, exact-GUID per-user episode hydration, a generic supplemental recovery ledger, source-status labels, and archive read-model provenance while preserving the existing CLI/tool name and movie compatibility tables.
+- The safety boundary remains: dry-run by default, explicit apply confirmation, local SQLite writes only, immutable source evidence, unknown rather than negative evidence, and no automatic recurring recovery worker.
+- `npm run verify:block` passed: 124 service tests, 59 dashboard tests with one intentional narrow-viewport skip, JavaScript syntax, and tool contracts.
+- Read-only live canaries completed without source writes: the episode scope found 104 pre-cutoff exact-GUID Plex-only candidates for `tonyhung`; the movie scope found 205 already-covered exact-GUID records and no importable candidates.
+
+Next step:
+- Review the implementation/branch, then proceed to **3-6-5: Archive Query, Export, And Backup**. Any live supplemental recovery apply remains an explicit operator decision.
+
 ## 2026-07-19
 
 Current state:

@@ -153,6 +153,128 @@ test("Plex historical movie backfill is dry-run safe and idempotent", async () =
   });
 });
 
+test("Plex supplemental recovery hydrates exact episodes and preserves source status", async () => {
+  await withTestDb(async (db, dbPath) => {
+    new UserService(db).syncConfiguredUsers([
+      { plexUsername: "Tony", plexUserId: "plex-tony", displayName: "Tony", isSourceUser: true, enabled: true }
+    ]);
+    const userId = Number(db.prepare("SELECT id FROM users WHERE plex_username = 'Tony'").get().id);
+    const insertTautulli = db.prepare(`
+      INSERT INTO playback_observations (
+        user_id, tautulli_row_id, rating_key, plex_guid, media_type, library_name, title,
+        show_title, season_number, episode_number, watched_at, watched_at_provenance,
+        completed, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'episode', 'TV Shows', ?, 'Sentenced to Be a Hero', 1, ?, ?, 'source', 1, ?, ?)
+    `);
+    for (let index = 1; index <= 10; index += 1) {
+      const watchedAt = `2020-01-01T00:${String(index).padStart(2, "0")}:00.000Z`;
+      insertTautulli.run(
+        userId,
+        `tautulli-episode-${index}`,
+        `episode-${index}`,
+        `plex://episode/sentenced-${index}`,
+        `Episode ${index}`,
+        index,
+        watchedAt,
+        new Date().toISOString(),
+        new Date().toISOString()
+      );
+    }
+
+    class EpisodeFixtureAdapter extends MockPlexAdapter {
+      async listUsers() { return [{ id: "plex-tony", username: "Tony", displayName: "Tony" }]; }
+      async listUserEpisodeStates() {
+        return [
+          ...Array.from({ length: 10 }, (_, offset) => {
+            const index = offset + 1;
+            return {
+              ratingKey: `episode-${index}`,
+              guid: `plex://episode/sentenced-${index}`,
+              title: `Episode ${index}`,
+              mediaType: "episode",
+              librarySectionTitle: "TV Shows",
+              grandparentRatingKey: "show-sentenced",
+              grandparentTitle: "Sentenced to Be a Hero",
+              parentRatingKey: "season-sentenced-1",
+              parentTitle: "Season 1",
+              seasonNumber: 1,
+              episodeNumber: index,
+              viewCount: 2,
+              lastViewedAt: `2020-01-01T00:${String(index).padStart(2, "0")}:00.000Z`
+            };
+          }),
+          {
+            ratingKey: "episode-11",
+            guid: "plex://episode/sentenced-11",
+            title: "Episode 11",
+            mediaType: "episode",
+            librarySectionTitle: "TV Shows",
+            grandparentRatingKey: "show-sentenced",
+            grandparentTitle: "Sentenced to Be a Hero",
+            parentRatingKey: "season-sentenced-1",
+            parentTitle: "Season 1",
+            seasonNumber: 1,
+            episodeNumber: 11,
+            viewCount: 1,
+            lastViewedAt: "2020-02-01T00:00:00.000Z"
+          },
+          {
+            ratingKey: "episode-12",
+            guid: "plex://episode/sentenced-12",
+            title: "Episode 12",
+            mediaType: "episode",
+            librarySectionTitle: "TV Shows",
+            grandparentRatingKey: "show-sentenced",
+            grandparentTitle: "Sentenced to Be a Hero",
+            parentRatingKey: "season-sentenced-1",
+            parentTitle: "Season 1",
+            seasonNumber: 1,
+            episodeNumber: 12,
+            viewCount: 1,
+            lastViewedAt: "2020-02-02T00:00:00.000Z"
+          },
+          {
+            ratingKey: "episode-unknown",
+            title: "Unrecoverable Episode",
+            mediaType: "episode",
+            librarySectionTitle: "TV Shows",
+            viewCount: 1
+          }
+        ];
+      }
+    }
+
+    const service = new PlexHistoricalMovieBackfillService(db, new EpisodeFixtureAdapter(), dbPath);
+    const preview = await service.run({ apply: false, confirm: false, mediaType: "episode" });
+    assert.equal(preview.ok, true);
+    assert.equal(preview.summary.episodes, 13);
+    assert.equal(preview.summary.alreadyCovered, 10);
+    assert.equal(preview.summary.dryRunImportable, 2);
+    assert.equal(preview.summary.skipped, 1);
+    assert.equal(preview.summary.sourceStatuses.reconciled, 10);
+    assert.equal(preview.summary.sourceStatuses.plex_only, 2);
+    assert.equal(preview.summary.sourceStatuses.unknown, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM playback_observations").get().count, 10);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM plex_historical_recovery_items").get().count, 0);
+
+    const applied = await service.run({ apply: true, confirm: true, mediaType: "episode" });
+    assert.equal(applied.summary.imported, 2);
+    assert.equal(applied.summary.episodes, 13);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM playback_observations WHERE media_type = 'episode'").get().count, 12);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM plex_historical_recovery_items WHERE media_type = 'episode'").get().count, 13);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM plex_historical_recovery_items WHERE source_status = 'plex_only'").get().count, 2);
+    assert.equal(db.prepare("SELECT grandparent_rating_key, season_number, episode_number FROM playback_observations WHERE rating_key = 'episode-11'").get().episode_number, 11);
+    const history = new QueryService(db).queryHistory({ mediaType: "episode", ratingKey: "episode-11" });
+    assert.equal(history[0].evidence.sourceStatus, "plex_only");
+
+    const repeated = await service.run({ apply: true, confirm: true, mediaType: "episode" });
+    assert.equal(repeated.summary.imported, 0);
+    assert.equal(repeated.summary.alreadyCovered, 12);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM playback_observations WHERE media_type = 'episode'").get().count, 12);
+    assert.equal(db.prepare("SELECT MAX(seen_count) AS count FROM plex_historical_recovery_items").get().count, 2);
+  });
+});
+
 test("archive Plex view recovery bridges legacy identities and preserves source events", async () => {
   await withTestDb(async (db, dbPath) => {
     new UserService(db).syncConfiguredUsers([
@@ -2626,7 +2748,7 @@ test("dashboard cowatch pairings use visible exact-item evidence and measurable 
     seedUsers(db);
     const users = db.prepare("SELECT id, plex_username FROM users").all();
     const byName = Object.fromEntries(users.map((user) => [user.plex_username, user]));
-    const now = new Date();
+    const now = new Date(Date.UTC(2026, 6, 20, 12, 0, 0));
     const sourceAt = now.toISOString();
     const targetAt = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
     const insert = db.prepare(`INSERT INTO playback_observations

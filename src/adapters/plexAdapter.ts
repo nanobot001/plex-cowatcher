@@ -1,4 +1,4 @@
-import type { MarkWatchedResult, PlexHistoricalMovieState, PlexMetadata, PlexRichMetadata, PlexUser, WatchedState } from "../types/index.js";
+import type { MarkWatchedResult, PlexHistoricalEpisodeState, PlexHistoricalMovieState, PlexMetadata, PlexRichMetadata, PlexUser, WatchedState } from "../types/index.js";
 import { appConfig } from "../utils/config.js";
 
 export interface PlexAdapter {
@@ -9,6 +9,7 @@ export interface PlexAdapter {
   markWatched(userId: string, ratingKey: string, plexGuid?: string): Promise<MarkWatchedResult>;
   listLibraries(): Promise<Array<{ key: string; title: string; type: string }>>;
   listUserMovieStates?(userId: string): Promise<PlexHistoricalMovieState[]>;
+  listUserEpisodeStates?(userId: string): Promise<PlexHistoricalEpisodeState[]>;
   resolveActiveRatingKey?(originalRatingKey: string, plexGuid?: string): Promise<string>;
   listShows(libraryKey: string): Promise<string[]>;
   listLibraryTracks(libraryKey: string): Promise<PlexRichMetadata[]>;
@@ -117,6 +118,10 @@ export class MockPlexAdapter implements PlexAdapter {
   }
 
   async listUserMovieStates(_userId: string): Promise<PlexHistoricalMovieState[]> {
+    return [];
+  }
+
+  async listUserEpisodeStates(_userId: string): Promise<PlexHistoricalEpisodeState[]> {
     return [];
   }
 
@@ -604,10 +609,7 @@ export class HttpPlexAdapter extends MockPlexAdapter {
       for (const tag of tags) {
         const ratingKey = attr(tag, "ratingKey");
         if (!ratingKey) continue;
-        const rawLastViewedAt = attr(tag, "lastViewedAt") ?? attr(tag, "viewedAt");
-        const lastViewedAt = rawLastViewedAt && /^\d+$/.test(rawLastViewedAt)
-          ? new Date(Number(rawLastViewedAt) * 1000).toISOString()
-          : rawLastViewedAt || undefined;
+        const lastViewedAt = parsePlexHistoricalTimestamp(attr(tag, "lastViewedAt") ?? attr(tag, "viewedAt"));
         const rawViewCount = attr(tag, "viewCount");
         const viewCount = rawViewCount == null || rawViewCount === "" ? undefined : Number(rawViewCount);
         movies.push({
@@ -623,6 +625,58 @@ export class HttpPlexAdapter extends MockPlexAdapter {
       }
     }
     return movies;
+  }
+
+  async listUserEpisodeStates(userId: string): Promise<PlexHistoricalEpisodeState[]> {
+    const librariesResponse = await this.fetchAsUser(userId, "/library/sections");
+    if (!librariesResponse.ok) {
+      throw plexErrorFromResponse(librariesResponse, "PLEX_USER_LIBRARIES_FAILED", "Failed to retrieve Plex libraries for the user.");
+    }
+    const librariesXml = await librariesResponse.text();
+    const showLibraries = (librariesXml.match(/<Directory\b[^>]*>/g) ?? [])
+      .map((tag) => ({
+        key: attr(tag, "key"),
+        title: attr(tag, "title"),
+        type: attr(tag, "type")
+      }))
+      .filter((library): library is { key: string; title: string; type: string } => library.type === "show" && Boolean(library.key && library.title));
+
+    const episodes: PlexHistoricalEpisodeState[] = [];
+    for (const library of showLibraries) {
+      const response = await this.fetchAsUser(userId, `/library/sections/${encodeURIComponent(library.key)}/all`, { type: "4" });
+      if (!response.ok) {
+        throw plexErrorFromResponse(response, "PLEX_USER_EPISODES_FAILED", "Failed to retrieve Plex episodes for the user.");
+      }
+      const xml = await response.text();
+      const tags = xml.match(/<(?:Video|Episode)\b[^>]*>/g) ?? [];
+      for (const tag of tags) {
+        const ratingKey = attr(tag, "ratingKey");
+        if (!ratingKey) continue;
+        const rawViewCount = attr(tag, "viewCount");
+        const viewCount = rawViewCount == null || rawViewCount === "" ? undefined : Number(rawViewCount);
+        const seasonNumber = attr(tag, "parentIndex") ?? attr(tag, "seasonNumber");
+        const episodeNumber = attr(tag, "index") ?? attr(tag, "episodeNumber");
+        episodes.push({
+          ratingKey,
+          guid: attr(tag, "guid") || undefined,
+          title: attr(tag, "title") ?? ratingKey,
+          mediaType: "episode",
+          librarySectionID: attr(tag, "librarySectionID") ?? library.key,
+          librarySectionTitle: attr(tag, "librarySectionTitle") ?? library.title,
+          grandparentRatingKey: attr(tag, "grandparentRatingKey") || undefined,
+          grandparentGuid: attr(tag, "grandparentGuid") || undefined,
+          grandparentTitle: attr(tag, "grandparentTitle") || undefined,
+          parentRatingKey: attr(tag, "parentRatingKey") || undefined,
+          parentGuid: attr(tag, "parentGuid") || undefined,
+          parentTitle: attr(tag, "parentTitle") || undefined,
+          seasonNumber: seasonNumber && /^\d+$/.test(seasonNumber) ? Number(seasonNumber) : undefined,
+          episodeNumber: episodeNumber && /^\d+$/.test(episodeNumber) ? Number(episodeNumber) : undefined,
+          viewCount: Number.isFinite(viewCount) ? viewCount : undefined,
+          lastViewedAt: parsePlexHistoricalTimestamp(attr(tag, "lastViewedAt") ?? attr(tag, "viewedAt"))
+        });
+      }
+    }
+    return episodes;
   }
 
   async listShows(libraryKey: string): Promise<string[]> {
@@ -758,6 +812,12 @@ function unescapeXml(str: string): string {
     .replace(/&amp;/g, '&')
     .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
     .replace(/&#x([a-fA-F0-9]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
+
+function parsePlexHistoricalTimestamp(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  if (/^\d+$/.test(value)) return new Date(Number(value) * 1000).toISOString();
+  return value;
 }
 
 function attr(tag: string, name: string): string | undefined {
