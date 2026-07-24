@@ -1,16 +1,28 @@
 # Continue Here
 
+## 2026-07-23
+
+Current state:
+- **3-6-4A is live.** The dated Plex play-history projection is enabled in the deployed CoWatcher runtime after a verified database backup, Tautulli interval enrichment, staged dry runs, mapped-account applies, and a CoWatcher-only PM2 restart.
+- The production archive contains 4,748 `plex_api_history` events with 4,748 distinct source keys: 4,099 episode plays and 649 movie plays across eight accounts with returned history. Ten configured accounts mapped safely; three profiles without an exact Plex local-account match were left untouched and remain unknown.
+- The live Cheers pilot proof now returns both distinct dates, reports two observations on two viewing days with one replay in the TV hierarchy, and labels the evidence as `Plex + Tautulli` and `Plex play history`.
+- Rollout verification exposed and fixed three production-only gaps: mixed-media pagination advanced by the filtered count, the projection catalog join was slow, and exact-GUID archive events without optional catalog rows were omitted. The TV hierarchy also used only the 200 most recent show plays; it now uses the bounded full retained history for replay evidence.
+- `npm run verify:block` passes with 130/130 service/integration tests, 61 dashboard regressions with one intentional narrow-project skip, JavaScript syntax, and tool contracts. `npm run verify:live-dashboard` passes after the final restart; the projected Overview response measured about 1.36 seconds.
+
+Next step:
+- Proceed to **3-6-5: Archive Query, Export, And Backup**. Treat the three unmatched Plex profiles as a separate account-mapping task; do not infer unwatched status or apply history until each mapping is exact.
+
 ## 2026-07-21
 
 Current state:
 - **3-6-4A: Plex Play-History Recovery And Reconciliation is implemented and deterministically verified.** Migration 25 adds durable run/user/page/source-row state; the existing backfill tool now has an explicit play-history mode with dry-run default, apply confirmation, safe backup, bounded retries, source-drift detection, and resumable cumulative reporting.
 - Plex dated rows remain additive archive events. Exact user/media/GUID plus one Tautulli start/stop interval within 120 seconds creates an auditable source link; genuinely separate dates remain separate point plays. Point evidence never fabricates sessions or co-watch events.
-- Completed runs can feed history, activity, People, and TV hierarchy/detail with explicit Plex/Tautulli provenance behind `PLEX_PLAY_HISTORY_PROJECTION_ENABLED`, which remains false by default. The deterministic Cheers fixture preserves two plays, links one overlap once, resolves a stale rating key by exact GUID, and renders the episode/provenance at desktop and 320px.
+- Completed runs can feed history, activity, People, and TV hierarchy/detail with explicit Plex/Tautulli provenance behind `PLEX_PLAY_HISTORY_PROJECTION_ENABLED`, which remains false by default in code. The deployed local runtime enabled it on 2026-07-23 after the controlled rollout. The deterministic Cheers fixture preserves two plays, links one overlap once, resolves a stale rating key by exact GUID, and renders the episode/provenance at desktop and 320px.
 - `npm run verify:block` passed: 128/128 service/integration tests, 61 dashboard regressions with one intentional narrow-project skip, JavaScript syntax, and tool contracts. The load fixture measured 169 ms against its 300 ms budget.
-- No live apply, projection enablement, PM2 restart, or deployed-dashboard change was performed in this implementation turn.
+- No live apply, projection enablement, PM2 restart, or deployed-dashboard change was performed in this implementation turn; the separate controlled rollout completed on 2026-07-23.
 
 Next step:
-- Run the bounded read-only known-movie and known-episode play-history canaries, inspect exact account mapping and reconciliation candidates, then make a separate operator decision about live apply and projection enablement. After that gate, proceed to **3-6-5: Archive Query, Export, And Backup**.
+- Historical note: this gate completed on 2026-07-23. Proceed to **3-6-5: Archive Query, Export, And Backup**.
 
 ## 2026-07-20
 
