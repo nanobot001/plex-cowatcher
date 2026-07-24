@@ -409,6 +409,32 @@ export class ArchivePlexViewRecoveryService {
         )))`
       : `e.source = 'plex_library_db'`;
     return this.db.prepare(`
+      -- Split identity resolution into indexed branches. A single OR join across
+      -- aliases and manual decisions causes SQLite to scan the catalog per event.
+      WITH catalogMatch AS (
+        SELECT archiveAlias.archive_media_id, cat.rating_key
+        FROM archive_media_aliases archiveAlias
+        JOIN content_catalog cat
+          ON archiveAlias.alias_type = 'guid'
+         AND cat.guid = archiveAlias.alias_value
+        UNION
+        SELECT archiveAlias.archive_media_id, cat.rating_key
+        FROM archive_media_aliases archiveAlias
+        JOIN content_catalog cat
+          ON archiveAlias.alias_type = 'rating_key'
+         AND cat.rating_key = archiveAlias.alias_value
+        UNION
+        SELECT identityDecision.archive_media_id, cat.rating_key
+        FROM archive_identity_decisions identityDecision
+        JOIN content_catalog cat
+          ON identityDecision.decision = 'assign'
+         AND cat.rating_key = identityDecision.target_rating_key
+        WHERE identityDecision.id = (
+          SELECT MAX(latestDecision.id)
+          FROM archive_identity_decisions latestDecision
+          WHERE latestDecision.archive_media_id = identityDecision.archive_media_id
+        )
+      )
       SELECT
         -e.id AS id,
         e.id AS archive_event_id,
@@ -442,16 +468,10 @@ export class ArchivePlexViewRecoveryService {
         CASE WHEN e.source = 'plex_api_history' THEN 'plex_play_history' ELSE 'plex_archive_recovery' END AS watched_at_provenance
       FROM archive_watch_events e
       JOIN users u ON u.id = e.user_id
-      LEFT JOIN archive_media_aliases archiveAlias
-        ON archiveAlias.archive_media_id = e.archive_media_id
-       AND archiveAlias.alias_type IN ('guid', 'rating_key')
-      LEFT JOIN archive_identity_decisions identityDecision
-        ON identityDecision.archive_media_id = e.archive_media_id
-       AND identityDecision.id = (SELECT MAX(id) FROM archive_identity_decisions WHERE archive_media_id = e.archive_media_id)
+      JOIN catalogMatch
+        ON catalogMatch.archive_media_id = e.archive_media_id
       JOIN content_catalog cat
-        ON ((archiveAlias.alias_type = 'guid' AND cat.guid = archiveAlias.alias_value)
-        OR (archiveAlias.alias_type = 'rating_key' AND cat.rating_key = archiveAlias.alias_value)
-        OR (identityDecision.decision = 'assign' AND cat.rating_key = identityDecision.target_rating_key))
+        ON cat.rating_key = catalogMatch.rating_key
       LEFT JOIN audiobook_books ab ON ab.id = cat.audiobook_id
       WHERE ${sourceFilter}
         AND e.event_time IS NOT NULL
