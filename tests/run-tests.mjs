@@ -39,6 +39,7 @@ import { MovieProfileService } from "../dist/service/movieProfileService.js";
 import { DashboardPreferenceService } from "../dist/service/dashboardPreferenceService.js";
 import { CowatchAdjudicationService } from "../dist/service/cowatchAdjudicationService.js";
 import { PlexHistoricalMovieBackfillService } from "../dist/service/plexHistoricalMovieBackfillService.js";
+import { PlexPlayHistoryService } from "../dist/service/plexPlayHistoryService.js";
 import { PlexLibraryDatabaseAdapter } from "../dist/adapters/plexLibraryDatabaseAdapter.js";
 import { ArchivePlexViewRecoveryService } from "../dist/service/archivePlexViewRecoveryService.js";
 import { TautulliBackfillService } from "../dist/service/tautulliBackfillService.js";
@@ -275,6 +276,146 @@ test("Plex supplemental recovery hydrates exact episodes and preserves source st
   });
 });
 
+test("Plex play history preserves repeated episode plays and interval-reconciles Tautulli once", async () => {
+  await withTestDb(async (db, dbPath) => {
+    new UserService(db).syncConfiguredUsers([
+      { plexUsername: "Tony", plexUserId: "799399", displayName: "Tony", isSourceUser: true, enabled: true }
+    ]);
+    const userId = Number(db.prepare("SELECT id FROM users WHERE plex_username='Tony'").get().id);
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO content_catalog
+      (rating_key,guid,media_type,title,library_title,grandparent_rating_key,grandparent_title,parent_rating_key,parent_title,source_provenance,refreshed_at)
+      VALUES ('cheers-1','plex://episode/cheers-1','episode','Give Me a Ring Sometime','TV Shows','show-cheers','Cheers','season-cheers-1','Season 1','fixture',?)`).run(now);
+    db.prepare(`INSERT INTO playback_observations (
+      user_id,tautulli_row_id,rating_key,grandparent_rating_key,parent_rating_key,plex_guid,media_type,library_name,title,show_title,
+      season_number,episode_number,watched_at,session_start_at,session_end_at,watched_at_provenance,completed,created_at,updated_at)
+      VALUES (?,'tautulli-cheers-2026','cheers-1','show-cheers','season-cheers-1','plex://episode/cheers-1','episode','TV Shows','Give Me a Ring Sometime','Cheers',1,1,
+      '2026-03-05T02:20:56.000Z','2026-03-05T02:20:56.000Z','2026-03-05T02:40:00.000Z','source',1,?,?)`).run(userId, now, now);
+
+    class PlayHistoryFixtureAdapter extends MockPlexAdapter {
+      async listLocalAccounts() { return [{ id: "1", username: "Tony" }]; }
+      async listPlayHistoryPage({ accountId, start, size }) {
+        const rows = [
+          { historyKey: "history-2022", accountId, ratingKey: "stale-cheers-1", guid: "plex://episode/cheers-1", mediaType: "episode", title: "Give Me a Ring Sometime", viewedAt: "2022-01-20T22:49:39.000Z", librarySectionTitle: "TV Shows", grandparentRatingKey: "show-cheers", grandparentTitle: "Cheers", parentRatingKey: "season-cheers-1", parentTitle: "Season 1", seasonNumber: 1, episodeNumber: 1 },
+          { historyKey: "history-2026", accountId, ratingKey: "cheers-1", guid: "plex://episode/cheers-1", mediaType: "episode", title: "Give Me a Ring Sometime", viewedAt: "2026-03-05T02:40:25.000Z", librarySectionTitle: "TV Shows", grandparentRatingKey: "show-cheers", grandparentTitle: "Cheers", parentRatingKey: "season-cheers-1", parentTitle: "Season 1", seasonNumber: 1, episodeNumber: 1 }
+        ];
+        return { start, size: rows.slice(start, start + size).length, totalSize: rows.length, rows: rows.slice(start, start + size) };
+      }
+    }
+
+    const service = new PlexPlayHistoryService(db, new PlayHistoryFixtureAdapter(), dbPath, async () => {});
+    const preview = await service.run({ mediaType: "episode", pageSize: 2 });
+    assert.equal(preview.status, "completed");
+    assert.equal(preview.totals.returned, 2);
+    assert.equal(preview.totals.imported, 2);
+    assert.equal(preview.totals.linked, 1);
+    assert.equal(Number(db.prepare("SELECT COUNT(*) count FROM archive_watch_events WHERE source='plex_api_history'").get().count), 0);
+    assert.equal(Number(db.prepare("SELECT COUNT(*) count FROM plex_history_ingestion_runs").get().count), 0);
+
+    const applied = await service.run({ apply: true, confirm: true, mediaType: "episode", pageSize: 2 });
+    assert.equal(applied.status, "completed");
+    assert.equal(applied.backupCreated, true);
+    assert.equal(Number(db.prepare("SELECT COUNT(*) count FROM archive_watch_events WHERE source='plex_api_history'").get().count), 2);
+    assert.equal(Number(db.prepare("SELECT COUNT(*) count FROM archive_observation_links l JOIN archive_watch_events e ON e.id=l.archive_event_id WHERE e.source='plex_api_history' AND l.relation='same_event'").get().count), 1);
+    assert.equal(Number(db.prepare("SELECT COUNT(*) count FROM playback_observations").get().count), 1);
+
+    const history = new QueryService(db, { includePlexPlayHistory: true }).queryHistory({ mediaType: "episode", ratingKey: "cheers-1", limit: 10 });
+    assert.equal(history.length, 2);
+    assert.deepEqual(history.map((row) => row.watchedAt), ["2026-03-05T02:20:56.000Z", "2022-01-20T22:49:39.000Z"]);
+    assert.equal(history[0].evidence.sourceLabel, "Plex + Tautulli");
+    assert.equal(history[1].evidence.sourceLabel, "Plex play history");
+
+    const activity = new DashboardService(db, { timeZone: "UTC", includePlexPlayHistory: true }).getActivity({ ratingKey: "cheers-1", limit: 10 });
+    assert.equal(activity.items.length, 2);
+    assert.equal(activity.items.some((item) => item.evidence.sourceLabel === "Plex play history"), true);
+
+    const repeated = await service.run({ apply: true, confirm: true, mediaType: "episode", pageSize: 2 });
+    assert.equal(repeated.totals.imported, 0);
+    assert.equal(repeated.totals.alreadyPresent, 2);
+    assert.equal(Number(db.prepare("SELECT COUNT(*) count FROM archive_watch_events WHERE source='plex_api_history'").get().count), 2);
+  });
+});
+
+test("Plex play-history pagination reports drift and bounded page failures as incomplete", async () => {
+  await withTestDb(async (db, dbPath) => {
+    new UserService(db).syncConfiguredUsers([{ plexUsername: "Tony", displayName: "Tony", isSourceUser: true, enabled: true }]);
+    const base = { accountId: "1", ratingKey: "movie-1", guid: "plex://movie/one", mediaType: "movie", title: "One", viewedAt: "2020-01-01T00:00:00.000Z" };
+    let firstPageCalls = 0;
+    class DriftAdapter extends MockPlexAdapter {
+      async listLocalAccounts() { return [{ id: "1", username: "Tony" }]; }
+      async listPlayHistoryPage({ start }) {
+        if (start === 0) {
+          firstPageCalls += 1;
+          const historyKey = firstPageCalls > 1 ? "changed" : "first";
+          return { start, size: 1, totalSize: 2, rows: [{ ...base, historyKey }] };
+        }
+        return { start, size: 1, totalSize: 2, rows: [{ ...base, historyKey: "second", viewedAt: "2019-01-01T00:00:00.000Z" }] };
+      }
+    }
+    const drift = await new PlexPlayHistoryService(db, new DriftAdapter(), dbPath, async () => {}).run({ pageSize: 1 });
+    assert.equal(drift.status, "incomplete");
+    assert.equal(drift.users[0].errorCode, "PLEX_HISTORY_CHANGED_DURING_SCAN");
+
+    class FailureAdapter extends MockPlexAdapter {
+      async listLocalAccounts() { return [{ id: "1", username: "Tony" }]; }
+      async listPlayHistoryPage() { throw new Error("fixture failure"); }
+    }
+    const failed = await new PlexPlayHistoryService(db, new FailureAdapter(), dbPath, async () => {}).run({ pageSize: 1 });
+    assert.equal(failed.status, "incomplete");
+    assert.equal(failed.users[0].errorCode, "PLEX_HISTORY_PAGE_FETCH_FAILED");
+  });
+});
+
+test("Plex play-history resumes an incomplete run without losing prior counts and accepts an empty history", async () => {
+  await withTestDb(async (db, dbPath) => {
+    new UserService(db).syncConfiguredUsers([{ plexUsername: "Tony", displayName: "Tony", isSourceUser: true, enabled: true }]);
+    const rows = [
+      { historyKey: "resume-first", accountId: "1", ratingKey: "movie-1", guid: "plex://movie/one", mediaType: "movie", title: "One", viewedAt: "2020-01-02T00:00:00.000Z" },
+      { historyKey: "resume-second", accountId: "1", ratingKey: "movie-2", guid: "plex://movie/two", mediaType: "movie", title: "Two", viewedAt: "2020-01-01T00:00:00.000Z" }
+    ];
+    let failSecondPage = true;
+    class ResumeAdapter extends MockPlexAdapter {
+      async listLocalAccounts() { return [{ id: "1", username: "Tony" }]; }
+      async listPlayHistoryPage({ start }) {
+        if (start === 1 && failSecondPage) throw new Error("bounded fixture failure");
+        return { start, size: start < rows.length ? 1 : 0, totalSize: rows.length, rows: rows.slice(start, start + 1) };
+      }
+    }
+    const service = new PlexPlayHistoryService(db, new ResumeAdapter(), dbPath, async () => {});
+    const incomplete = await service.run({ apply: true, confirm: true, pageSize: 1 });
+    assert.equal(incomplete.status, "incomplete");
+    assert.equal(incomplete.totals.imported, 1);
+    assert.equal(incomplete.totals.failed, 1);
+    failSecondPage = false;
+    const resumed = await service.run({ apply: true, confirm: true, pageSize: 1, runId: incomplete.runId });
+    assert.equal(resumed.status, "completed");
+    assert.equal(resumed.totals.imported, 2);
+    assert.equal(resumed.totals.failed, 0);
+    assert.equal(resumed.totals.pages, 2);
+    assert.equal(Number(db.prepare("SELECT COUNT(*) count FROM archive_watch_events WHERE source='plex_api_history'").get().count), 2);
+
+    class EmptyAdapter extends MockPlexAdapter {
+      async listLocalAccounts() { return [{ id: "1", username: "Tony" }]; }
+      async listPlayHistoryPage({ start }) { return { start, size: 0, totalSize: 0, rows: [] }; }
+    }
+    const empty = await new PlexPlayHistoryService(db, new EmptyAdapter(), dbPath, async () => {}).run({ pageSize: 1 });
+    assert.equal(empty.status, "completed");
+    assert.equal(empty.totals.returned, 0);
+    assert.equal(empty.totals.pages, 1);
+  });
+});
+
+test("point Plex plays count different-day replays without fabricating sessions", () => {
+  const result = evaluateReplaySemantics([
+    { observedAt: "2022-01-20T22:49:39.000Z", localDate: "2022-01-20", completed: true, source: "point_completed_play" },
+    { observedAt: "2026-03-05T02:40:25.000Z", localDate: "2026-03-05", completed: true, source: "point_completed_play" }
+  ]);
+  assert.equal(result.observationCount, 2);
+  assert.equal(result.sessionCount, 0);
+  assert.equal(result.replayCount, 1);
+  assert.equal(result.replayReason, "different_viewing_day");
+});
+
 test("archive Plex view recovery bridges legacy identities and preserves source events", async () => {
   await withTestDb(async (db, dbPath) => {
     new UserService(db).syncConfiguredUsers([
@@ -445,6 +586,8 @@ test("Tautulli history rows normalize movie fields", () => {
       seasonNumber: undefined,
       episodeNumber: undefined,
       watchedAt: "2026-05-28T20:26:40.000Z",
+      sessionStartAt: "2026-05-28T20:26:40.000Z",
+      sessionEndAt: undefined,
       watchedAtProvenance: "source",
       percentComplete: 95,
       percentCompleteProvenance: "source",

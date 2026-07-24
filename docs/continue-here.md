@@ -3,12 +3,14 @@
 ## 2026-07-21
 
 Current state:
-- Live validation found that Plex's `/status/sessions/history/all` returns multiple dated play-history rows for an exact TV episode, while 3-6-4 currently reads only aggregate episode metadata (`viewCount` and `lastViewedAt`). The exact Cheers S1E1 reproduction returned two Tony history rows; SQLite currently contains only the newer Tautulli-backed observation.
-- The 3-6-4 implementation therefore achieved aggregate last-view recovery but not complete Plex play-history recovery. The prior claim that Plex could not expose play-by-play history was incorrect and has been replaced by the corrective plan below.
-- A new planned child block, **3-6-4A: Plex Play-History Recovery And Reconciliation**, covers paginated Plex history ingestion, local account mapping, source-row idempotency, exact reconciliation with Tautulli, and per-play TV detail presentation.
+- **3-6-4A: Plex Play-History Recovery And Reconciliation is implemented and deterministically verified.** Migration 25 adds durable run/user/page/source-row state; the existing backfill tool now has an explicit play-history mode with dry-run default, apply confirmation, safe backup, bounded retries, source-drift detection, and resumable cumulative reporting.
+- Plex dated rows remain additive archive events. Exact user/media/GUID plus one Tautulli start/stop interval within 120 seconds creates an auditable source link; genuinely separate dates remain separate point plays. Point evidence never fabricates sessions or co-watch events.
+- Completed runs can feed history, activity, People, and TV hierarchy/detail with explicit Plex/Tautulli provenance behind `PLEX_PLAY_HISTORY_PROJECTION_ENABLED`, which remains false by default. The deterministic Cheers fixture preserves two plays, links one overlap once, resolves a stale rating key by exact GUID, and renders the episode/provenance at desktop and 320px.
+- `npm run verify:block` passed: 128/128 service/integration tests, 61 dashboard regressions with one intentional narrow-project skip, JavaScript syntax, and tool contracts. The load fixture measured 169 ms against its 300 ms budget.
+- No live apply, projection enablement, PM2 restart, or deployed-dashboard change was performed in this implementation turn.
 
 Next step:
-- Implement only `docs/blocks/block-3-6-4a-plex-play-history-recovery-and-reconciliation.md` using the global `implement-block` skill. Keep the current 3-6-4 aggregate path compatible and do not apply live history writes until the read-only canary and deterministic gates pass.
+- Run the bounded read-only known-movie and known-episode play-history canaries, inspect exact account mapping and reconciliation candidates, then make a separate operator decision about live apply and projection enablement. After that gate, proceed to **3-6-5: Archive Query, Export, And Backup**.
 
 ## 2026-07-20
 

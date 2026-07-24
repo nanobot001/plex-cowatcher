@@ -80,6 +80,35 @@ export interface PlexHistoricalMovieState {
   lastViewedAt?: string;
 }
 
+export interface PlexLocalAccount {
+  id: string;
+  username: string;
+}
+
+export interface PlexPlayHistoryRow {
+  historyKey: string;
+  accountId: string;
+  ratingKey: string;
+  guid?: string;
+  mediaType: "movie" | "episode";
+  title: string;
+  viewedAt: string;
+  librarySectionTitle?: string;
+  grandparentRatingKey?: string;
+  grandparentTitle?: string;
+  parentRatingKey?: string;
+  parentTitle?: string;
+  seasonNumber?: number;
+  episodeNumber?: number;
+}
+
+export interface PlexPlayHistoryPage {
+  start: number;
+  size: number;
+  totalSize?: number;
+  rows: PlexPlayHistoryRow[];
+}
+
 export interface PlexHistoricalEpisodeState {
   ratingKey: string;
   guid?: string;
@@ -199,6 +228,8 @@ export interface TautulliHistoryRow {
   seasonNumber?: number;
   episodeNumber?: number;
   watchedAt: string;
+  sessionStartAt?: string;
+  sessionEndAt?: string;
   watchedAtProvenance?: "source" | "fallback";
   percentComplete?: number;
   percentCompleteProvenance?: "source" | "unknown";

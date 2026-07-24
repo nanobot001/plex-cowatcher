@@ -154,6 +154,8 @@ export class IngestionService {
           percent_complete_provenance = ?,
           view_offset = ?,
           duration = ?,
+          session_start_at = ?,
+          session_end_at = ?,
           completed = ?,
           updated_at = ?
         WHERE id = ?`
@@ -164,6 +166,8 @@ export class IngestionService {
         row.percentCompleteProvenance ?? null,
         row.viewOffset ?? null,
         row.duration ?? null,
+        row.sessionStartAt ?? null,
+        row.sessionEndAt ?? null,
         completedVal,
         now,
         (existing as { id: number }).id
@@ -178,8 +182,8 @@ export class IngestionService {
         user_id, tautulli_row_id, rating_key, grandparent_rating_key, parent_rating_key,
         plex_guid, media_type, library_name, title, show_title, season_number, episode_number,
         watched_at, watched_at_provenance, percent_complete, percent_complete_provenance,
-        view_offset, duration, completed, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        view_offset, duration, session_start_at, session_end_at, completed, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       userId,
       row.rowId ?? null,
@@ -199,6 +203,8 @@ export class IngestionService {
       row.percentCompleteProvenance ?? null,
       row.viewOffset ?? null,
       row.duration ?? null,
+      row.sessionStartAt ?? null,
+      row.sessionEndAt ?? null,
       completedVal,
       now,
       now

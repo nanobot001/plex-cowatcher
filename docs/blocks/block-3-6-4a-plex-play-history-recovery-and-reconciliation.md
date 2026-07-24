@@ -1,8 +1,8 @@
 # Block 3-6-4A: Plex Play-History Recovery And Reconciliation
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Corrective child block for 3-6-4 after live validation showed that Plex exposes multiple dated play-history rows that the aggregate `lastViewedAt` recovery path does not ingest.
+> Status: Implemented; live rollout pending.
+> Result: Deterministically verified on 2026-07-21.
+> Notes: Corrective child block for 3-6-4 after live validation showed that Plex exposes multiple dated play-history rows that the aggregate `lastViewedAt` recovery path does not ingest. The projection remains disabled by default and no live apply, PM2 restart, or deployed-dashboard change was performed.
 
 ## Goal
 
@@ -68,3 +68,23 @@ Recover and display the dated Plex play-history rows for configured users across
 - `npm run verify:block`
 - Read-only live canary using one known movie and one known TV episode, including paginated Plex history and exact account filtering.
 - After any deployed dashboard rebuild/restart: `npm run verify:live-dashboard`.
+
+## Completion Note (2026-07-21)
+
+Implemented the approved A1/A2/A3 slices within this corrective block:
+
+- A1 adds migration 25, paginated local-account Plex play-history reads, dry-run/apply confirmation, a consistent SQLite backup, durable run/user/page/source-row state, bounded retries, source-drift detection, safe resume, exact source-record idempotency, and unresolved retention when exact identity is unavailable.
+- A2 preserves Tautulli session start/stop timestamps and links a Plex point play only when exact user, media type, non-empty GUID, and one interval within the documented 120-second tolerance agree. Source events and timestamps remain separate; links suppress duplicate projection without overwriting Tautulli.
+- A3 extends the existing `project.plex_historical_backfill` command with `--history-source play-history`, adds bounded user/media/date/page/run/report controls, and projects completed runs into history, activity, People, and TV hierarchy/detail only when `PLEX_PLAY_HISTORY_PROJECTION_ENABLED=true`. Point plays may prove a different-day replay but never fabricate sessions or co-watch evidence.
+
+Deterministic evidence:
+
+- `npm run verify:block` passed with 128/128 service/integration tests.
+- Dashboard regression passed with 61 tests and one intentional narrow-project skip, including desktop and 320px TV episode provenance coverage.
+- JavaScript syntax and tool-contract verification passed.
+- The 500-row Overview load check measured 169 ms against its 300 ms budget in the authoritative gate.
+
+Rollout boundary:
+
+- The existing read-only episode source-contract validation remains the basis for the adapter shape, but this implementation turn did not run the ticket's additional known-movie live canary.
+- No live recovery apply was run. Before enabling the projection or applying a live run, execute the bounded read-only movie and episode canaries, review reconciliation candidates, then make a separate operator-controlled rollout decision. If the deployed dashboard is rebuilt or restarted, run `npm run verify:live-dashboard`.

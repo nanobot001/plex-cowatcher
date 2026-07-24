@@ -17,6 +17,12 @@ const envSchema = z.object({
   PLEX_TOKEN: z.string().default(""),
   PLEX_LIBRARY_DB_PATH: z.string().default(""),
   PLEX_MUTATION_MODE: z.enum(["mock", "live"]).default("mock"),
+  PLEX_PLAY_HISTORY_PROJECTION_ENABLED: z
+    .preprocess((value) => {
+      if (typeof value === "string") return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+      return value;
+    }, z.boolean())
+    .default(false),
   AUDIOBOOK_DISCOVERY_ENABLED: z
     .preprocess((value) => {
       if (typeof value === "string") return ["1", "true", "yes", "on"].includes(value.toLowerCase());

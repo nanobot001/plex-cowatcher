@@ -1,8 +1,10 @@
-import type { MarkWatchedResult, PlexHistoricalEpisodeState, PlexHistoricalMovieState, PlexMetadata, PlexRichMetadata, PlexUser, WatchedState } from "../types/index.js";
+import type { MarkWatchedResult, PlexHistoricalEpisodeState, PlexHistoricalMovieState, PlexLocalAccount, PlexMetadata, PlexPlayHistoryPage, PlexRichMetadata, PlexUser, WatchedState } from "../types/index.js";
 import { appConfig } from "../utils/config.js";
 
 export interface PlexAdapter {
   listUsers(): Promise<PlexUser[]>;
+  listLocalAccounts(): Promise<PlexLocalAccount[]>;
+  listPlayHistoryPage(input: { accountId: string; start: number; size: number }): Promise<PlexPlayHistoryPage>;
   getMetadataByRatingKey(ratingKey: string, plexGuid?: string): Promise<PlexMetadata>;
   getRichMetadataByRatingKey(ratingKey: string, plexGuid?: string): Promise<PlexRichMetadata>;
   getWatchedState(userId: string, ratingKey: string, plexGuid?: string): Promise<WatchedState>;
@@ -30,6 +32,14 @@ export class PlexAdapterError extends Error {
 export class MockPlexAdapter implements PlexAdapter {
   async listUsers(): Promise<PlexUser[]> {
     return [];
+  }
+
+  async listLocalAccounts(): Promise<PlexLocalAccount[]> {
+    return [];
+  }
+
+  async listPlayHistoryPage(input: { accountId: string; start: number; size: number }): Promise<PlexPlayHistoryPage> {
+    return { start: input.start, size: 0, totalSize: 0, rows: [] };
   }
 
   async getMetadataByRatingKey(ratingKey: string, _plexGuid?: string): Promise<PlexMetadata> {
@@ -627,6 +637,53 @@ export class HttpPlexAdapter extends MockPlexAdapter {
     return movies;
   }
 
+  async listLocalAccounts(): Promise<PlexLocalAccount[]> {
+    const response = await plexFetch("/accounts");
+    if (!response.ok) throw plexErrorFromResponse(response, "PLEX_LOCAL_ACCOUNTS_FAILED", "Plex local account listing failed.");
+    return parsePlexUsers(await response.text()).map((user) => ({ id: user.id, username: user.username }));
+  }
+
+  async listPlayHistoryPage(input: { accountId: string; start: number; size: number }): Promise<PlexPlayHistoryPage> {
+    const response = await plexFetch("/status/sessions/history/all", {
+      accountID: input.accountId,
+      "X-Plex-Container-Start": String(input.start),
+      "X-Plex-Container-Size": String(input.size)
+    });
+    if (!response.ok) throw plexErrorFromResponse(response, "PLEX_PLAY_HISTORY_FAILED", "Plex play-history request failed.");
+    const xml = await response.text();
+    const container = xml.match(/<MediaContainer\b[^>]*>/)?.[0] ?? "";
+    const totalRaw = attr(container, "totalSize");
+    const rows = (xml.match(/<Video\b[^>]*>/g) ?? []).flatMap((tag) => {
+      const historyKey = attr(tag, "historyKey");
+      const accountId = attr(tag, "accountID") ?? input.accountId;
+      const ratingKey = attr(tag, "ratingKey");
+      const mediaType = attr(tag, "type");
+      const viewedAt = parsePlexHistoricalTimestamp(attr(tag, "viewedAt"));
+      if (!historyKey || !accountId || !ratingKey || !viewedAt || (mediaType !== "movie" && mediaType !== "episode")) return [];
+      const normalizedMediaType: "movie" | "episode" = mediaType;
+      const season = attr(tag, "parentIndex") ?? attr(tag, "seasonNumber");
+      const episode = attr(tag, "index") ?? attr(tag, "episodeNumber");
+      return [{
+        historyKey,
+        accountId,
+        ratingKey,
+        guid: attr(tag, "guid"),
+        mediaType: normalizedMediaType,
+        title: attr(tag, "title") ?? ratingKey,
+        viewedAt,
+        librarySectionTitle: attr(tag, "librarySectionTitle"),
+        grandparentRatingKey: attr(tag, "grandparentRatingKey"),
+        grandparentTitle: attr(tag, "grandparentTitle"),
+        parentRatingKey: attr(tag, "parentRatingKey"),
+        parentTitle: attr(tag, "parentTitle"),
+        seasonNumber: season && /^\d+$/.test(season) ? Number(season) : undefined,
+        episodeNumber: episode && /^\d+$/.test(episode) ? Number(episode) : undefined
+      }];
+    });
+    const totalSize = totalRaw && /^\d+$/.test(totalRaw) ? Number(totalRaw) : undefined;
+    return { start: input.start, size: rows.length, totalSize, rows };
+  }
+
   async listUserEpisodeStates(userId: string): Promise<PlexHistoricalEpisodeState[]> {
     const librariesResponse = await this.fetchAsUser(userId, "/library/sections");
     if (!librariesResponse.ok) {
@@ -745,12 +802,13 @@ export function createPlexAdapter(): PlexAdapter {
   return appConfig.PLEX_TOKEN ? new HttpPlexAdapter() : new MockPlexAdapter();
 }
 
-async function plexFetch(pathname: string): Promise<Response> {
+async function plexFetch(pathname: string, queryParams: Record<string, string> = {}): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
   try {
     const url = new URL(pathname, appConfig.PLEX_BASE_URL);
     url.searchParams.set("X-Plex-Token", appConfig.PLEX_TOKEN);
+    for (const [key, value] of Object.entries(queryParams)) url.searchParams.set(key, value);
     return await fetch(url, { signal: controller.signal });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
