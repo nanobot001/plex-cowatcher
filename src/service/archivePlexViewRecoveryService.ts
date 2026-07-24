@@ -424,6 +424,18 @@ export class ArchivePlexViewRecoveryService {
           ON archiveAlias.alias_type = 'rating_key'
          AND cat.rating_key = archiveAlias.alias_value
         UNION
+        SELECT archiveAlias.archive_media_id, latestObservation.rating_key
+        FROM archive_media_aliases archiveAlias
+        JOIN (
+          SELECT plex_guid, rating_key,
+            ROW_NUMBER() OVER (PARTITION BY plex_guid ORDER BY updated_at DESC, id DESC) AS identity_rank
+          FROM playback_observations
+          WHERE plex_guid IS NOT NULL AND trim(plex_guid) != ''
+        ) latestObservation
+          ON archiveAlias.alias_type = 'guid'
+         AND latestObservation.plex_guid = archiveAlias.alias_value
+         AND latestObservation.identity_rank = 1
+        UNION
         SELECT identityDecision.archive_media_id, cat.rating_key
         FROM archive_identity_decisions identityDecision
         JOIN content_catalog cat
@@ -442,12 +454,12 @@ export class ArchivePlexViewRecoveryService {
         u.plex_username,
         u.display_name AS synced_display_name,
         u.dashboard_alias,
-        cat.rating_key,
-        cat.guid AS plex_guid,
-        cat.media_type,
-        cat.title,
+        COALESCE(cat.rating_key, catalogMatch.rating_key, e.source_rating_key) AS rating_key,
+        COALESCE(cat.guid, e.source_guid) AS plex_guid,
+        COALESCE(cat.media_type, archiveMedia.media_type) AS media_type,
+        COALESCE(cat.title, e.title_snapshot, archiveMedia.title) AS title,
         COALESCE(cat.grandparent_title, json_extract(e.metadata_json, '$.grandparentTitle')) AS show_title,
-        cat.library_title AS library_name,
+        COALESCE(cat.library_title, json_extract(e.metadata_json, '$.librarySectionTitle')) AS library_name,
         e.event_time AS watched_at,
         NULL AS session_start_at,
         NULL AS session_end_at,
@@ -455,12 +467,12 @@ export class ArchivePlexViewRecoveryService {
         NULL AS view_offset,
         CASE WHEN COALESCE(e.completed, 1) = 1 THEN 100 ELSE NULL END AS percent_complete,
         COALESCE(e.completed, 1) AS completed,
-        cat.grandparent_rating_key,
-        cat.parent_rating_key,
+        COALESCE(cat.grandparent_rating_key, json_extract(e.metadata_json, '$.grandparentRatingKey')) AS grandparent_rating_key,
+        COALESCE(cat.parent_rating_key, json_extract(e.metadata_json, '$.parentRatingKey')) AS parent_rating_key,
         cat.audiobook_id,
         ab.title AS audiobook_title,
-        cat.parent_title AS catalog_parent_title,
-        cat.grandparent_title AS catalog_grandparent_title,
+        COALESCE(cat.parent_title, json_extract(e.metadata_json, '$.parentTitle')) AS catalog_parent_title,
+        COALESCE(cat.grandparent_title, json_extract(e.metadata_json, '$.grandparentTitle')) AS catalog_grandparent_title,
         json_extract(e.metadata_json, '$.seasonNumber') AS season_number,
         json_extract(e.metadata_json, '$.episodeNumber') AS episode_number,
         NULL AS confirmation_status,
@@ -468,13 +480,16 @@ export class ArchivePlexViewRecoveryService {
         CASE WHEN e.source = 'plex_api_history' THEN 'plex_play_history' ELSE 'plex_archive_recovery' END AS watched_at_provenance
       FROM archive_watch_events e
       JOIN users u ON u.id = e.user_id
-      JOIN catalogMatch
+      JOIN archive_media archiveMedia
+        ON archiveMedia.id = e.archive_media_id
+      LEFT JOIN catalogMatch
         ON catalogMatch.archive_media_id = e.archive_media_id
-      JOIN content_catalog cat
+      LEFT JOIN content_catalog cat
         ON cat.rating_key = catalogMatch.rating_key
       LEFT JOIN audiobook_books ab ON ab.id = cat.audiobook_id
       WHERE ${sourceFilter}
         AND e.event_time IS NOT NULL
+        AND (e.source != 'plex_api_history' OR e.resolution_status = 'resolved')
         AND (e.source = 'plex_api_history' OR lower(cat.media_type) = 'movie')
         AND COALESCE(u.dashboard_shown, u.enabled) = 1
         AND NOT EXISTS (

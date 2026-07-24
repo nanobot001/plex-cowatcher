@@ -321,6 +321,7 @@ test("Plex play history preserves repeated episode plays and interval-reconciles
     assert.equal(Number(db.prepare("SELECT COUNT(*) count FROM archive_observation_links l JOIN archive_watch_events e ON e.id=l.archive_event_id WHERE e.source='plex_api_history' AND l.relation='same_event'").get().count), 1);
     assert.equal(Number(db.prepare("SELECT COUNT(*) count FROM playback_observations").get().count), 1);
 
+    db.prepare("DELETE FROM content_catalog WHERE rating_key='cheers-1'").run();
     const history = new QueryService(db, { includePlexPlayHistory: true }).queryHistory({ mediaType: "episode", ratingKey: "cheers-1", limit: 10 });
     assert.equal(history.length, 2);
     assert.deepEqual(history.map((row) => row.watchedAt), ["2026-03-05T02:20:56.000Z", "2022-01-20T22:49:39.000Z"]);
