@@ -12,6 +12,7 @@ import { appConfig } from "../utils/config.js";
 const HOUSEHOLD_CATEGORIES = ["movie", "tv", "classic_tv", "anime", "audiobook"] as const;
 const SUMMARY_SAMPLE_LIMIT = 500;
 const DETAIL_SAMPLE_LIMIT = 200;
+const DETAIL_HIERARCHY_HISTORY_LIMIT = 100_000;
 const MOVIE_HISTORY_ROW_LIMIT = 100;
 const MOVIE_HISTORY_OBSERVATION_LIMIT = 2_000;
 const TIMELINE_DEFAULT_DAYS = 1;
@@ -3400,7 +3401,7 @@ export class DashboardService {
 
         if (!catalog) return null;
 
-        const plays = this.getActivity({ grandparentRatingKey, limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
+        const plays = this.getActivity({ grandparentRatingKey, limit: DETAIL_HIERARCHY_HISTORY_LIMIT, offset: 0 }).items;
         const people = this.visibleDashboardPeople();
 
         const hierarchy = this.buildTvHierarchy(grandparentRatingKey, catalog.title, plays, people);

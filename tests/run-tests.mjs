@@ -286,6 +286,9 @@ test("Plex play history preserves repeated episode plays and interval-reconciles
     db.prepare(`INSERT INTO content_catalog
       (rating_key,guid,media_type,title,library_title,grandparent_rating_key,grandparent_title,parent_rating_key,parent_title,source_provenance,refreshed_at)
       VALUES ('cheers-1','plex://episode/cheers-1','episode','Give Me a Ring Sometime','TV Shows','show-cheers','Cheers','season-cheers-1','Season 1','fixture',?)`).run(now);
+    db.prepare(`INSERT INTO content_catalog
+      (rating_key,guid,media_type,title,library_title,leaf_count,source_provenance,refreshed_at)
+      VALUES ('show-cheers','plex://show/cheers','show','Cheers','TV Shows',2,'fixture',?)`).run(now);
     db.prepare(`INSERT INTO playback_observations (
       user_id,tautulli_row_id,rating_key,grandparent_rating_key,parent_rating_key,plex_guid,media_type,library_name,title,show_title,
       season_number,episode_number,watched_at,session_start_at,session_end_at,watched_at_provenance,completed,created_at,updated_at)
@@ -331,6 +334,25 @@ test("Plex play history preserves repeated episode plays and interval-reconciles
     const activity = new DashboardService(db, { timeZone: "UTC", includePlexPlayHistory: true }).getActivity({ ratingKey: "cheers-1", limit: 10 });
     assert.equal(activity.items.length, 2);
     assert.equal(activity.items.some((item) => item.evidence.sourceLabel === "Plex play history"), true);
+
+    db.prepare(`INSERT INTO content_catalog
+      (rating_key,guid,media_type,title,library_title,grandparent_rating_key,grandparent_title,parent_rating_key,parent_title,source_provenance,refreshed_at)
+      VALUES ('cheers-other','plex://episode/cheers-other','episode','Other Episode','TV Shows','show-cheers','Cheers','season-cheers-1','Season 1','fixture',?)`).run(now);
+    const insertRecentEpisode = db.prepare(`INSERT INTO playback_observations (
+      user_id,rating_key,grandparent_rating_key,parent_rating_key,plex_guid,media_type,library_name,title,show_title,
+      season_number,episode_number,watched_at,watched_at_provenance,completed,created_at,updated_at
+    ) VALUES (?,'cheers-other','show-cheers','season-cheers-1','plex://episode/cheers-other','episode','TV Shows','Other Episode','Cheers',1,2,?,'source',1,?,?)`);
+    for (let index = 0; index < 200; index += 1) {
+      const watchedAt = new Date(Date.UTC(2026, 3, 1, 0, index)).toISOString();
+      insertRecentEpisode.run(userId, watchedAt, now, now);
+    }
+    const hierarchy = new DashboardService(db, { timeZone: "UTC", includePlexPlayHistory: true })
+      .getProgressExpansion("series:tv:TV Shows:show-cheers");
+    const cheersEpisode = hierarchy.hierarchy.seasons.flatMap((season) => season.episodes).find((episode) => episode.ratingKey === "cheers-1");
+    const tonyEvidence = cheersEpisode.watcherEvidence.find((evidence) => evidence.userId === userId);
+    assert.equal(tonyEvidence.watchCount, 2);
+    assert.equal(tonyEvidence.replayCount, 1);
+    assert.deepEqual(tonyEvidence.sourceLabels.sort(), ["Plex + Tautulli", "Plex play history"]);
 
     const repeated = await service.run({ apply: true, confirm: true, mediaType: "episode", pageSize: 2 });
     assert.equal(repeated.totals.imported, 0);
