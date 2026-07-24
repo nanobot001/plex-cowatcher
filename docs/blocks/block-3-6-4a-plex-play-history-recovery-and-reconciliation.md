@@ -86,6 +86,8 @@ Deterministic evidence:
 
 Rollout boundary:
 
-- The existing read-only episode source-contract validation remains the basis for the adapter shape, but this implementation turn did not run the ticket's additional known-movie live canary.
-- No live recovery apply was run. Before enabling the projection or applying a live run, execute the bounded read-only movie and episode canaries, review reconciliation candidates, then make a separate operator-controlled rollout decision. If the deployed dashboard is rebuilt or restarted, run `npm run verify:live-dashboard`.
+- The implementation turn did not perform live writes. The separate operator-controlled rollout completed on 2026-07-23 after known-movie and known-episode canaries, copied-database validation, a verified production backup, Tautulli interval enrichment, dry runs, and mapped-account applies.
+- Production retained 4,748 distinct Plex source events: 4,099 episode plays and 649 movie plays. Ten configured accounts mapped exactly; three profiles without an exact Plex local-account match were left untouched and remain unknown.
+- Projection is enabled in the deployed local runtime. The live Cheers pilot proof returns both dated plays, two viewing days, one replay, and separate `Plex + Tautulli` and `Plex play history` provenance.
+- Live verification exposed and corrected projection performance, optional-catalog fallback, and the former 200-play TV hierarchy sampling gap. `npm run verify:block` passes with 130/130 service tests and 61 browser regressions with one intentional skip; `npm run verify:live-dashboard` passes after the final CoWatcher-only restart.
 - Legacy rows ingested before migration 25 have no reconstructable Tautulli stop time. Play-history output therefore reports interval readiness explicitly; rerun the existing confirmed Tautulli backfill for selected users before Plex apply when readiness is `missing` or `partial`. Do not weaken reconciliation to timestamp proximity.
