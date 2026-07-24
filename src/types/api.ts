@@ -241,6 +241,7 @@ export interface ProgressWatcherEvidence {
   viewingDayCount: number;
   replayCount: number;
   replayReason: ReplayReason | null;
+  sourceLabels?: string[];
   stateSource?: ProgressNodeStateSource;
   partialPosition?: number;
 }

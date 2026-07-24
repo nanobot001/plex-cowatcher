@@ -241,12 +241,19 @@ export class ArchivePlexViewRecoveryService {
     }
   }
 
-  queryMovieHistory(ratingKey?: string, plexGuid?: string, limit = 100): ArchiveMovieHistoryRow[] {
+  queryMovieHistory(ratingKey?: string, plexGuid?: string, limit = 100, includePlexPlayHistory = false): ArchiveMovieHistoryRow[] {
     const aliases: string[] = [];
     if (plexGuid) aliases.push(plexGuid);
     if (ratingKey) aliases.push(ratingKey);
     if (!aliases.length) return [];
     const placeholders = aliases.map(() => "?").join(",");
+    const sourceFilter = includePlexPlayHistory
+      ? `(e.source = 'plex_library_db' OR (e.source = 'plex_api_history' AND EXISTS (
+          SELECT 1 FROM plex_history_ingestion_rows historyRow
+          JOIN plex_history_ingestion_runs historyRun ON historyRun.id = historyRow.run_id
+          WHERE historyRow.archive_event_id = e.id AND historyRun.status = 'completed'
+        )))`
+      : `e.source = 'plex_library_db'`;
     return this.db.prepare(`
       SELECT e.id, e.user_id AS userId, COALESCE(NULLIF(u.dashboard_alias, ''), u.display_name, e.source_account_key) AS displayName,
         m.title AS canonicalTitle, e.title_snapshot AS sourceTitle, e.source, e.source_guid AS sourceGuid,
@@ -266,7 +273,7 @@ export class ArchivePlexViewRecoveryService {
         FROM archive_media_aliases
         GROUP BY archive_media_id
       ) aliasSummary ON aliasSummary.archive_media_id = e.archive_media_id
-      WHERE e.source = 'plex_library_db'
+      WHERE ${sourceFilter}
         AND COALESCE(u.dashboard_shown, u.enabled) = 1
         AND e.event_time IS NOT NULL
         AND (
@@ -393,7 +400,14 @@ export class ArchivePlexViewRecoveryService {
     return { id, decision: input.decision, targetRatingKey, alreadyApplied: false };
   }
 
-  queryDashboardActivity(limit = 100_000): ArchiveDashboardActivityRow[] {
+  queryDashboardActivity(limit = 100_000, includePlexPlayHistory = false): ArchiveDashboardActivityRow[] {
+    const sourceFilter = includePlexPlayHistory
+      ? `(e.source = 'plex_library_db' OR (e.source = 'plex_api_history' AND EXISTS (
+          SELECT 1 FROM plex_history_ingestion_rows historyRow
+          JOIN plex_history_ingestion_runs historyRun ON historyRun.id = historyRow.run_id
+          WHERE historyRow.archive_event_id = e.id AND historyRun.status = 'completed'
+        )))`
+      : `e.source = 'plex_library_db'`;
     return this.db.prepare(`
       SELECT
         -e.id AS id,
@@ -406,9 +420,11 @@ export class ArchivePlexViewRecoveryService {
         cat.guid AS plex_guid,
         cat.media_type,
         cat.title,
-        NULL AS show_title,
+        COALESCE(cat.grandparent_title, json_extract(e.metadata_json, '$.grandparentTitle')) AS show_title,
         cat.library_title AS library_name,
         e.event_time AS watched_at,
+        NULL AS session_start_at,
+        NULL AS session_end_at,
         cat.duration,
         NULL AS view_offset,
         CASE WHEN COALESCE(e.completed, 1) = 1 THEN 100 ELSE NULL END AS percent_complete,
@@ -419,11 +435,11 @@ export class ArchivePlexViewRecoveryService {
         ab.title AS audiobook_title,
         cat.parent_title AS catalog_parent_title,
         cat.grandparent_title AS catalog_grandparent_title,
-        NULL AS season_number,
-        NULL AS episode_number,
+        json_extract(e.metadata_json, '$.seasonNumber') AS season_number,
+        json_extract(e.metadata_json, '$.episodeNumber') AS episode_number,
         NULL AS confirmation_status,
         NULL AS confirmed_participants_json,
-        'plex_archive_recovery' AS watched_at_provenance
+        CASE WHEN e.source = 'plex_api_history' THEN 'plex_play_history' ELSE 'plex_archive_recovery' END AS watched_at_provenance
       FROM archive_watch_events e
       JOIN users u ON u.id = e.user_id
       LEFT JOIN archive_media_aliases archiveAlias
@@ -437,9 +453,9 @@ export class ArchivePlexViewRecoveryService {
         OR (archiveAlias.alias_type = 'rating_key' AND cat.rating_key = archiveAlias.alias_value)
         OR (identityDecision.decision = 'assign' AND cat.rating_key = identityDecision.target_rating_key))
       LEFT JOIN audiobook_books ab ON ab.id = cat.audiobook_id
-      WHERE e.source = 'plex_library_db'
+      WHERE ${sourceFilter}
         AND e.event_time IS NOT NULL
-        AND lower(cat.media_type) = 'movie'
+        AND (e.source = 'plex_api_history' OR lower(cat.media_type) = 'movie')
         AND COALESCE(u.dashboard_shown, u.enabled) = 1
         AND NOT EXISTS (
           SELECT 1

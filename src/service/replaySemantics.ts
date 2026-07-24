@@ -13,7 +13,7 @@ export interface ReplayObservation {
   progressPercent?: number | null;
   startedAt?: string | null;
   endedAt?: string | null;
-  source?: "detailed_playback" | "historical_last_view";
+  source?: "detailed_playback" | "historical_last_view" | "point_completed_play";
 }
 
 export interface ReplaySemantics {
@@ -109,7 +109,11 @@ export function evaluateReplaySemantics(
 ): ReplaySemantics {
   const inactivityGapMs = options.inactivityGapMs ?? REPLAY_INACTIVITY_GAP_MS;
   const resetThreshold = options.resetThresholdPercentagePoints ?? REPLAY_RESET_THRESHOLD_PERCENTAGE_POINTS;
-  const detailedObservations = observations.filter((observation) => observation.source !== "historical_last_view");
+  const detailedObservations = observations.filter((observation) => observation.source !== "historical_last_view" && observation.source !== "point_completed_play");
+  const pointPlayDates = new Set(observations
+    .filter((observation) => observation.source === "point_completed_play" && observation.completed)
+    .map((observation) => observation.localDate)
+    .filter(Boolean));
   const sessions = reconstructSessions(detailedObservations, inactivityGapMs);
   const completedSessions = sessions.filter(session => session.completed);
   let replayCount = 0;
@@ -125,6 +129,17 @@ export function evaluateReplaySemantics(
       replayReason = "same_day_offset_reset";
     } else {
       replayReason = "same_day_completed_sessions";
+    }
+  }
+
+  const completedSessionDates = new Set(completedSessions.map(sessionDate).filter((value): value is string => Boolean(value)));
+  const additionalPointDates = [...pointPlayDates].filter((date) => !completedSessionDates.has(date)).length;
+  if (additionalPointDates > 0) {
+    const completedEvidenceCount = completedSessions.length + additionalPointDates;
+    const conservativeReplayCount = Math.max(0, completedEvidenceCount - 1);
+    if (conservativeReplayCount > replayCount) {
+      replayCount = conservativeReplayCount;
+      replayReason = "different_viewing_day";
     }
   }
 

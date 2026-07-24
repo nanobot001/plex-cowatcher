@@ -114,6 +114,8 @@ export function normalizeTautulliHistoryRow(row: Record<string, unknown>): Tautu
   const hasStopped = row.stopped !== undefined && row.stopped !== null && row.stopped !== "";
   const hasPercentComplete = row.percent_complete !== undefined && row.percent_complete !== null && row.percent_complete !== "";
 
+  const sessionStartAt = hasDate ? watchedAtIso(row.date) : undefined;
+  const sessionEndAt = hasStopped ? watchedAtIso(row.stopped) : undefined;
   return {
     rowId: optionalString(row.row_id),
     user: String(row.user ?? row.username ?? ""),
@@ -128,6 +130,8 @@ export function normalizeTautulliHistoryRow(row: Record<string, unknown>): Tautu
     seasonNumber: optionalNumber(row.parent_media_index),
     episodeNumber: optionalNumber(row.media_index),
     watchedAt: watchedAtIso(row.date ?? row.stopped),
+    sessionStartAt,
+    sessionEndAt,
     watchedAtProvenance: (hasDate || hasStopped) ? "source" : "fallback",
     percentComplete: optionalNumber(row.percent_complete),
     percentCompleteProvenance: hasPercentComplete ? "source" : "unknown",

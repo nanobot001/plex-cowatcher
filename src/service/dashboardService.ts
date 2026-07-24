@@ -7,6 +7,7 @@ import { buildDashboardArtworkDescriptor, type DashboardArtworkDescriptor } from
 import { evaluateReplaySemantics, type ReplayObservation, type ReplaySemantics } from "./replaySemantics.js";
 import { ArchivePlexViewRecoveryService } from "./archivePlexViewRecoveryService.js";
 import { getCanonicalMovieRatingKey, getMovieIdentityGuid, getMovieIdentityKeys, warmMovieIdentityCache } from "./plexMovieIdentityService.js";
+import { appConfig } from "../utils/config.js";
 
 const HOUSEHOLD_CATEGORIES = ["movie", "tv", "classic_tv", "anime", "audiobook"] as const;
 const SUMMARY_SAMPLE_LIMIT = 500;
@@ -54,7 +55,7 @@ const timelineFilterSchema = filterSchema.extend({
 type DashboardDerivedCategory = DashboardCategory | "other";
 type PeoplePeriod = typeof PEOPLE_PERIODS[number];
 type DashboardWatcherPerson = { userId: number | null; displayName: string };
-export interface DashboardServiceOptions { timeZone?: string }
+export interface DashboardServiceOptions { timeZone?: string; includePlexPlayHistory?: boolean }
 type PeopleContribution = DashboardActivityItem & {
   contribution: "observed" | "attributed_confirmed_together";
   confirmedTogether: boolean;
@@ -386,12 +387,14 @@ export class DashboardService {
   private readonly adjudicationService: CowatchAdjudicationService;
   private readonly archiveService: ArchivePlexViewRecoveryService;
   private readonly householdDateFormatter: Intl.DateTimeFormat;
+  private readonly includePlexPlayHistory: boolean;
 
   constructor(private readonly db: Db, options: DashboardServiceOptions = {}) {
     warmMovieIdentityCache(db);
     this.cowatchingService = new CowatchingIntelligenceService(db);
     this.adjudicationService = new CowatchAdjudicationService(db);
     this.archiveService = new ArchivePlexViewRecoveryService(db);
+    this.includePlexPlayHistory = options.includePlexPlayHistory ?? appConfig.PLEX_PLAY_HISTORY_PROJECTION_ENABLED;
     this.householdDateFormatter = new Intl.DateTimeFormat("en-US", {
       timeZone: options.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
       year: "numeric",
@@ -740,7 +743,11 @@ export class DashboardService {
       progressPercent,
       startedAt: row.sessionStartAt ?? null,
       endedAt: row.sessionEndAt ?? null,
-      source: row.watchedAtProvenance === "plex_historical_last_view" ? "historical_last_view" : "detailed_playback"
+      source: row.watchedAtProvenance === "plex_historical_last_view"
+        ? "historical_last_view"
+        : row.watchedAtProvenance === "plex_play_history"
+          ? "point_completed_play"
+          : "detailed_playback"
     };
   }
 
@@ -814,7 +821,7 @@ export class DashboardService {
     `).all(...this.detailIdentityArgs(identity), MOVIE_HISTORY_OBSERVATION_LIMIT + 1) as any[];
     const directLimited = directRows.length > MOVIE_HISTORY_OBSERVATION_LIMIT;
     const observations = directRows.slice(0, MOVIE_HISTORY_OBSERVATION_LIMIT);
-    const archiveRows = this.archiveService.queryMovieHistory(identity.ratingKey, canonicalGuid ?? undefined, MOVIE_HISTORY_OBSERVATION_LIMIT);
+    const archiveRows = this.archiveService.queryMovieHistory(identity.ratingKey, canonicalGuid ?? undefined, MOVIE_HISTORY_OBSERVATION_LIMIT, this.includePlexPlayHistory);
     const directObservationKeys = new Set(observations.map((row) => `${Number(row.userId)}:${String(row.watchedAt)}`));
     const recoveredArchiveRows = archiveRows.filter((row) => !directObservationKeys.has(`${row.userId}:${row.eventTime}`));
     const groups = new Map<string, DashboardMovieHistoryRow>();
@@ -1137,9 +1144,12 @@ export class DashboardService {
     const confirmedUserFilter = p.user ? " AND confirmed_user.plex_username = ?" : "";
     const confirmedArgs = p.user ? [p.user] : [];
     const confirmedParticipantsSql = `(SELECT json_group_array(json_object('userId', confirmed_user.id, 'displayName', COALESCE(NULLIF(confirmed_user.dashboard_alias, ''), confirmed_user.plex_username))) FROM cowatch_confirmations confirmed JOIN users confirmed_user ON confirmed_user.id=confirmed.target_user_id WHERE confirmed.watch_event_id=we.id AND confirmed.status='confirmed' AND COALESCE(confirmed_user.dashboard_shown, confirmed_user.enabled)=1${confirmedUserFilter}) AS confirmed_participants_json`;
+    const plexHistoryLinkedSql = this.includePlexPlayHistory
+      ? `EXISTS(SELECT 1 FROM archive_observation_links historyLink JOIN archive_watch_events historyEvent ON historyEvent.id=historyLink.archive_event_id WHERE historyLink.playback_observation_id=po.id AND historyLink.relation IN ('same_event','duplicate') AND historyEvent.source='plex_api_history')`
+      : "0";
     const candidateLimit = Math.min(100_000, p.offset + p.limit);
-    const directRows = this.db.prepare(`SELECT po.*,u.plex_username,u.display_name AS synced_display_name,u.dashboard_alias,u.dashboard_shown,we.prompt_status,cc.status confirmation_status,cc.plex_sync_status,cat.library_title AS catalog_library_title,groupcat.library_title AS group_catalog_library_title,cat.audiobook_id AS audiobook_id,ab.title AS audiobook_title,cat.parent_title AS catalog_parent_title,cat.grandparent_title AS catalog_grandparent_title,${confirmedParticipantsSql}${from}${where} ORDER BY ${order} LIMIT ? OFFSET 0`).all(...confirmedArgs, ...args, candidateLimit) as any[];
-    const archiveRows = this.archiveService.queryDashboardActivity()
+    const directRows = this.db.prepare(`SELECT po.*,u.plex_username,u.display_name AS synced_display_name,u.dashboard_alias,u.dashboard_shown,we.prompt_status,cc.status confirmation_status,cc.plex_sync_status,cat.library_title AS catalog_library_title,groupcat.library_title AS group_catalog_library_title,cat.audiobook_id AS audiobook_id,ab.title AS audiobook_title,cat.parent_title AS catalog_parent_title,cat.grandparent_title AS catalog_grandparent_title,${plexHistoryLinkedSql} AS plex_history_linked,${confirmedParticipantsSql}${from}${where} ORDER BY ${order} LIMIT ? OFFSET 0`).all(...confirmedArgs, ...args, candidateLimit) as any[];
+    const archiveRows = this.archiveService.queryDashboardActivity(100_000, this.includePlexPlayHistory)
       .filter((row) => this.archiveActivityMatchesFilters(row, p));
     const rows = [...directRows, ...archiveRows]
       .sort((a, b) => {
@@ -1199,12 +1209,12 @@ export class DashboardService {
     return { ok: true, data: result };
   }
 
-  private archiveActivityMatchesFilters(row: { user_id: number; plex_username: string; rating_key: string; media_type: string; title: string; library_name?: string | null; watched_at: string; completed: number }, p: ReturnType<typeof parseFilters>): boolean {
+  private archiveActivityMatchesFilters(row: { user_id: number; plex_username: string; rating_key: string; grandparent_rating_key?: string | null; media_type: string; title: string; library_name?: string | null; watched_at: string; completed: number }, p: ReturnType<typeof parseFilters>): boolean {
     if (p.dateFrom && row.watched_at < new Date(p.dateFrom).toISOString()) return false;
     if (p.dateTo && row.watched_at > new Date(p.dateTo).toISOString()) return false;
     if (p.user && row.plex_username !== p.user) return false;
     if (p.ratingKey && row.rating_key !== p.ratingKey) return false;
-    if (p.grandparentRatingKey) return false;
+    if (p.grandparentRatingKey && row.grandparent_rating_key !== p.grandparentRatingKey && row.rating_key !== p.grandparentRatingKey) return false;
     if (p.audiobookId) return false;
     if (p.library && row.library_name !== p.library) return false;
     if (p.completed !== undefined && row.completed !== (p.completed ? 1 : 0)) return false;
@@ -1874,7 +1884,7 @@ export class DashboardService {
       LEFT JOIN content_catalog groupcat ON groupcat.rating_key=po.grandparent_rating_key
       LEFT JOIN audiobook_books ab ON ab.id=cat.audiobook_id
       ${where} ORDER BY po.watched_at DESC,po.id DESC`).all(...args) as any[];
-    const archiveRows = this.archiveService.queryDashboardActivity().filter((row) =>
+    const archiveRows = this.archiveService.queryDashboardActivity(100_000, this.includePlexPlayHistory).filter((row) =>
       row.watched_at >= window.dateFrom && row.watched_at <= window.dateTo
     );
     const archiveContributions = archiveRows
@@ -2954,6 +2964,9 @@ export class DashboardService {
     userId: number | null = null,
     replaySemantics = this.replaySemanticsForPlays(plays)
   ) {
+    const sourceLabels = [...new Set(plays
+      .map((play) => typeof play.evidence?.sourceLabel === "string" ? play.evidence.sourceLabel : null)
+      .filter((label): label is string => Boolean(label)))];
     return {
       userId,
       displayName,
@@ -2965,6 +2978,7 @@ export class DashboardService {
       viewingDayCount: replaySemantics.viewingDayCount,
       replayCount: replaySemantics.replayCount,
       replayReason: replaySemantics.replayReason,
+      ...(sourceLabels.length ? { sourceLabels } : {}),
       stateSource,
       partialPosition
     };
@@ -3621,6 +3635,8 @@ export class DashboardService {
       categoryDerived: category.derived, 
       libraryName, 
       watchedAt: row.watched_at, 
+      sessionStartAt: row.session_start_at ?? undefined,
+      sessionEndAt: row.session_end_at ?? undefined,
       duration: row.duration ?? undefined,
       viewOffset: row.view_offset ?? undefined,
       percentComplete: row.percent_complete ?? undefined, 
@@ -3651,6 +3667,16 @@ export class DashboardService {
           plexSyncStatus: row.plex_sync_status ?? null, 
           sourceRatingKey: row.rating_key,
           sourcePlexGuid: row.plex_guid ?? null,
+          sources: row.plex_history_linked
+            ? ["Tautulli", "Plex play history"]
+            : row.watched_at_provenance === "plex_play_history"
+              ? ["Plex play history"]
+              : ["Tautulli"],
+          sourceLabel: row.plex_history_linked
+            ? "Plex + Tautulli"
+            : row.watched_at_provenance === "plex_play_history"
+              ? "Plex play history"
+              : "Tautulli",
           watchedAtProvenance: row.watched_at_provenance ?? "unknown", 
         percentCompleteProvenance: row.percent_complete_provenance ?? "unknown" 
       } 

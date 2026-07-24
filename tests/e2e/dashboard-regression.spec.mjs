@@ -107,6 +107,30 @@ test("archive-only Plex views feed the shared activity read model", async ({ pag
   expect(body.data.activity.items[0].evidence.watchedAtProvenance).toBe("plex_archive_recovery");
 });
 
+test("Plex play-history episode evidence appears once with explicit provenance", async ({ page }) => {
+  const response = await page.request.get("/api/dashboard/overview?ratingKey=episode-history-1&limit=10");
+  const body = await response.json();
+  expect(response.status(), JSON.stringify(body)).toBe(200);
+  expect(body.data.activity.total).toBe(1);
+  expect(body.data.activity.items[0]).toMatchObject({
+    title: "Historical Episode",
+    showTitle: "Historical Show",
+    watchedAt: "2020-04-05T12:00:00.000Z",
+    completed: true
+  });
+  expect(body.data.activity.items[0].evidence).toMatchObject({
+    watchedAtProvenance: "plex_play_history",
+    sourceLabel: "Plex play history"
+  });
+
+  await page.goto("/#overview?category=tv&detail=series%3Atv%3Ashow-history");
+  const dialog = page.locator("#detail-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Historical Episode");
+  await expect(dialog).toContainText("Plex play history");
+  await expectNoVisualOverflow(page);
+});
+
 test("historical identity review is conditional and reversible from movie detail", async ({ page }) => {
   const response = await page.request.get("/api/dashboard/detail-workspace/movie%3Areview-movie");
   const body = await response.json();

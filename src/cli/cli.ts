@@ -226,16 +226,37 @@ async function main(): Promise<void> {
       break;
     case "plex-historical-backfill":
       {
-        const { PlexHistoricalMovieBackfillService } = await import("../service/plexHistoricalMovieBackfillService.js");
         const timestamp = new Date().toISOString();
         try {
+          const historySource = arg("history-source") ?? "aggregate";
+          if (historySource !== "aggregate" && historySource !== "play-history") {
+            throw new Error("PLEX_HISTORY_INVALID_SOURCE");
+          }
+          if (historySource === "play-history") {
+            const { PlexPlayHistoryService } = await import("../service/plexPlayHistoryService.js");
+            const data = await new PlexPlayHistoryService(db, plex).run({
+              apply: args.includes("--apply"),
+              confirm: args.includes("--confirm"),
+              user: arg("user"),
+              mediaType: arg("media-type") as "movie" | "episode" | "all" | undefined,
+              dateFrom: arg("date-from"),
+              dateTo: arg("date-to"),
+              pageSize: arg("page-size") ? Number(arg("page-size")) : undefined,
+              runId: arg("run-id"),
+              report: args.includes("--report")
+            });
+            print({ ok: true, tool: "project.plex_historical_backfill", timestamp, data });
+            break;
+          }
+          const { PlexHistoricalMovieBackfillService } = await import("../service/plexHistoricalMovieBackfillService.js");
           const data = await new PlexHistoricalMovieBackfillService(db, plex).run({
             apply: args.includes("--apply"),
             confirm: args.includes("--confirm"),
             user: arg("user"),
             ratingKey: arg("rating-key"),
             plexGuid: arg("plex-guid"),
-            cutoffAt: arg("cutoff")
+            cutoffAt: arg("cutoff"),
+            mediaType: arg("media-type") as "movie" | "episode" | "all" | undefined
           });
           print({ ok: data.ok, tool: "project.plex_historical_backfill", timestamp, data });
         } catch (error) {
@@ -245,7 +266,7 @@ async function main(): Promise<void> {
             timestamp,
             error: {
               code: error instanceof Error ? error.message : "PLEX_HISTORICAL_BACKFILL_FAILED",
-              message: "Plex historical movie backfill could not run.",
+              message: "Plex supplemental historical recovery could not run.",
               retryable: false,
               severity: "error"
             }

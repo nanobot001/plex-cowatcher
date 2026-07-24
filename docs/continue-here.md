@@ -1,5 +1,29 @@
 # Continue Here
 
+## 2026-07-21
+
+Current state:
+- **3-6-4A: Plex Play-History Recovery And Reconciliation is implemented and deterministically verified.** Migration 25 adds durable run/user/page/source-row state; the existing backfill tool now has an explicit play-history mode with dry-run default, apply confirmation, safe backup, bounded retries, source-drift detection, and resumable cumulative reporting.
+- Plex dated rows remain additive archive events. Exact user/media/GUID plus one Tautulli start/stop interval within 120 seconds creates an auditable source link; genuinely separate dates remain separate point plays. Point evidence never fabricates sessions or co-watch events.
+- Completed runs can feed history, activity, People, and TV hierarchy/detail with explicit Plex/Tautulli provenance behind `PLEX_PLAY_HISTORY_PROJECTION_ENABLED`, which remains false by default. The deterministic Cheers fixture preserves two plays, links one overlap once, resolves a stale rating key by exact GUID, and renders the episode/provenance at desktop and 320px.
+- `npm run verify:block` passed: 128/128 service/integration tests, 61 dashboard regressions with one intentional narrow-project skip, JavaScript syntax, and tool contracts. The load fixture measured 169 ms against its 300 ms budget.
+- No live apply, projection enablement, PM2 restart, or deployed-dashboard change was performed in this implementation turn.
+
+Next step:
+- Run the bounded read-only known-movie and known-episode play-history canaries, inspect exact account mapping and reconciliation candidates, then make a separate operator decision about live apply and projection enablement. After that gate, proceed to **3-6-5: Archive Query, Export, And Backup**.
+
+## 2026-07-20
+
+Current state:
+- A dedicated planning branch `codex/3-6-4-plex-supplemental-historical-recovery-plan` was created from `origin/main` for **3-6-4: Plex Supplemental Historical Recovery**.
+- **3-6-4 is implemented.** The existing 6E-3C coordinator now supports `--media-type movie|episode|all`, exact-GUID per-user episode hydration, a generic supplemental recovery ledger, source-status labels, and archive read-model provenance while preserving the existing CLI/tool name and movie compatibility tables.
+- The safety boundary remains: dry-run by default, explicit apply confirmation, local SQLite writes only, immutable source evidence, unknown rather than negative evidence, and no automatic recurring recovery worker.
+- `npm run verify:block` passed: 124 service tests, 59 dashboard tests with one intentional narrow-viewport skip, JavaScript syntax, and tool contracts.
+- Read-only live canaries completed without source writes: the episode scope found 104 pre-cutoff exact-GUID Plex-only candidates for `tonyhung`; the movie scope found 205 already-covered exact-GUID records and no importable candidates.
+
+Next step:
+- Review the implementation/branch, then proceed to **3-6-5: Archive Query, Export, And Backup**. Any live supplemental recovery apply remains an explicit operator decision.
+
 ## 2026-07-19
 
 Current state:

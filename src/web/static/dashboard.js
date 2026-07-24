@@ -29,7 +29,7 @@ const save=()=>{try{localStorage.setItem("cowatch.dashboard",JSON.stringify({lay
 const query=(extra={})=>{const p=new URLSearchParams();Object.entries({...state.filters,...extra}).forEach(([k,v])=>{if(v!==""&&v!=null)p.set(k,String(v));});return p;};
 const peopleQuery=(extra={})=>{const p=query(extra);p.delete("dateFrom");p.delete("dateTo");p.set("period",state.people.period||"30d");if(state.people.period==="custom"){if(state.people.dateFrom)p.set("dateFrom",state.people.dateFrom);if(state.people.dateTo)p.set("dateTo",state.people.dateTo);}return p;};
 const fetchJson=async (url,options={})=>{const r=await fetch(url,{cache:"no-store",...options});const j=await r.json();if(!r.ok||!j.ok){const error=new Error(j.message||"Panel could not load.");error.code=j.errorCode||"REQUEST_FAILED";throw error;}return j.data;};
-const evidence=x=>{const e=x.evidence||{};return '<div class="evidence"><span class="proof observed">Observed</span>'+(e.watchedAtProvenance==='plex_historical_last_view'?'<span class="proof">Plex historical last-view</span>':'')+(e.confirmed?'<span class="proof confirmed">Confirmed</span>':'')+(e.promptStatus?'<span class="proof">Prompt '+esc(e.promptStatus)+'</span>':'')+(e.plexSyncStatus?'<span class="proof synced">Plex '+esc(e.plexSyncStatus)+'</span>':'')+'</div>';};
+const evidence=x=>{const e=x.evidence||{};return '<div class="evidence"><span class="proof observed">Observed</span>'+(e.watchedAtProvenance==='plex_historical_last_view'?'<span class="proof">Plex historical last-view</span>':'')+(e.sourceLabel?'<span class="proof">'+esc(e.sourceLabel)+'</span>':'')+(e.confirmed?'<span class="proof confirmed">Confirmed</span>':'')+(e.promptStatus?'<span class="proof">Prompt '+esc(e.promptStatus)+'</span>':'')+(e.plexSyncStatus?'<span class="proof synced">Plex '+esc(e.plexSyncStatus)+'</span>':'')+'</div>';};
 const posterFor=x=>x?.posterUrl||x?.artworkUrl||"/static/icon.svg";
 const art=x=>'<img class="poster" src="'+esc(posterFor(x))+'" alt="'+esc((x.displayTitle||x.title||x.showTitle||"Title")+" "+categoryLabel(x.category)+" artwork")+'" loading="lazy" onerror="this.src=\'/static/icon.svg\';this.classList.add(\'artwork-fallback\')">';
 const mediaTitle=x=>esc(x.displayTitle||x.title||x.showTitle||"");
@@ -972,20 +972,25 @@ function detailWatcherRow(node, person) {
   const viewingDayCount = Number.isFinite(Number(row?.viewingDayCount)) ? Number(row.viewingDayCount) : 0;
   const replayCount = Number.isFinite(Number(row?.replayCount)) ? Number(row.replayCount) : 0;
   const evidenceLabel = `${observationCount} ${observationCount === 1 ? "observation" : "observations"} · ${sessionCount} ${sessionCount === 1 ? "session" : "sessions"} · ${viewingDayCount} viewing ${viewingDayCount === 1 ? "day" : "days"} · ${replayCount} ${replayCount === 1 ? "replay" : "replays"}`;
-  return { state, label, latest, evidenceLabel, row };
+  const sourceLabels = Array.isArray(row?.sourceLabels) ? row.sourceLabels.filter(Boolean) : [];
+  return { state, label, latest, evidenceLabel, sourceLabels, row };
 }
 
 function detailWatcherLanes(node, workspace, label = "") {
   const roster = detailWatcherRoster(workspace);
   if (!roster.length) return '<span class="text-muted">No visible watcher evidence</span>';
   const selectedId = detailWatcherSelection ? String(detailWatcherSelection) : "";
+  const provenanceLabels = new Set();
   const markers = roster.map((person, index) => {
     const detail = detailWatcherRow(node, person);
-    const summary = `${person.displayName}: ${detail.label}. Latest observed: ${detail.latest}. ${detail.evidenceLabel}.`;
+    detail.sourceLabels.forEach(source => provenanceLabels.add(source));
+    const sourceSummary = detail.sourceLabels.length ? ` Sources: ${detail.sourceLabels.join(", ")}.` : "";
+    const summary = `${person.displayName}: ${detail.label}. Latest observed: ${detail.latest}. ${detail.evidenceLabel}.${sourceSummary}`;
     const selected = selectedId === person.id ? " is-selected" : "";
     return `<button type="button" class="watcher-lane-marker ${esc(detail.state)}${selected}" data-detail-watcher-lane data-person-id="${esc(person.id)}" data-person-name="${esc(person.displayName)}" data-state="${esc(detail.state)}" aria-pressed="${selected ? "true" : "false"}" aria-label="${esc(summary)}" title="${esc(summary)}" tabindex="-1"><span class="watcher-state-icon" aria-hidden="true">${esc(detailWatcherStateIcons[detail.state] || "·")}</span><span class="watcher-lane-tooltip" role="tooltip">${esc(person.displayName)}<br><span>${esc(detail.label)} · ${esc(detail.latest)} · ${esc(detail.evidenceLabel)}</span></span></button>`;
   }).join("");
-  return `<div class="detail-watcher-grid" data-testid="detail-watcher-grid" style="--watcher-count:${roster.length}"><div class="detail-tree-episode-label"><strong>${esc(label)}</strong></div>${markers}</div>`;
+  const provenance = [...provenanceLabels].map(source => `<span class="proof">${esc(source)}</span>`).join("");
+  return `<div class="detail-watcher-grid" data-testid="detail-watcher-grid" style="--watcher-count:${roster.length}"><div class="detail-tree-episode-label"><strong>${esc(label)}</strong>${provenance ? `<span class="evidence">${provenance}</span>` : ""}</div>${markers}</div>`;
 }
 
 function renderDetailHierarchyState(label, state) {

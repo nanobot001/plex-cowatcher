@@ -111,6 +111,10 @@ Discovery events must not contain file paths, authenticated URLs, tokens, raw Pl
 
 These events record the bounded historical movie recovery run ID, cutoff, mode, and aggregate outcome counts. They never include Plex tokens, private paths, raw adapter errors, or full media payloads.
 
+### `plex_play_history_recovery_started` and `plex_play_history_recovery_completed`
+
+These events record the play-history run ID, media scope, page size, completion status, and aggregate returned/imported/already-present/linked/unresolved/failed counts. They exclude local Plex account IDs, history keys, titles, source payloads, tokens, URLs, and filesystem paths.
+
 Proof events never include manifests, media paths, chapter titles, raw child output, external messages, tags, or credentials.
 
 ### `archive_plex_view_recovery_completed`

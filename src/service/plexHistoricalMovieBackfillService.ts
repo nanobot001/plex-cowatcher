@@ -3,13 +3,16 @@ import fs from "node:fs";
 import path from "node:path";
 import type { PlexAdapter } from "../adapters/plexAdapter.js";
 import type { Db } from "../db/database.js";
-import type { PlexHistoricalMovieState, PlexUser } from "../types/index.js";
+import type { PlexHistoricalMediaState, PlexUser } from "../types/index.js";
 import { appConfig } from "../utils/config.js";
 import { AuditService } from "./auditService.js";
 
 const DEFAULT_CUTOFF = "2022-01-01T00:00:00.000Z";
 const PROVENANCE = "plex_historical_last_view";
+const RECONCILIATION_WINDOW_SECONDS = 900;
 
+type MediaScope = "movie" | "episode" | "all";
+type SourceStatus = "unknown" | "plex_only" | "tautulli_backed" | "reconciled";
 type BackfillOutcome =
   | "imported"
   | "dry_run_importable"
@@ -31,6 +34,7 @@ interface BackfillOptions {
   ratingKey?: string;
   plexGuid?: string;
   cutoffAt?: string;
+  mediaType?: MediaScope;
 }
 
 interface BackfillUser {
@@ -44,6 +48,7 @@ interface Summary {
   users: number;
   visibleUsers: number;
   movies: number;
+  episodes: number;
   imported: number;
   dryRunImportable: number;
   alreadyCovered: number;
@@ -53,6 +58,8 @@ interface Summary {
   notFoundInPlex: number;
   notPlexVisible: number;
   plexUnavailable: number;
+  mediaTypes: Record<string, number>;
+  sourceStatuses: Record<SourceStatus, number>;
   outcomes: Record<string, number>;
 }
 
@@ -61,6 +68,7 @@ interface BackfillResult {
   runId: string;
   mode: "dry_run" | "apply";
   cutoffAt: string;
+  mediaType: MediaScope;
   backupCreated: boolean;
   summary: Summary;
   users: Array<Record<string, unknown>>;
@@ -69,9 +77,10 @@ interface BackfillResult {
 interface SnapshotRow {
   userId: number;
   plexUserId: string | null;
-  state: PlexHistoricalMovieState;
+  state: PlexHistoricalMediaState;
   cutoffAt: string;
   outcome: BackfillOutcome;
+  sourceStatus: SourceStatus;
   errorCode?: string;
   importedObservationId?: number;
 }
@@ -85,6 +94,7 @@ export class PlexHistoricalMovieBackfillService {
 
   async run(options: BackfillOptions): Promise<BackfillResult> {
     const cutoffAt = this.parseCutoff(options.cutoffAt);
+    const mediaType = this.parseMediaScope(options.mediaType);
     const runId = randomUUID();
     const mode = options.apply ? "apply" : "dry_run";
     const summary = this.emptySummary();
@@ -96,6 +106,7 @@ export class PlexHistoricalMovieBackfillService {
         runId,
         mode,
         cutoffAt,
+        mediaType,
         backupCreated: false,
         summary,
         users: [],
@@ -119,7 +130,7 @@ export class PlexHistoricalMovieBackfillService {
         VALUES (?, ?, ?, 'running', ?)
       `).run(runId, cutoffAt, mode, new Date().toISOString());
       this.audit.record("plex_historical_backfill_started", "cli", "started", {
-        runId, mode, cutoffAt, userCount: users.length
+        runId, mode, mediaType, cutoffAt, userCount: users.length
       });
     }
 
@@ -129,16 +140,17 @@ export class PlexHistoricalMovieBackfillService {
           (user.plex_user_id && String(plexUser.id) === String(user.plex_user_id)) ||
           plexUser.username.toLowerCase() === user.plex_username.toLowerCase()
         );
-        const visible = Boolean(visiblePlexUser);
-        if (!visible) {
+        if (!visiblePlexUser) {
           summary.notPlexVisible += 1;
           this.increment(summary, "not_plex_visible");
+          this.incrementSourceStatus(summary, "unknown");
           const result = {
             userId: user.id,
             username: user.plex_username,
             status: "not_plex_visible",
             visibility: "not_plex_visible",
-            outcome: "not_plex_visible"
+            outcome: "not_plex_visible",
+            mediaType
           };
           userResults.push(result);
           if (options.apply) this.persistUserResult(runId, user, result);
@@ -146,7 +158,7 @@ export class PlexHistoricalMovieBackfillService {
         }
 
         summary.visibleUsers += 1;
-        const result = await this.processUser(user, visiblePlexUser!.id, runId, cutoffAt, options, summary);
+        const result = await this.processUser(user, visiblePlexUser.id, runId, cutoffAt, mediaType, options, summary);
         userResults.push(result);
         if (options.apply) this.persistUserResult(runId, user, result);
       }
@@ -158,10 +170,10 @@ export class PlexHistoricalMovieBackfillService {
           WHERE id = ?
         `).run(new Date().toISOString(), JSON.stringify(summary), runId);
         this.audit.record("plex_historical_backfill_completed", "cli", "completed", {
-          runId, mode, cutoffAt, summary
+          runId, mode, mediaType, cutoffAt, summary
         });
       }
-      return { ok: true, runId, mode, cutoffAt, backupCreated: options.apply, summary, users: userResults };
+      return { ok: true, runId, mode, cutoffAt, mediaType, backupCreated: options.apply, summary, users: userResults };
     } catch (error) {
       if (options.apply) {
         this.db.prepare(`
@@ -179,21 +191,24 @@ export class PlexHistoricalMovieBackfillService {
     plexUserId: string,
     runId: string,
     cutoffAt: string,
+    mediaType: MediaScope,
     options: BackfillOptions,
     summary: Summary
   ): Promise<Record<string, unknown>> {
-    let states: PlexHistoricalMovieState[];
+    let states: PlexHistoricalMediaState[];
     try {
-      states = this.plex.listUserMovieStates ? await this.plex.listUserMovieStates(plexUserId) : [];
+      states = await this.listStates(plexUserId, mediaType);
     } catch {
       summary.plexUnavailable += 1;
       this.increment(summary, "plex_unavailable");
+      this.incrementSourceStatus(summary, "unknown");
       return {
         userId: user.id,
         username: user.plex_username,
         status: "plex_unavailable",
         visibility: "visible",
-        outcome: "plex_unavailable"
+        outcome: "plex_unavailable",
+        mediaType
       };
     }
 
@@ -204,21 +219,39 @@ export class PlexHistoricalMovieBackfillService {
     if (filtered.length === 0) {
       summary.notFoundInPlex += 1;
       this.increment(summary, "not_found_in_plex");
+      this.incrementSourceStatus(summary, "unknown");
       return {
         userId: user.id,
         username: user.plex_username,
         status: "not_found_in_plex",
         visibility: "visible",
-        outcome: "not_found_in_plex"
+        outcome: "not_found_in_plex",
+        mediaType
       };
     }
 
-    const userSummary = { userId: user.id, username: user.plex_username, visibility: "visible", status: "completed", movies: filtered.length, outcomes: {} as Record<string, number> };
+    const userSummary = {
+      userId: user.id,
+      username: user.plex_username,
+      visibility: "visible",
+      status: "completed",
+      mediaType,
+      items: filtered.length,
+      movies: filtered.filter((state) => state.mediaType === "movie").length,
+      episodes: filtered.filter((state) => state.mediaType === "episode").length,
+      outcomes: {} as Record<string, number>,
+      sourceStatuses: {} as Record<string, number>
+    };
+    const seenPlexIdentities = new Set(filtered.map((state) => state.guid ?? `rating:${state.mediaType}:${state.ratingKey}`));
     for (const state of filtered) {
-      summary.movies += 1;
+      summary.mediaTypes[state.mediaType] = (summary.mediaTypes[state.mediaType] ?? 0) + 1;
+      if (state.mediaType === "movie") summary.movies += 1;
+      if (state.mediaType === "episode") summary.episodes += 1;
       const snapshot = await this.classifyState(user, state, cutoffAt, options);
       this.increment(summary, snapshot.outcome);
       this.increment(userSummary, snapshot.outcome);
+      this.incrementSourceStatus(summary, snapshot.sourceStatus);
+      this.incrementSourceStatus(userSummary, snapshot.sourceStatus);
       if (snapshot.outcome === "imported") summary.imported += 1;
       if (snapshot.outcome === "dry_run_importable") summary.dryRunImportable += 1;
       if (snapshot.outcome === "already_covered") summary.alreadyCovered += 1;
@@ -227,11 +260,27 @@ export class PlexHistoricalMovieBackfillService {
       if (["missing_guid", "missing_timestamp", "invalid_timestamp", "ambiguous_identity"].includes(snapshot.outcome)) summary.skipped += 1;
       if (options.apply) this.persistSnapshot(runId, snapshot);
     }
+
+    if (!options.ratingKey && !options.plexGuid) {
+      this.countTautulliBacked(user.id, cutoffAt, mediaType, seenPlexIdentities, summary, userSummary);
+    }
     return userSummary;
   }
 
-  private async classifyState(user: BackfillUser, state: PlexHistoricalMovieState, cutoffAt: string, options: BackfillOptions): Promise<SnapshotRow> {
+  private async listStates(userId: string, mediaType: MediaScope): Promise<PlexHistoricalMediaState[]> {
+    const states: PlexHistoricalMediaState[] = [];
+    if (mediaType === "movie" || mediaType === "all") {
+      if (this.plex.listUserMovieStates) states.push(...await this.plex.listUserMovieStates(userId));
+    }
+    if (mediaType === "episode" || mediaType === "all") {
+      if (this.plex.listUserEpisodeStates) states.push(...await this.plex.listUserEpisodeStates(userId));
+    }
+    return states;
+  }
+
+  private async classifyState(user: BackfillUser, state: PlexHistoricalMediaState, cutoffAt: string, options: BackfillOptions): Promise<SnapshotRow> {
     let outcome: BackfillOutcome;
+    let sourceStatus: SourceStatus = "unknown";
     let errorCode: string | undefined;
     let importedObservationId: number | undefined;
     const timestamp = state.lastViewedAt ? new Date(state.lastViewedAt) : undefined;
@@ -240,8 +289,8 @@ export class PlexHistoricalMovieBackfillService {
       outcome = "missing_guid";
       errorCode = "PLEX_GUID_REQUIRED";
     } else if (!state.lastViewedAt) {
-      outcome = state.viewCount === 0 ? "confirmed_not_watched" : "missing_timestamp";
-      errorCode = state.viewCount === 0 ? undefined : "LAST_VIEWED_AT_REQUIRED";
+      outcome = "missing_timestamp";
+      errorCode = "LAST_VIEWED_AT_REQUIRED";
     } else if (!timestamp || Number.isNaN(timestamp.getTime())) {
       outcome = "invalid_timestamp";
       errorCode = "INVALID_LAST_VIEWED_AT";
@@ -254,24 +303,42 @@ export class PlexHistoricalMovieBackfillService {
         errorCode = "AMBIGUOUS_EXACT_GUID";
       } else {
         const ratingKey = identity.ratingKey;
+        const reconciled = this.hasTautulliMatch(user.id, state, timestamp);
+        sourceStatus = reconciled ? "reconciled" : "plex_only";
         const existing = this.db.prepare(`
           SELECT id FROM playback_observations
-          WHERE user_id = ? AND watched_at = ? AND (rating_key = ? OR (plex_guid = ? AND plex_guid IS NOT NULL))
+          WHERE user_id = ? AND media_type = ? AND watched_at = ?
+            AND (rating_key = ? OR (plex_guid = ? AND plex_guid IS NOT NULL))
           LIMIT 1
-        `).get(user.id, timestamp.toISOString(), ratingKey, state.guid) as { id: number } | undefined;
+        `).get(user.id, state.mediaType, timestamp.toISOString(), ratingKey, state.guid) as { id: number } | undefined;
         if (existing) {
           outcome = "already_covered";
           importedObservationId = existing.id;
         } else if (options.apply) {
+          const episode = state.mediaType === "episode" ? state : undefined;
           const result = this.db.prepare(`
             INSERT INTO playback_observations (
-              user_id, rating_key, plex_guid, media_type, library_name, title,
+              user_id, rating_key, grandparent_rating_key, parent_rating_key, plex_guid,
+              media_type, library_name, title, show_title, season_number, episode_number,
               watched_at, watched_at_provenance, percent_complete_provenance,
               completed, created_at, updated_at
-            ) VALUES (?, ?, ?, 'movie', ?, ?, ?, ?, 'unknown', 1, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', 1, ?, ?)
           `).run(
-            user.id, ratingKey, state.guid, state.librarySectionTitle ?? null, state.title,
-            timestamp.toISOString(), PROVENANCE, new Date().toISOString(), new Date().toISOString()
+            user.id,
+            ratingKey,
+            episode?.grandparentRatingKey ?? null,
+            episode?.parentRatingKey ?? null,
+            state.guid,
+            state.mediaType,
+            state.librarySectionTitle ?? null,
+            state.title,
+            episode?.grandparentTitle ?? null,
+            episode?.seasonNumber ?? null,
+            episode?.episodeNumber ?? null,
+            timestamp.toISOString(),
+            PROVENANCE,
+            new Date().toISOString(),
+            new Date().toISOString()
           );
           importedObservationId = Number(result.lastInsertRowid);
           outcome = "imported";
@@ -281,38 +348,101 @@ export class PlexHistoricalMovieBackfillService {
       }
     }
 
-    return { userId: user.id, plexUserId: user.plex_user_id, state, cutoffAt, outcome, errorCode, importedObservationId };
+    return { userId: user.id, plexUserId: user.plex_user_id, state, cutoffAt, outcome, sourceStatus, errorCode, importedObservationId };
   }
 
-  private async resolveIdentity(userId: number, state: PlexHistoricalMovieState): Promise<{ ratingKey: string; ambiguous: boolean }> {
+  private async resolveIdentity(userId: number, state: PlexHistoricalMediaState): Promise<{ ratingKey: string; ambiguous: boolean }> {
     const matching = this.db.prepare(`
       SELECT DISTINCT rating_key, plex_guid AS guid FROM playback_observations
-      WHERE user_id = ? AND ((plex_guid = ? AND plex_guid IS NOT NULL) OR rating_key = ?)
+      WHERE user_id = ? AND media_type = ?
+        AND ((plex_guid = ? AND plex_guid IS NOT NULL) OR rating_key = ?)
       UNION
       SELECT DISTINCT rating_key, guid FROM content_catalog
-      WHERE (guid = ? AND guid IS NOT NULL) OR rating_key = ?
-    `).all(userId, state.guid ?? null, state.ratingKey, state.guid ?? null, state.ratingKey) as Array<{ rating_key: string; guid?: string | null }>;
+      WHERE media_type = ? AND ((guid = ? AND guid IS NOT NULL) OR rating_key = ?)
+    `).all(userId, state.mediaType, state.guid ?? null, state.ratingKey, state.mediaType, state.guid ?? null, state.ratingKey) as Array<{ rating_key: string; guid?: string | null }>;
     const keys = new Set(matching.map((row) => row.rating_key).filter(Boolean));
     const conflictingIdentity = matching.some((row) => row.guid && row.guid !== state.guid);
     if (this.plex.resolveActiveRatingKey) {
       try {
         keys.add(await this.plex.resolveActiveRatingKey(state.ratingKey, state.guid));
       } catch {
-        // The exact Plex GUID and returned rating key remain the bounded fallback.
+        // Exact GUID and returned rating key remain the bounded fallback.
       }
     }
     return { ratingKey: [...keys][0] ?? state.ratingKey, ambiguous: conflictingIdentity };
   }
 
+  private hasTautulliMatch(userId: number, state: PlexHistoricalMediaState, timestamp: Date): boolean {
+    const row = this.db.prepare(`
+      SELECT 1 FROM playback_observations
+      WHERE user_id = ? AND media_type = ? AND tautulli_row_id IS NOT NULL
+        AND plex_guid = ? AND abs(strftime('%s', watched_at) - strftime('%s', ?)) <= ?
+      LIMIT 1
+    `).get(userId, state.mediaType, state.guid ?? null, timestamp.toISOString(), RECONCILIATION_WINDOW_SECONDS);
+    return Boolean(row);
+  }
+
+  private countTautulliBacked(
+    userId: number,
+    cutoffAt: string,
+    mediaType: MediaScope,
+    seenPlexIdentities: Set<string>,
+    summary: Summary,
+    userSummary: Record<string, unknown>
+  ): void {
+    const types = mediaType === "all" ? ["movie", "episode"] : [mediaType];
+    const placeholders = types.map(() => "?").join(",");
+    const rows = this.db.prepare(`
+      SELECT plex_guid, rating_key FROM playback_observations
+      WHERE user_id = ? AND tautulli_row_id IS NOT NULL AND watched_at < ?
+        AND media_type IN (${placeholders})
+    `).all(userId, cutoffAt, ...types) as Array<{ plex_guid?: string | null; rating_key: string }>;
+    for (const row of rows) {
+      const identity = row.plex_guid ?? `rating:${row.rating_key}`;
+      if (seenPlexIdentities.has(identity)) continue;
+      this.incrementSourceStatus(summary, "tautulli_backed");
+      this.incrementSourceStatus(userSummary, "tautulli_backed");
+      seenPlexIdentities.add(identity);
+    }
+  }
+
   private persistSnapshot(runId: string, row: SnapshotRow): void {
     const now = new Date().toISOString();
+    const state = row.state;
+    const episode = state.mediaType === "episode" ? state : undefined;
     const snapshotKey = createHash("sha256").update(JSON.stringify({
       userId: row.userId,
-      guid: row.state.guid ?? null,
-      ratingKey: row.state.ratingKey,
-      lastViewedAt: row.state.lastViewedAt ?? null,
-      viewCount: row.state.viewCount ?? null
+      mediaType: state.mediaType,
+      guid: state.guid ?? null,
+      ratingKey: state.ratingKey,
+      lastViewedAt: state.lastViewedAt ?? null,
+      viewCount: state.viewCount ?? null
     })).digest("hex");
+    this.db.prepare(`
+      INSERT INTO plex_historical_recovery_items (
+        snapshot_key, run_id, user_id, plex_user_id, media_type, rating_key, plex_guid,
+        grandparent_rating_key, parent_rating_key, title, show_title, season_number,
+        episode_number, library_name, view_count, last_viewed_at, cutoff_at, queried_at,
+        outcome, source_status, error_code, imported_observation_id, first_seen_at, last_seen_at, seen_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+      ON CONFLICT(snapshot_key) DO UPDATE SET
+        run_id = excluded.run_id, queried_at = excluded.queried_at,
+        outcome = excluded.outcome, source_status = excluded.source_status,
+        error_code = excluded.error_code,
+        imported_observation_id = COALESCE(excluded.imported_observation_id, plex_historical_recovery_items.imported_observation_id),
+        last_seen_at = excluded.last_seen_at, seen_count = plex_historical_recovery_items.seen_count + 1
+    `).run(
+      snapshotKey, runId, row.userId, row.plexUserId, state.mediaType, state.ratingKey, state.guid ?? null,
+      episode?.grandparentRatingKey ?? null, episode?.parentRatingKey ?? null, state.title,
+      episode?.grandparentTitle ?? null, episode?.seasonNumber ?? null, episode?.episodeNumber ?? null,
+      state.librarySectionTitle ?? null, state.viewCount ?? null, state.lastViewedAt ?? null,
+      row.cutoffAt, now, row.outcome, row.sourceStatus, row.errorCode ?? null, row.importedObservationId ?? null, now, now
+    );
+    if (state.mediaType === "movie") this.persistMovieSnapshot(runId, row, snapshotKey, now);
+  }
+
+  private persistMovieSnapshot(runId: string, row: SnapshotRow, snapshotKey: string, now: string): void {
+    const state = row.state;
     this.db.prepare(`
       INSERT INTO plex_historical_movie_snapshots (
         snapshot_key, run_id, user_id, plex_user_id, rating_key, plex_guid, title,
@@ -325,9 +455,9 @@ export class PlexHistoricalMovieBackfillService {
         imported_observation_id = COALESCE(excluded.imported_observation_id, plex_historical_movie_snapshots.imported_observation_id),
         last_seen_at = excluded.last_seen_at, seen_count = plex_historical_movie_snapshots.seen_count + 1
     `).run(
-      snapshotKey, runId, row.userId, row.plexUserId, row.state.ratingKey, row.state.guid ?? null,
-      row.state.title, row.state.librarySectionTitle ?? null, row.state.viewCount ?? null,
-      row.state.lastViewedAt ?? null, row.cutoffAt, now, row.outcome, row.errorCode ?? null,
+      snapshotKey, runId, row.userId, row.plexUserId, state.ratingKey, state.guid ?? null,
+      state.title, state.librarySectionTitle ?? null, state.viewCount ?? null,
+      state.lastViewedAt ?? null, row.cutoffAt, now, row.outcome, row.errorCode ?? null,
       row.importedObservationId ?? null, now, now
     );
   }
@@ -338,13 +468,13 @@ export class PlexHistoricalMovieBackfillService {
     this.db.prepare(`
       INSERT INTO plex_historical_backfill_users (
         run_id, user_id, plex_user_id, plex_username, visibility_status, status,
-        movie_count, imported_count, duplicate_count, skipped_count, failed_count,
+        movie_count, episode_count, imported_count, duplicate_count, skipped_count, failed_count,
         error_code, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       runId, user.id, user.plex_user_id, user.plex_username,
       String(result.visibility ?? "visible"), String(result.status ?? "completed"),
-      Number(result.movies ?? 0), outcomes.imported ?? 0, outcomes.already_covered ?? 0,
+      Number(result.movies ?? 0), Number(result.episodes ?? 0), outcomes.imported ?? 0, outcomes.already_covered ?? 0,
       Object.entries(outcomes).filter(([key]) => ["missing_guid", "missing_timestamp", "invalid_timestamp", "ambiguous_identity"].includes(key)).reduce((sum, [, value]) => sum + value, 0),
       outcomes.plex_unavailable ?? 0, null, now, now
     );
@@ -366,8 +496,30 @@ export class PlexHistoricalMovieBackfillService {
     return date.toISOString();
   }
 
+  private parseMediaScope(value?: MediaScope): MediaScope {
+    if (!value || value === "movie" || value === "episode" || value === "all") return value ?? "movie";
+    throw new Error("INVALID_MEDIA_TYPE");
+  }
+
   private emptySummary(): Summary {
-    return { users: 0, visibleUsers: 0, movies: 0, imported: 0, dryRunImportable: 0, alreadyCovered: 0, confirmedNotWatched: 0, postCutoff: 0, skipped: 0, notFoundInPlex: 0, notPlexVisible: 0, plexUnavailable: 0, outcomes: {} };
+    return {
+      users: 0,
+      visibleUsers: 0,
+      movies: 0,
+      episodes: 0,
+      imported: 0,
+      dryRunImportable: 0,
+      alreadyCovered: 0,
+      confirmedNotWatched: 0,
+      postCutoff: 0,
+      skipped: 0,
+      notFoundInPlex: 0,
+      notPlexVisible: 0,
+      plexUnavailable: 0,
+      mediaTypes: {},
+      sourceStatuses: { unknown: 0, plex_only: 0, tautulli_backed: 0, reconciled: 0 },
+      outcomes: {}
+    };
   }
 
   private createBackup(): void {
@@ -388,6 +540,11 @@ export class PlexHistoricalMovieBackfillService {
     const outcomes = "outcomes" in target && target.outcomes ? target.outcomes as Record<string, number> : undefined;
     if (outcomes) outcomes[key] = (outcomes[key] ?? 0) + 1;
   }
+
+  private incrementSourceStatus(target: { sourceStatuses?: Record<string, number> }, key: SourceStatus): void {
+    if (target.sourceStatuses) target.sourceStatuses[key] = (target.sourceStatuses[key] ?? 0) + 1;
+  }
 }
 
-export type { BackfillOptions, BackfillResult };
+export type { BackfillOptions, BackfillResult, MediaScope, SourceStatus };
+export { PlexHistoricalMovieBackfillService as PlexSupplementalHistoricalRecoveryService };

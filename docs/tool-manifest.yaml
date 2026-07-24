@@ -202,20 +202,42 @@ tools:
 
   - name: project.plex_historical_backfill
     risk: write_action
-    description: Preview or apply exact-GUID Plex per-user historical movie last-view recovery before the configured cutoff.
+    description: Preview or apply exact-GUID Plex aggregate last-view or paginated play-history recovery for configured users.
     input_schema:
       type: object
       additionalProperties: false
       properties:
+        history_source:
+          type: string
+          enum: [aggregate, play-history]
+          default: aggregate
         user:
           type: string
         rating_key:
           type: string
         plex_guid:
           type: string
+        media_type:
+          type: string
+          enum: [movie, episode, all]
+          default: movie
         cutoff:
           type: string
           default: '2022-01-01T00:00:00.000Z'
+        date_from:
+          type: string
+        date_to:
+          type: string
+        page_size:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 200
+        run_id:
+          type: string
+        report:
+          type: boolean
+          default: false
         apply:
           type: boolean
           default: false

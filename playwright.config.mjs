@@ -2,6 +2,7 @@ import { defineConfig, devices } from "playwright/test";
 
 const port = 18791;
 const baseURL = `http://127.0.0.1:${port}`;
+process.env.PLEX_PLAY_HISTORY_PROJECTION_ENABLED = "true";
 
 export default defineConfig({
   testDir: "./tests/e2e",

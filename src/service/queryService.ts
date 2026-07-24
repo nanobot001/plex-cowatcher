@@ -1,5 +1,7 @@
 import type { Db } from "../db/database.js";
 import { z } from "zod";
+import { appConfig } from "../utils/config.js";
+import { ArchivePlexViewRecoveryService } from "./archivePlexViewRecoveryService.js";
 
 // Validation schema
 export const queryParamsSchema = z.object({
@@ -33,7 +35,13 @@ function getSystemTimezoneOffset(): string {
 }
 
 export class QueryService {
-  constructor(private readonly db: Db) {}
+  private readonly includePlexPlayHistory: boolean;
+  private readonly archiveService: ArchivePlexViewRecoveryService;
+
+  constructor(private readonly db: Db, options: { includePlexPlayHistory?: boolean } = {}) {
+    this.includePlexPlayHistory = options.includePlexPlayHistory ?? appConfig.PLEX_PLAY_HISTORY_PROJECTION_ENABLED;
+    this.archiveService = new ArchivePlexViewRecoveryService(db);
+  }
 
   queryHistory(params: unknown) {
     const parsed = queryParamsSchema.safeParse(params);
@@ -56,6 +64,12 @@ export class QueryService {
       offset
     } = parsed.data;
 
+    const plexHistoryLinkedSql = this.includePlexPlayHistory
+      ? `EXISTS(SELECT 1 FROM archive_observation_links historyLink JOIN archive_watch_events historyEvent ON historyEvent.id=historyLink.archive_event_id WHERE historyLink.playback_observation_id=po.id AND historyLink.relation IN ('same_event','duplicate') AND historyEvent.source='plex_api_history')`
+      : "0";
+    const plexHistoryViewedAtSql = this.includePlexPlayHistory
+      ? `(SELECT historyEvent.event_time FROM archive_observation_links historyLink JOIN archive_watch_events historyEvent ON historyEvent.id=historyLink.archive_event_id WHERE historyLink.playback_observation_id=po.id AND historyLink.relation IN ('same_event','duplicate') AND historyEvent.source='plex_api_history' ORDER BY historyEvent.event_time DESC LIMIT 1)`
+      : "NULL";
     let sql = `
       SELECT 
         po.*,
@@ -67,7 +81,10 @@ export class QueryService {
         cc.status AS confirmation_status,
         cc.plex_sync_status,
         cc.plex_sync_error,
-        cat.genres_json
+        cat.genres_json,
+        recovery.source_status AS historical_source_status,
+        ${plexHistoryLinkedSql} AS plex_history_linked,
+        ${plexHistoryViewedAtSql} AS plex_history_viewed_at
       FROM playback_observations po
       JOIN users u ON po.user_id = u.id
       LEFT JOIN content_catalog cat ON po.rating_key = cat.rating_key
@@ -78,6 +95,9 @@ export class QueryService {
       LEFT JOIN cowatch_confirmations cc ON 
         cc.watch_event_id = we.id 
         AND cc.target_user_id = po.user_id
+      LEFT JOIN plex_historical_recovery_items recovery ON
+        recovery.imported_observation_id = po.id
+        AND recovery.media_type = po.media_type
       WHERE 1=1
     `;
 
@@ -127,7 +147,7 @@ export class QueryService {
 
     sql += " ORDER BY po.watched_at DESC, po.id DESC";
     sql += " LIMIT ? OFFSET ?";
-    args.push(limit, offset);
+    args.push(this.includePlexPlayHistory ? Math.min(100_000, limit + offset) : limit, this.includePlexPlayHistory ? 0 : offset);
 
     const rows = this.db.prepare(sql).all(...args) as any[];
 
@@ -145,6 +165,8 @@ export class QueryService {
 
       return {
         id: row.id,
+        canonicalPlayKey: `observation:${row.id}`,
+        recordKind: "playback_observation",
         userId: row.user_id,
         username: row.plex_username,
         displayName: row.display_name,
@@ -169,6 +191,15 @@ export class QueryService {
           confirmed: isConfirmed,
           plexSynced: isPlexSynced,
           inferred: false,
+          sourceStatus: row.historical_source_status
+            || (row.watched_at_provenance === "plex_historical_last_view" ? "plex_only" : "tautulli_backed"),
+          sources: row.plex_history_linked ? ["Tautulli", "Plex play history"] : [row.tautulli_row_id ? "Tautulli" : "Playback observation"],
+          sourceLabel: row.plex_history_linked ? "Plex + Tautulli" : (row.tautulli_row_id ? "Tautulli" : undefined),
+          sourceTimes: {
+            tautulliStartedAt: row.session_start_at ?? null,
+            tautulliStoppedAt: row.session_end_at ?? null,
+            plexViewedAt: row.plex_history_viewed_at ?? null
+          },
           provenance: {
             watchedAt: row.watched_at_provenance || "unknown",
             percentComplete: row.percent_complete_provenance || "unknown"
@@ -179,6 +210,61 @@ export class QueryService {
 
     if (genre) {
       results = results.filter(r => r.genres.some(g => g.toLowerCase() === genre.toLowerCase()));
+    }
+
+    if (this.includePlexPlayHistory) {
+      const archiveRows = this.archiveService.queryDashboardActivity(100_000, true)
+        .filter((row: any) => !user || String(row.plex_username).toLowerCase() === user.toLowerCase())
+        .filter((row: any) => !ratingKey || String(row.rating_key) === ratingKey)
+        .filter((row: any) => !showRatingKey || String(row.grandparent_rating_key) === showRatingKey || String(row.rating_key) === showRatingKey)
+        .filter((row: any) => !mediaType || String(row.media_type) === mediaType)
+        .filter((row: any) => completed === undefined || Boolean(Number(row.completed)) === completed)
+        .filter((row: any) => !dateFrom || String(row.watched_at) >= new Date(dateFrom).toISOString())
+        .filter((row: any) => !dateTo || String(row.watched_at) <= new Date(dateTo).toISOString())
+        .filter((row: any) => {
+          if (!localDay) return true;
+          const tzOffset = timezone || getSystemTimezoneOffset();
+          return String(row.watched_at) >= new Date(`${localDay}T00:00:00${tzOffset}`).toISOString()
+            && String(row.watched_at) <= new Date(`${localDay}T23:59:59.999${tzOffset}`).toISOString();
+        })
+        .map((row: any) => ({
+          id: null,
+          canonicalPlayKey: `archive:${row.archive_event_id}`,
+          recordKind: "archive_event",
+          userId: row.user_id,
+          username: row.plex_username,
+          displayName: row.dashboard_alias || row.synced_display_name || row.plex_username,
+          ratingKey: row.rating_key,
+          grandparentRatingKey: row.grandparent_rating_key,
+          parentRatingKey: row.parent_rating_key,
+          plexGuid: row.plex_guid,
+          mediaType: row.media_type,
+          libraryName: row.library_name,
+          title: row.title,
+          showTitle: row.show_title,
+          seasonNumber: row.season_number,
+          episodeNumber: row.episode_number,
+          watchedAt: row.watched_at,
+          percentComplete: row.percent_complete,
+          viewOffset: null,
+          duration: row.duration,
+          completed: Number(row.completed) === 1,
+          genres: [],
+          evidence: {
+            observed: true,
+            confirmed: false,
+            plexSynced: false,
+            inferred: false,
+            sourceStatus: "plex_only",
+            sources: ["Plex play history"],
+            sourceLabel: "Plex play history",
+            sourceTimes: { tautulliStartedAt: null, tautulliStoppedAt: null, plexViewedAt: row.watched_at },
+            provenance: { watchedAt: "plex_play_history", percentComplete: "unknown" }
+          }
+        }));
+      results = [...results, ...archiveRows]
+        .sort((left, right) => String(right.watchedAt).localeCompare(String(left.watchedAt)) || String(right.canonicalPlayKey).localeCompare(String(left.canonicalPlayKey)))
+        .slice(offset, offset + limit);
     }
 
     return results;

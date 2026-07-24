@@ -177,6 +177,35 @@ db.prepare(`INSERT INTO archive_watch_events
   archiveMediaId, userIds.Tony, 'plex_library_db', 'fixture:archive-only-view', 'Tony', 'plex://movie/archive-only-movie', 'Archive-only Fixture Movie', '2021-02-03T12:00:00.000Z', 'second', 1, 'resolved', isoMinutesAgo(5), '{}'
 );
 db.prepare(`INSERT INTO content_catalog
+  (rating_key,guid,media_type,title,duration,library_title,grandparent_rating_key,grandparent_title,parent_rating_key,parent_title,source_provenance,refreshed_at)
+  VALUES ('episode-history-1','plex://episode/history-1','episode','Historical Episode',1800000,'TV Shows','show-history','Historical Show','season-history-1','Season 1','fixture',?)`).run(isoMinutesAgo(5));
+db.prepare(`INSERT INTO content_catalog
+  (rating_key,media_type,title,duration,library_id,library_title,genres_json,leaf_count,source_provenance,refreshed_at)
+  VALUES ('show-history','show','Historical Show',1800000,'2','TV Shows','[]',1,'fixture',?)`).run(isoMinutesAgo(5));
+const historyMediaId = Number(db.prepare(`INSERT INTO archive_media
+  (canonical_key,media_type,title,status,created_at,updated_at)
+  VALUES ('guid:plex://episode/history-1','episode','Historical Episode','resolved',?,?)`).run(isoMinutesAgo(5), isoMinutesAgo(5)).lastInsertRowid);
+db.prepare(`INSERT INTO archive_media_aliases
+  (archive_media_id,source,alias_type,alias_value,title_snapshot,resolution_method,confidence,first_seen_at,last_seen_at)
+  VALUES (?,?,?,?,?,?,?,?,?)`).run(historyMediaId, 'plex', 'guid', 'plex://episode/history-1', 'Historical Episode', 'exact_guid', 'high', '2020-04-05T12:00:00.000Z', isoMinutesAgo(5));
+const historyEventId = Number(db.prepare(`INSERT INTO archive_watch_events
+  (archive_media_id,user_id,source,source_record_key,source_account_key,source_guid,source_rating_key,title_snapshot,event_time,event_time_precision,completed,resolution_status,account_resolution_method,account_confidence,captured_at,metadata_json)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+  historyMediaId, userIds.Tony, 'plex_api_history', '1:fixture-history-1', '1', 'plex://episode/history-1', 'episode-history-1', 'Historical Episode', '2020-04-05T12:00:00.000Z', 'second', 1, 'resolved', 'exact_local_account', 'high', isoMinutesAgo(5), JSON.stringify({ grandparentRatingKey: 'show-history', grandparentTitle: 'Historical Show', parentRatingKey: 'season-history-1', parentTitle: 'Season 1', seasonNumber: 1, episodeNumber: 1 })
+).lastInsertRowid);
+db.prepare(`INSERT INTO plex_history_ingestion_runs
+  (id,mode,status,media_type,page_size,started_at,updated_at,completed_at,summary_json)
+  VALUES ('fixture-history-run','apply','completed','episode',200,?,?,?,'{}')`).run(isoMinutesAgo(6), isoMinutesAgo(5), isoMinutesAgo(5));
+db.prepare(`INSERT INTO plex_history_ingestion_users
+  (run_id,user_id,plex_username,local_account_id,status,page_count,returned_count,imported_count,updated_at,completed_at)
+  VALUES ('fixture-history-run',?,'Tony','1','completed',1,1,1,?,?)`).run(userIds.Tony, isoMinutesAgo(5), isoMinutesAgo(5));
+const historyPageId = Number(db.prepare(`INSERT INTO plex_history_ingestion_pages
+  (run_id,user_id,start_offset,page_length,attempt_count,status,page_fingerprint,created_at,updated_at)
+  VALUES ('fixture-history-run',?,0,1,1,'succeeded','fixture-fingerprint',?,?)`).run(userIds.Tony, isoMinutesAgo(5), isoMinutesAgo(5)).lastInsertRowid);
+db.prepare(`INSERT INTO plex_history_ingestion_rows
+  (page_id,run_id,user_id,source_record_key,archive_event_id,media_type,viewed_at,outcome,created_at)
+  VALUES (?,'fixture-history-run',?,'1:fixture-history-1',?,'episode','2020-04-05T12:00:00.000Z','imported',?)`).run(historyPageId, userIds.Tony, historyEventId, isoMinutesAgo(5));
+db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,source_provenance,refreshed_at)
   VALUES ('review-movie','movie','Review Movie',7200000,'1','Movies','[]','fixture',?)`).run(isoMinutesAgo(5));
 const reviewArchiveMediaId = Number(db.prepare(`INSERT INTO archive_media

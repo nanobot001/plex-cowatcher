@@ -452,8 +452,8 @@ export class TautulliBackfillService {
         if (outcome === "failed") failed++;
         this.db.prepare(`
           INSERT INTO tautulli_ingestion_rows
-            (page_id, run_id, user_id, source_row_key, source_row_id, rating_key, plex_guid, identity_key, media_type, watched_at, outcome, observation_id, error_code, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (page_id, run_id, user_id, source_row_key, source_row_id, rating_key, plex_guid, identity_key, media_type, watched_at, session_start_at, session_end_at, outcome, observation_id, error_code, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(run_id, user_id, source_row_key) DO UPDATE SET
             page_id = excluded.page_id,
             source_row_id = excluded.source_row_id,
@@ -462,10 +462,12 @@ export class TautulliBackfillService {
             identity_key = excluded.identity_key,
             media_type = excluded.media_type,
             watched_at = excluded.watched_at,
+            session_start_at = excluded.session_start_at,
+            session_end_at = excluded.session_end_at,
             outcome = excluded.outcome,
             observation_id = excluded.observation_id,
             error_code = excluded.error_code
-        `).run(page.id, runId, user.id, sourceRowKey, row.rowId ?? null, row.ratingKey, row.plexGuid ?? null, this.identityKey(row), row.mediaType, row.watchedAt, outcome, observationId ?? null, errorCode ?? null, timestamp);
+        `).run(page.id, runId, user.id, sourceRowKey, row.rowId ?? null, row.ratingKey, row.plexGuid ?? null, this.identityKey(row), row.mediaType, row.watchedAt, row.sessionStartAt ?? null, row.sessionEndAt ?? null, outcome, observationId ?? null, errorCode ?? null, timestamp);
       }
 
       this.db.prepare(`
