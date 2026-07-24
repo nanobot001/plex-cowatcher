@@ -652,8 +652,15 @@ export class HttpPlexAdapter extends MockPlexAdapter {
     if (!response.ok) throw plexErrorFromResponse(response, "PLEX_PLAY_HISTORY_FAILED", "Plex play-history request failed.");
     const xml = await response.text();
     const container = xml.match(/<MediaContainer\b[^>]*>/)?.[0] ?? "";
+    const offsetRaw = attr(container, "offset");
+    const sizeRaw = attr(container, "size");
     const totalRaw = attr(container, "totalSize");
-    const rows = (xml.match(/<Video\b[^>]*>/g) ?? []).flatMap((tag) => {
+    const sourceTags = xml.match(/<(?:Video|Track|Directory)\b[^>]*>/g) ?? [];
+    const sourceRecordKeys = sourceTags.map((tag) =>
+      attr(tag, "historyKey")
+        ?? [attr(tag, "type"), attr(tag, "ratingKey"), attr(tag, "viewedAt"), attr(tag, "accountID")].join(":")
+    );
+    const rows = sourceTags.filter((tag) => tag.startsWith("<Video")).flatMap((tag) => {
       const historyKey = attr(tag, "historyKey");
       const accountId = attr(tag, "accountID") ?? input.accountId;
       const ratingKey = attr(tag, "ratingKey");
@@ -680,8 +687,10 @@ export class HttpPlexAdapter extends MockPlexAdapter {
         episodeNumber: episode && /^\d+$/.test(episode) ? Number(episode) : undefined
       }];
     });
+    const start = offsetRaw && /^\d+$/.test(offsetRaw) ? Number(offsetRaw) : input.start;
+    const size = sizeRaw && /^\d+$/.test(sizeRaw) ? Number(sizeRaw) : sourceTags.length;
     const totalSize = totalRaw && /^\d+$/.test(totalRaw) ? Number(totalRaw) : undefined;
-    return { start: input.start, size: rows.length, totalSize, rows };
+    return { start, size, totalSize, sourceRecordKeys, rows };
   }
 
   async listUserEpisodeStates(userId: string): Promise<PlexHistoricalEpisodeState[]> {

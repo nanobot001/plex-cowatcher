@@ -88,3 +88,4 @@ Rollout boundary:
 
 - The existing read-only episode source-contract validation remains the basis for the adapter shape, but this implementation turn did not run the ticket's additional known-movie live canary.
 - No live recovery apply was run. Before enabling the projection or applying a live run, execute the bounded read-only movie and episode canaries, review reconciliation candidates, then make a separate operator-controlled rollout decision. If the deployed dashboard is rebuilt or restarted, run `npm run verify:live-dashboard`.
+- Legacy rows ingested before migration 25 have no reconstructable Tautulli stop time. Play-history output therefore reports interval readiness explicitly; rerun the existing confirmed Tautulli backfill for selected users before Plex apply when readiness is `missing` or `partial`. Do not weaken reconciliation to timestamp proximity.

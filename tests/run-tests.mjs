@@ -306,6 +306,8 @@ test("Plex play history preserves repeated episode plays and interval-reconciles
     const service = new PlexPlayHistoryService(db, new PlayHistoryFixtureAdapter(), dbPath, async () => {});
     const preview = await service.run({ mediaType: "episode", pageSize: 2 });
     assert.equal(preview.status, "completed");
+    assert.equal(preview.reconciliationReadiness.status, "ready");
+    assert.equal(preview.reconciliationReadiness.withIntervals, 1);
     assert.equal(preview.totals.returned, 2);
     assert.equal(preview.totals.imported, 2);
     assert.equal(preview.totals.linked, 1);
@@ -363,6 +365,64 @@ test("Plex play-history pagination reports drift and bounded page failures as in
     const failed = await new PlexPlayHistoryService(db, new FailureAdapter(), dbPath, async () => {}).run({ pageSize: 1 });
     assert.equal(failed.status, "incomplete");
     assert.equal(failed.users[0].errorCode, "PLEX_HISTORY_PAGE_FETCH_FAILED");
+  });
+});
+
+test("Plex play-history advances by the raw Plex container window across mixed media", async () => {
+  await withTestDb(async (db, dbPath) => {
+    new UserService(db).syncConfiguredUsers([{ plexUsername: "Tony", displayName: "Tony", isSourceUser: true, enabled: true }]);
+    const starts = [];
+    class MixedMediaAdapter extends MockPlexAdapter {
+      async listLocalAccounts() { return [{ id: "1", username: "Tony" }]; }
+      async listPlayHistoryPage({ start }) {
+        starts.push(start);
+        if (start === 0) {
+          return {
+            start, size: 2, totalSize: 4, sourceRecordKeys: ["track-1", "movie-1"],
+            rows: [{ historyKey: "movie-1", accountId: "1", ratingKey: "movie-1", guid: "plex://movie/one", mediaType: "movie", title: "One", viewedAt: "2020-01-02T00:00:00.000Z" }]
+          };
+        }
+        if (start === 2) {
+          return {
+            start, size: 2, totalSize: 4, sourceRecordKeys: ["track-2", "movie-2"],
+            rows: [{ historyKey: "movie-2", accountId: "1", ratingKey: "movie-2", guid: "plex://movie/two", mediaType: "movie", title: "Two", viewedAt: "2020-01-01T00:00:00.000Z" }]
+          };
+        }
+        throw new Error(`Unexpected overlapping source offset ${start}`);
+      }
+    }
+    const result = await new PlexPlayHistoryService(db, new MixedMediaAdapter(), dbPath, async () => {}).run({ pageSize: 2 });
+    assert.equal(result.status, "completed");
+    assert.equal(result.totals.returned, 2);
+    assert.equal(result.totals.pages, 2);
+    assert.deepEqual(starts, [0, 2, 0]);
+  });
+});
+
+test("Plex play-history reports missing Tautulli interval readiness without guessing links", async () => {
+  await withTestDb(async (db, dbPath) => {
+    new UserService(db).syncConfiguredUsers([{ plexUsername: "Tony", displayName: "Tony", isSourceUser: true, enabled: true }]);
+    const userId = Number(db.prepare("SELECT id FROM users WHERE plex_username='Tony'").get().id);
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO playback_observations
+      (user_id,tautulli_row_id,rating_key,plex_guid,media_type,title,watched_at,watched_at_provenance,completed,created_at,updated_at)
+      VALUES (?,'legacy-row','movie-1','plex://movie/one','movie','One','2020-01-01T00:00:00.000Z','source',1,?,?)`).run(userId, now, now);
+    class MissingIntervalAdapter extends MockPlexAdapter {
+      async listLocalAccounts() { return [{ id: "1", username: "Tony" }]; }
+      async listPlayHistoryPage({ start }) {
+        return { start, size: 1, totalSize: 1, rows: [{
+          historyKey: "history-one", accountId: "1", ratingKey: "movie-1", guid: "plex://movie/one",
+          mediaType: "movie", title: "One", viewedAt: "2020-01-01T00:10:00.000Z"
+        }] };
+      }
+    }
+    const result = await new PlexPlayHistoryService(db, new MissingIntervalAdapter(), dbPath, async () => {}).run({ pageSize: 1 });
+    assert.equal(result.status, "completed");
+    assert.equal(result.totals.linked, 0);
+    assert.equal(result.reconciliationReadiness.status, "missing");
+    assert.equal(result.reconciliationReadiness.tautulliObservations, 1);
+    assert.equal(result.reconciliationReadiness.withIntervals, 0);
+    assert.equal(result.reconciliationReadiness.warningCode, "PLEX_HISTORY_TAUTULLI_INTERVALS_MISSING");
   });
 });
 

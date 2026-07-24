@@ -53,6 +53,20 @@ interface UserResult extends Counts {
   errorCode?: string;
 }
 
+interface ReconciliationReadiness {
+  status: "ready" | "partial" | "missing" | "not_applicable";
+  tautulliObservations: number;
+  withIntervals: number;
+  missingIntervals: number;
+  warningCode: "PLEX_HISTORY_TAUTULLI_INTERVALS_PARTIAL" | "PLEX_HISTORY_TAUTULLI_INTERVALS_MISSING" | null;
+  users: Array<{
+    userId: number;
+    username: string;
+    tautulliObservations: number;
+    withIntervals: number;
+  }>;
+}
+
 export class PlexPlayHistoryError extends Error {
   constructor(public readonly code: string, message: string) {
     super(message);
@@ -86,6 +100,7 @@ export class PlexPlayHistoryService {
     }
     const users = this.selectUsers(options.user);
     if (!users.length) throw new PlexPlayHistoryError("PLEX_HISTORY_NO_USERS", "No enabled configured users were selected.");
+    const reconciliationReadiness = this.reconciliationReadiness(users, mediaType);
     const accounts = await this.plex.listLocalAccounts();
     const backupCreated = options.apply ? this.createBackup() : false;
     const runId = options.apply ? this.openRun(options.runId, users, mediaType, pageSize, dateFrom, dateTo) : null;
@@ -121,6 +136,7 @@ export class PlexPlayHistoryService {
       dateRange: { from: dateFrom, to: dateTo },
       cutoffApplied: false,
       backupCreated,
+      reconciliationReadiness,
       users: userResults,
       totals
     };
@@ -172,7 +188,7 @@ export class PlexPlayHistoryService {
       const rows = page.rows.filter((row) => this.rowInScope(row, mediaType, dateFrom, dateTo));
       result.returned += rows.length;
       if (apply && runId) {
-        const persisted = await this.persistPage(runId, user, account, cursor, pageSize, fetched.attempts, fingerprint, rows);
+        const persisted = await this.persistPage(runId, user, account, cursor, page.size, fetched.attempts, fingerprint, rows);
         result.imported += persisted.imported;
         result.alreadyPresent += persisted.alreadyPresent;
         result.linked += persisted.linked;
@@ -192,8 +208,8 @@ export class PlexPlayHistoryService {
           result.linked += preview.linked;
         }
       }
-      if (page.rows.length === 0 || (page.totalSize !== undefined && cursor + page.rows.length >= page.totalSize) || (page.totalSize === undefined && page.rows.length < pageSize)) break;
-      cursor += page.rows.length;
+      if (page.size === 0 || (page.totalSize !== undefined && cursor + page.size >= page.totalSize) || (page.totalSize === undefined && page.size < pageSize)) break;
+      cursor += page.size;
     }
 
     if (result.status === "completed" && firstFingerprint !== null) {
@@ -210,7 +226,7 @@ export class PlexPlayHistoryService {
     return result;
   }
 
-  private async persistPage(runId: string, user: TargetUser, account: PlexLocalAccount, start: number, pageSize: number, attempts: number, fingerprint: string, rows: PlexPlayHistoryRow[]): Promise<Counts> {
+  private async persistPage(runId: string, user: TargetUser, account: PlexLocalAccount, start: number, sourcePageLength: number, attempts: number, fingerprint: string, rows: PlexPlayHistoryRow[]): Promise<Counts> {
     const counts = this.emptyCounts();
     const timestamp = nowIso();
     const hydratedRows: PlexPlayHistoryRow[] = [];
@@ -221,7 +237,7 @@ export class PlexPlayHistoryService {
         INSERT INTO plex_history_ingestion_pages (run_id,user_id,start_offset,page_length,attempt_count,status,page_fingerprint,created_at,updated_at)
         VALUES (?,?,?,?,?,'succeeded',?,?,?)
         ON CONFLICT(run_id,user_id,start_offset) DO UPDATE SET page_length=excluded.page_length,attempt_count=excluded.attempt_count,status='succeeded',page_fingerprint=excluded.page_fingerprint,error_code=NULL,updated_at=excluded.updated_at
-      `).run(runId, user.id, start, rows.length, attempts, fingerprint, timestamp, timestamp);
+      `).run(runId, user.id, start, sourcePageLength, attempts, fingerprint, timestamp, timestamp);
       const pageId = Number((this.db.prepare("SELECT id FROM plex_history_ingestion_pages WHERE run_id=? AND user_id=? AND start_offset=?").get(runId, user.id, start) as { id: number }).id);
       for (const row of hydratedRows) {
         try {
@@ -469,6 +485,57 @@ export class PlexPlayHistoryService {
     return rows.filter((user) => [user.plex_username, user.display_name].some((candidate) => candidate.toLowerCase() === normalized));
   }
 
+  private reconciliationReadiness(users: TargetUser[], mediaType: MediaScope): ReconciliationReadiness {
+    const placeholders = users.map(() => "?").join(",");
+    const mediaFilter = mediaType === "all" ? "" : " AND media_type=?";
+    const rows = this.db.prepare(`
+      SELECT user_id,
+        COUNT(*) AS tautulliObservations,
+        SUM(CASE WHEN session_start_at IS NOT NULL AND session_end_at IS NOT NULL THEN 1 ELSE 0 END) AS withIntervals
+      FROM playback_observations
+      WHERE tautulli_row_id IS NOT NULL
+        AND user_id IN (${placeholders})
+        ${mediaFilter}
+      GROUP BY user_id
+    `).all(...users.map((user) => user.id), ...(mediaType === "all" ? [] : [mediaType])) as Array<{
+      user_id: number;
+      tautulliObservations: number;
+      withIntervals: number;
+    }>;
+    const countsByUser = new Map(rows.map((row) => [Number(row.user_id), row]));
+    const userReadiness = users.map((user) => {
+      const row = countsByUser.get(user.id);
+      return {
+        userId: user.id,
+        username: user.plex_username,
+        tautulliObservations: Number(row?.tautulliObservations ?? 0),
+        withIntervals: Number(row?.withIntervals ?? 0)
+      };
+    });
+    const tautulliObservations = userReadiness.reduce((total, user) => total + user.tautulliObservations, 0);
+    const withIntervals = userReadiness.reduce((total, user) => total + user.withIntervals, 0);
+    const missingIntervals = tautulliObservations - withIntervals;
+    const status = tautulliObservations === 0
+      ? "not_applicable"
+      : withIntervals === 0
+        ? "missing"
+        : missingIntervals > 0
+          ? "partial"
+          : "ready";
+    return {
+      status,
+      tautulliObservations,
+      withIntervals,
+      missingIntervals,
+      warningCode: status === "missing"
+        ? "PLEX_HISTORY_TAUTULLI_INTERVALS_MISSING"
+        : status === "partial"
+          ? "PLEX_HISTORY_TAUTULLI_INTERVALS_PARTIAL"
+          : null,
+      users: userReadiness
+    };
+  }
+
   private rowInScope(row: PlexPlayHistoryRow, mediaType: MediaScope, dateFrom: string | null, dateTo: string | null): boolean {
     return (mediaType === "all" || row.mediaType === mediaType) && (!dateFrom || row.viewedAt >= dateFrom) && (!dateTo || row.viewedAt <= dateTo);
   }
@@ -493,7 +560,10 @@ export class PlexPlayHistoryService {
   }
 
   private pageFingerprint(page: PlexPlayHistoryPage): string {
-    return createHash("sha256").update(JSON.stringify(page.rows.map((row) => [row.historyKey, row.accountId, row.ratingKey, row.viewedAt]))).digest("hex");
+    const sourceRows = page.sourceRecordKeys?.length
+      ? page.sourceRecordKeys
+      : page.rows.map((row) => [row.historyKey, row.accountId, row.ratingKey, row.viewedAt]);
+    return createHash("sha256").update(JSON.stringify([page.start, page.size, sourceRows])).digest("hex");
   }
 
   private sourceRecordKey(accountId: string, historyKey: string): string {

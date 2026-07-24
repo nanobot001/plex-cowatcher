@@ -106,6 +106,7 @@ export interface PlexPlayHistoryPage {
   start: number;
   size: number;
   totalSize?: number;
+  sourceRecordKeys?: string[];
   rows: PlexPlayHistoryRow[];
 }
 
