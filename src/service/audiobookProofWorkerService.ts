@@ -121,7 +121,7 @@ export class AudiobookProofWorkerService {
   async runOnce(options: { force?: boolean; audiobookId?: number; now?: Date } = {}): Promise<ProofRunResult> {
     const now = options.now ?? this.now();
     if (!this.enabled && !options.force) return { ok: true, status: "disabled" };
-    this.materializeOutbox(now);
+    this.materializeOutbox(now, options.audiobookId);
     this.recoverExpiredJobs(now);
     const state = this.db.prepare("SELECT next_run_at FROM audiobook_proof_state WHERE id = 1").get() as any;
     if (!options.force && state?.next_run_at && Date.parse(state.next_run_at) > now.getTime()) {
@@ -162,7 +162,7 @@ export class AudiobookProofWorkerService {
     }
   }
 
-  materializeOutbox(now = this.now()): number {
+  materializeOutbox(now = this.now(), audiobookId?: number): number {
     const rows = this.db.prepare(`
       SELECT outbox.id, outbox.audiobook_id, outbox.media_revision, outbox.manifest_status,
              outbox.safe_outcome_code, book.current_media_revision, revision.manifest_status AS revision_status
@@ -170,8 +170,10 @@ export class AudiobookProofWorkerService {
       JOIN audiobook_books book ON book.id = outbox.audiobook_id
       LEFT JOIN audiobook_media_revisions revision
         ON revision.audiobook_id = outbox.audiobook_id AND revision.media_revision = outbox.media_revision
-      WHERE outbox.consumed_at IS NULL ORDER BY outbox.id LIMIT 100
-    `).all() as any[];
+      WHERE outbox.consumed_at IS NULL
+        AND (? IS NULL OR outbox.audiobook_id = ?)
+      ORDER BY outbox.id LIMIT 100
+    `).all(audiobookId ?? null, audiobookId ?? null) as any[];
     if (rows.length === 0) return 0;
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -325,10 +327,19 @@ export class AudiobookProofWorkerService {
 
   private findEligibleJob(now: Date, audiobookId?: number): any {
     return this.db.prepare(`
-      SELECT * FROM audiobook_proof_jobs
-      WHERE state IN ('pending','retry_wait') AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
-        AND (? IS NULL OR audiobook_id = ?)
-      ORDER BY id LIMIT 1
+      SELECT jobs.*,
+        (
+          SELECT MAX(playback.watched_at)
+          FROM content_catalog catalog
+          JOIN playback_observations playback ON playback.rating_key = catalog.rating_key
+          WHERE catalog.audiobook_id = jobs.audiobook_id
+        ) AS latest_playback_at
+      FROM audiobook_proof_jobs jobs
+      WHERE jobs.state IN ('pending','retry_wait')
+        AND (jobs.next_attempt_at IS NULL OR jobs.next_attempt_at <= ?)
+        AND (? IS NULL OR jobs.audiobook_id = ?)
+      ORDER BY latest_playback_at IS NULL, latest_playback_at DESC, jobs.id
+      LIMIT 1
     `).get(now.toISOString(), audiobookId ?? null, audiobookId ?? null);
   }
 

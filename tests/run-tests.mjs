@@ -5138,6 +5138,107 @@ test("audiobook proof worker materializes one durable job per revision and class
   });
 });
 
+test("audiobook proof worker keeps a targeted canary scoped to one audiobook", async () => {
+  await withTestDb(async (db) => {
+    seedProofRevision(db, { audiobookId: 200, revision: "selected-revision" });
+    seedProofRevision(db, { audiobookId: 201, revision: "unselected-revision" });
+    let adapterCalls = 0;
+    const adapter = {
+      proveAndActivate: async (_input, activationBase, activate) => {
+        adapterCalls++;
+        return activatableProofResult(activate, activationBase);
+      }
+    };
+    const now = new Date("2026-07-12T01:00:00Z");
+    const worker = new AudiobookProofWorkerService(db, adapter, true, () => now);
+
+    const result = await worker.runOnce({ force: true, audiobookId: 200, now });
+
+    assert.equal(result.state, "succeeded");
+    assert.equal(adapterCalls, 1);
+    assert.deepEqual(
+      db.prepare("SELECT audiobook_id, state FROM audiobook_proof_jobs ORDER BY audiobook_id").all()
+        .map((row) => ({ ...row })),
+      [{ audiobook_id: 200, state: "succeeded" }]
+    );
+    assert.equal(
+      db.prepare("SELECT consumed_at FROM audiobook_discovery_outbox WHERE audiobook_id = 200").get().consumed_at,
+      now.toISOString()
+    );
+    assert.equal(
+      db.prepare("SELECT consumed_at FROM audiobook_discovery_outbox WHERE audiobook_id = 201").get().consumed_at,
+      null
+    );
+
+    assert.equal(worker.materializeOutbox(new Date(now.getTime() + 60_000)), 1);
+    assert.deepEqual(
+      db.prepare("SELECT audiobook_id, state FROM audiobook_proof_jobs ORDER BY audiobook_id").all()
+        .map((row) => ({ ...row })),
+      [
+        { audiobook_id: 200, state: "succeeded" },
+        { audiobook_id: 201, state: "pending" }
+      ]
+    );
+  });
+});
+
+test("audiobook proof worker prioritizes recent playback without discarding older pending jobs", async () => {
+  await withTestDb(async (db) => {
+    seedProofRevision(db, { audiobookId: 200, revision: "old-playback-revision" });
+    seedProofRevision(db, { audiobookId: 201, revision: "no-playback-revision" });
+    seedProofRevision(db, { audiobookId: 202, revision: "recent-playback-revision" });
+    new UserService(db).syncConfiguredUsers([
+      { plexUsername: "tony", displayName: "Tony", isSourceUser: true, enabled: true }
+    ]);
+    const user = db.prepare("SELECT id FROM users WHERE plex_username = 'tony'").get();
+    const insertCatalog = db.prepare(`
+      INSERT INTO content_catalog
+        (rating_key, media_type, title, library_title, audiobook_id, source_provenance, refreshed_at)
+      VALUES (?, 'track', ?, 'Audiobooks', ?, 'fixture', ?)
+    `);
+    insertCatalog.run("old-playback-track", "Old Playback Book", 200, "2026-07-12T00:00:00Z");
+    insertCatalog.run("no-playback-track", "No Playback Book", 201, "2026-07-12T00:00:00Z");
+    insertCatalog.run("recent-playback-track", "Recent Playback Book", 202, "2026-07-12T00:00:00Z");
+    const insertPlayback = db.prepare(`
+      INSERT INTO playback_observations
+        (user_id, rating_key, media_type, library_name, title, watched_at,
+         percent_complete, duration, completed, created_at, updated_at)
+      VALUES (?, ?, 'track', 'Audiobooks', ?, ?, 50, 120000, 0, ?, ?)
+    `);
+    insertPlayback.run(
+      user.id, "old-playback-track", "Old Playback Book", "2026-01-01T00:00:00Z",
+      "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"
+    );
+    insertPlayback.run(
+      user.id, "recent-playback-track", "Recent Playback Book", "2026-07-11T00:00:00Z",
+      "2026-07-11T00:00:00Z", "2026-07-11T00:00:00Z"
+    );
+    const processedAudiobooks = [];
+    const adapter = {
+      proveAndActivate: async (_input, activationBase, activate) => {
+        processedAudiobooks.push(activationBase.audiobookId);
+        return activatableProofResult(activate, activationBase);
+      }
+    };
+    const now = new Date("2026-07-12T01:00:00Z");
+    const worker = new AudiobookProofWorkerService(db, adapter, true, () => now);
+
+    const result = await worker.runOnce({ force: true, now });
+
+    assert.equal(result.audiobookId, 202);
+    assert.deepEqual(processedAudiobooks, [202]);
+    assert.deepEqual(
+      db.prepare("SELECT audiobook_id, state FROM audiobook_proof_jobs ORDER BY audiobook_id").all()
+        .map((row) => ({ ...row })),
+      [
+        { audiobook_id: 200, state: "pending" },
+        { audiobook_id: 201, state: "pending" },
+        { audiobook_id: 202, state: "succeeded" }
+      ]
+    );
+  });
+});
+
 test("audiobook proof worker activates one job, throttles the next cycle, and skips unchanged verified revisions", async () => {
   await withTestDb(async (db) => {
     seedProofRevision(db);

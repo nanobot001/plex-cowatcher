@@ -3,7 +3,7 @@
 > Status: Implemented with recurring rollout ready to resume as of 2026-07-12.
 > Result: Implemented with limitations.
 > Verification: `npm run verify:block` - passed with 100 service tests, 36 dashboard regression tests, static dashboard validation, and tool-contract verification.
-> Notes: Added migration 16, unique durable proof jobs, global/job leases and heartbeat recovery, bounded completion scheduling, deterministic retries, safe activation/skip classifications, disabled-by-default same-process runtime, CLI status/canary/requeue operations, and privacy-safe health/audit summaries. The backup, corrective 5D-2A gate, disabled Eric canary, PM2 restart, audit checks, verified Progress readback, and live dashboard smoke gate passed. Recurring proof remains disabled pending the explicit 5D-3 enablement decision.
+> Notes: Added migration 16, unique durable proof jobs, global/job leases and heartbeat recovery, bounded completion scheduling, deterministic retries, safe activation/skip classifications, disabled-by-default same-process runtime, CLI status/canary/requeue operations, and privacy-safe health/audit summaries. The backup, corrective 5D-2A gate, disabled Eric canary, PM2 restart, audit checks, verified Progress readback, and live dashboard smoke gate passed. A later corrective pass scoped canary materialization to the selected audiobook and prioritized ordinary eligible work by latest linked playback before stable job ID, preserving valid older jobs without letting them block currently active books. Recurring proof remains disabled pending the explicit 5D-3 enablement decision.
 
 ## Goal
 
@@ -22,6 +22,7 @@ Automatically process eligible audiobook proof work at a safe rate, survive rest
 - Add a same-process runtime with explicit `start`, `stop`, and deterministic `runOnce` seams.
 - Use concurrency one, a renewable job lease, a 60-second heartbeat, and expired-lease recovery.
 - Process at most one eligible job every 15 minutes; do not continuously drain the queue.
+- For ordinary cycles, prioritize jobs with the newest linked playback observation, then use stable job ID order; an explicitly targeted canary remains restricted to its selected audiobook.
 - Retry transient failures after 15 minutes, 1 hour, 6 hours, and 24 hours; the fifth failed attempt becomes terminal.
 - Treat invalid contracts, low confidence, unsupported media shape, superseded revisions, and unavailable manifests as non-transient safe outcomes.
 - Skip external invocation when the matching revision is already verified or superseded.
@@ -55,6 +56,7 @@ Automatically process eligible audiobook proof work at a safe rate, survive rest
 - Repeated or overlapping triggers create one job and one active lease per audiobook revision.
 - Expired running jobs recover after restart without duplicate external invocation.
 - The worker processes no more than one eligible job per 15-minute cycle.
+- A recently played eligible audiobook is selected ahead of older queued work, while older and no-playback jobs remain durable and eligible.
 - Retry timing and fifth-attempt terminal behavior are deterministic under an injected clock.
 - Verified unchanged revisions skip the adapter; changed revisions create exactly one new job.
 - Multi-file revisions become `unsupported_multi_file` and retain fallback Progress.
