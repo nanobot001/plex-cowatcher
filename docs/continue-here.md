@@ -1,5 +1,17 @@
 # Continue Here
 
+## 2026-07-25
+
+Current state:
+- **3-2n-5D-3 recurring audiobook proof is live.** Commit `195437bf` scopes targeted canary materialization to one audiobook and prioritizes ordinary eligible jobs by latest linked playback while preserving the existing durable backlog.
+- A fresh `pre-audiobook-proof-enable-2026-07-25T05-07-33-076Z.sqlite` backup passed `PRAGMA quick_check`. The disabled deployment restart left all 53 existing pending jobs untouched.
+- The targeted Way of Kings canary succeeded once with 88 active revision-matched embedded chapters. Its live detail now reports verified chapter progress at Chapter 7 and 8%; the separate stored-title defect still labels the book `Brandon Sanderson`.
+- After `AUDIOBOOK_PROOF_ENABLED=true` and a PM2 restart, the normal scheduled worker selected Monstrous Regiment ahead of the older backlog and succeeded once with 72 active revision-matched embedded chapters. Its live detail reports Chapter 3 and 2%.
+- Current proof status after rollout: enabled, no active lease, 54 pending jobs, 4 succeeded jobs, 1 safely terminal superseded revision, and 15 unsupported multi-file revisions. `npm run verify:block` passed with 132 service tests and 61 dashboard regressions plus one intentional skip; the final enabled deployment passed `npm run verify:live-dashboard`.
+
+Next step:
+- Debug and correct the Way of Kings audiobook-title metadata without weakening exact audiobook/revision identity. Recurring proof can continue draining the valid backlog at one prioritized job per 15-minute cycle.
+
 ## 2026-07-23
 
 Current state:

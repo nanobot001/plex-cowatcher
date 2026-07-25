@@ -1,9 +1,9 @@
 # Block 3-2n-5d-3: Durable Proof Worker And Rollout
 
-> Status: Implemented with recurring rollout ready to resume as of 2026-07-12.
-> Result: Implemented with limitations.
-> Verification: `npm run verify:block` - passed with 100 service tests, 36 dashboard regression tests, static dashboard validation, and tool-contract verification.
-> Notes: Added migration 16, unique durable proof jobs, global/job leases and heartbeat recovery, bounded completion scheduling, deterministic retries, safe activation/skip classifications, disabled-by-default same-process runtime, CLI status/canary/requeue operations, and privacy-safe health/audit summaries. The backup, corrective 5D-2A gate, disabled Eric canary, PM2 restart, audit checks, verified Progress readback, and live dashboard smoke gate passed. A later corrective pass scoped canary materialization to the selected audiobook and prioritized ordinary eligible work by latest linked playback before stable job ID, preserving valid older jobs without letting them block currently active books. Recurring proof remains disabled pending the explicit 5D-3 enablement decision.
+> Status: Implemented and recurring rollout enabled on 2026-07-25.
+> Result: Implemented.
+> Verification: `npm run verify:block` - passed with 132 service tests, 61 dashboard regression tests plus one intentional narrow-layout skip, static dashboard validation, and tool-contract verification. The final enabled deployment also passed `npm run verify:live-dashboard`.
+> Notes: Added migration 16, unique durable proof jobs, global/job leases and heartbeat recovery, bounded completion scheduling, deterministic retries, safe activation/skip classifications, same-process runtime, CLI status/canary/requeue operations, and privacy-safe health/audit summaries. A corrective pass scoped canary materialization to the selected audiobook and prioritized ordinary eligible work by latest linked playback before stable job ID, preserving valid older jobs without letting them block currently active books. After a fresh validated SQLite backup, the targeted Way of Kings canary activated 88 embedded chapters and the recurring PM2 worker automatically activated 72 embedded chapters for Monstrous Regiment on its next scheduled cycle. Recurring proof is enabled.
 
 ## Goal
 

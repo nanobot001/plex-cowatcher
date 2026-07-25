@@ -161,11 +161,11 @@ The corrective sequence is mandatory and ordered:
 23. **3-2n-6a - Progress Watcher Coverage And Workspace Width:** Implemented 2026-07-09. Add visible completion coverage, on-demand watcher evidence, and a full-width Recently Completed workspace.
 24. **3-2n-6b - Overview Session Feed De-duplication:** Implemented 2026-07-11. Group canonical-item playback into stable viewing sessions while preserving co-watch and participant evidence.
 25. **3-2n-5c - Reliable Audiobook Discovery Automation:** Implemented 2026-07-11. Automatic PM2 discovery now reconciles metadata, survives restart/cooldown and key drift, and emits revision-deduplicated 5D outbox work.
-26. **3-2n-5d - Automatic Audiobook Chapter Proof Handoff:** Planned umbrella. Child implementation, corrective 5D-2A, and the disabled Eric canary are complete; recurring-worker enablement remains the final 5D-3 rollout step.
+26. **3-2n-5d - Automatic Audiobook Chapter Proof Handoff:** Implemented through 5D-3 and enabled in the recurring PM2 runtime on 2026-07-25.
     1. **3-2n-5d-1 - Revision Manifest And Safe Cache Activation:** Preserve the exact private file set behind each revision and make chapter activation revision-safe and backward compatible.
     2. **3-2n-5d-2 - Trusted External Proof Adapter:** Validate the configured read-only `audiobook` JSON boundary with strict quality, timeout, and privacy controls.
     3. **3-2n-5d-2A - Embedded Chapter Timeline Normalization:** Implemented 2026-07-12. Normalize valid embedded starts into duration-bounded ranges; the corrected Eric canary activated 57 revision-matched embedded chapters.
-    4. **3-2n-5d-3 - Durable Proof Worker And Rollout:** Bounded restart-safe jobs, operations, and canary verification are complete; recurring PM2 enablement remains pending.
+    4. **3-2n-5d-3 - Durable Proof Worker And Rollout:** Implemented and enabled 2026-07-25. Targeted canaries remain audiobook-scoped, ordinary work prioritizes recent playback, and the worker processes one durable job per 15-minute cycle.
 27. **3-2n-6C - Visible Progress And Enriched Detail:** Implemented 2026-07-12. Progress cards expose explicit completed/total/percentage summaries, and the larger lazy modal adds source, activity, and participant context without weakening unknown-total honesty.
 28. **3-2n-6E - Universal Detail Workspace Alignment:** Planned umbrella inserted before 6D implementation to correct the separate Overview/Progress detail paths while preserving the already-published 6D numbering; do not implement the umbrella directly.
     1. **3-2n-6E-1 - Canonical Detail Contract And Entry Resolution:** Implemented 2026-07-13. Added one typed identity resolver and bounded additive workspace read contract while preserving existing UI/endpoints.
@@ -223,7 +223,7 @@ Implemented on 2026-07-11. Whole-library discovery now runs on a persisted PM2 c
 
 ### Block 3-2n-5d: Automatic Audiobook Chapter Proof Handoff
 
-Umbrella only. Blocks 5D-1, 5D-2, 5D-2A, and the code/canary portions of 5D-3 are implemented and verified. The corrected Eric canary activated 57 revision-matched embedded chapters without Whisper or media rewriting. Automatic proof remains disabled until the explicit 5D-3 recurring-worker enablement step.
+Umbrella only. Blocks 5D-1, 5D-2, 5D-2A, and 5D-3 are implemented and verified. The recurring proof worker was enabled on 2026-07-25 after a fresh database backup, a targeted Way of Kings canary activated 88 revision-matched embedded chapters, and the next automatic cycle activated 72 embedded chapters for Monstrous Regiment without Whisper or media rewriting.
 
 ### Deferred Beyond The Phase 3 MVP
 
