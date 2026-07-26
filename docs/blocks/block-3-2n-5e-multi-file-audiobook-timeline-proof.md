@@ -1,8 +1,9 @@
 # Block 3-2n-5E: Multi-File Audiobook Timeline Proof
 
-> Status: Implemented; live multi-file rollout pending.
-> Result: Deterministically verified with production multi-file execution still disabled by `AUDIOBOOK_PROOF_MULTI_FILE_ENABLED=false`.
-> Notes: Extend the completed 5D proof pipeline to all structurally provable multi-file audiobook editions. Wheel of Time and Discworld are representative live examples only; eligibility and behavior must never depend on title, author, series, or library-specific allowlists.
+> Status: Implemented on 2026-07-26.
+> Result: Implemented with limitations; deterministic verification and the targeted re-evaluation path pass, while live multi-file execution remains disabled by `AUDIOBOOK_PROOF_MULTI_FILE_ENABLED=false`.
+> Verification: `npm run verify:block` - passed with 136/136 service tests, 63 dashboard regressions, 1 intentional narrow-layout skip, static dashboard validation, and tool-contract verification.
+> Notes: Extend the completed 5D proof pipeline to all structurally provable multi-file audiobook editions. The targeted `reevaluate` operator path is now implemented and remains dry-run by default. Wheel of Time and Discworld are representative live examples only; eligibility and behavior must never depend on title, author, series, or library-specific allowlists.
 
 ## Goal
 
@@ -99,4 +100,5 @@ Make retained listening history as complete and useful as its source evidence pe
 - Added immutable manifest identity fields, natural numeric path ordering, additive migration 26, and durable per-file proof jobs with checkpoint, retry, lease recovery, and privacy-safe progress.
 - Added atomic cumulative global timeline assembly and exact rating-key/GUID file-local playback mapping. Stale historical audiobook observations can be recovered through the retained revision manifest without rewriting raw evidence.
 - Added the explicit `AUDIOBOOK_PROOF_MULTI_FILE_ENABLED` rollout flag, defaulting to false, so the existing multi-file fallback remains unchanged until operators select and verify live canaries.
-- Deterministic verification passes: `npm test` (135/135) and `npm run test:dashboard-regression` (63 passed, 1 intentional skip). The remaining acceptance items are live backup, disabled canary, targeted re-evaluation, and explicit recurring rollout evidence; those are deliberately not claimed here.
+- Added `audiobook-proof --action reevaluate --audiobook-id <id>` or `--job-id <id>`, which is dry-run by default, reports capability-safe reasons, requires explicit confirmation for apply, and requeues only a current manifest that is ready for multi-file proof while the flag is enabled.
+- Deterministic verification passes: `npm test` (136/136) and `npm run test:dashboard-regression` (63 passed, 1 intentional skip). The remaining acceptance items are live backup, live disabled canaries, and explicit recurring rollout evidence; those are deliberately not claimed here.

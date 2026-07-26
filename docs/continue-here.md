@@ -1,5 +1,14 @@
 # Continue Here
 
+## 2026-07-26
+
+Current state:
+- The two structurally different disabled canaries passed in an isolated, quick-checked backup: Path of Daggers recorded `MULTI_FILE_FEATURE_DISABLED` with no file jobs, and Raising Steam recorded the same safe result with no file jobs. Production remains untouched and the multi-file flag remains false.
+- Block 3-2n-5E now has a targeted `audiobook-proof --action reevaluate` operator path. It requires an audiobook or job target, is dry-run by default, reports `READY_FOR_MULTI_FILE_PROOF`, `MULTI_FILE_FEATURE_DISABLED`, `MULTI_FILE_MANIFEST_INCOMPLETE`, or `SUPERSEDED_REVISION`, and only requeues a capability-ready current job after `--apply --confirm` with the feature enabled.
+
+Next step:
+- Keep the multi-file flag disabled until explicit rollout approval. Before enabling, run the new targeted dry run against the selected live job(s), then apply one canary re-evaluation at a time and verify chapter/replay evidence and raw-count invariants.
+
 ## 2026-07-25
 
 Current state:

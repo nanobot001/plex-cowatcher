@@ -107,6 +107,7 @@ Discovery events must not contain file paths, authenticated URLs, tokens, raw Pl
 - `audiobook_proof_progress` records only the parent job ID, pending state, bounded attempt count, and allowlisted checkpoint code while a multi-file revision advances; it never includes paths, titles, or analyzer output.
 - `audiobook_proof_canary_requested` records a confirmed one-shot request and optional numeric audiobook ID.
 - `audiobook_proof_requeued` records the selected existing job ID and whether the confirmed request applied or was skipped.
+- `audiobook_proof_reevaluated` records only the selected job/audiobook IDs, the safe capability reason, and whether the job was requeued or remained unresolved; it never includes paths or analyzer output.
 
 ### `plex_historical_backfill_started` and `plex_historical_backfill_completed`
 

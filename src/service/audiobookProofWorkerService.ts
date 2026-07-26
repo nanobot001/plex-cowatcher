@@ -19,6 +19,34 @@ type ProofAdapter = Pick<AudiobookProofAdapter, "proveAndActivate"> &
   Partial<Pick<AudiobookProofAdapter, "prove">>;
 type JobState = "pending" | "running" | "retry_wait" | "succeeded" | "failed_terminal" | "unsupported_multi_file";
 
+export interface ProofReevaluationTarget {
+  audiobookId?: number;
+  jobId?: number;
+}
+
+export interface ProofReevaluationCandidate {
+  jobId: number;
+  audiobookId: number;
+  mediaRevision: string;
+  state: "unsupported_multi_file";
+  fileCount: number;
+  itemCount: number;
+  missingIdentityCount: number;
+  missingPathCount: number;
+  invalidDurationCount: number;
+  decision: "requeue" | "unresolved";
+  reason: "READY_FOR_MULTI_FILE_PROOF" | "MULTI_FILE_FEATURE_DISABLED" | "MULTI_FILE_MANIFEST_INCOMPLETE" | "SUPERSEDED_REVISION";
+}
+
+export interface ProofReevaluationResult {
+  ok: true;
+  dryRun: boolean;
+  multiFileEnabled: boolean;
+  candidates: ProofReevaluationCandidate[];
+  requeuedCount: number;
+  unresolvedCount: number;
+}
+
 export interface ProofRunResult {
   ok: true;
   status: "disabled" | "throttled" | "lease_held" | "idle" | "processed";
@@ -144,6 +172,53 @@ export class AudiobookProofWorkerService {
     if (applied) this.resetFileJobs(row.id, now);
     this.audit.record("audiobook_proof_requeued", "cli", applied ? "applied" : "skipped", { jobId });
     return { ok: true, dryRun: false, jobId, changed: applied, state: applied ? "pending" : row.state };
+  }
+
+  reevaluateUnsupported(
+    target: ProofReevaluationTarget,
+    options: { apply: boolean; confirm: boolean }
+  ): ProofReevaluationResult {
+    if (!Number.isInteger(target.audiobookId ?? null) && !Number.isInteger(target.jobId ?? null)) {
+      throw new Error("PROOF_REEVALUATION_TARGET_REQUIRED");
+    }
+    const candidates = this.findUnsupportedReevaluationCandidates(target);
+    if (!options.apply) {
+      return {
+        ok: true,
+        dryRun: true,
+        multiFileEnabled: this.multiFileEnabled,
+        candidates,
+        requeuedCount: 0,
+        unresolvedCount: candidates.filter((candidate) => candidate.decision === "unresolved").length
+      };
+    }
+    if (!options.confirm) throw new Error("PROOF_REEVALUATION_CONFIRM_REQUIRED");
+
+    let requeuedCount = 0;
+    let unresolvedCount = 0;
+    for (const candidate of candidates) {
+      if (candidate.decision !== "requeue") {
+        unresolvedCount++;
+        this.audit.record("audiobook_proof_reevaluated", "cli", "unresolved", {
+          jobId: candidate.jobId,
+          audiobookId: candidate.audiobookId,
+          reason: candidate.reason
+        });
+        continue;
+      }
+      const result = this.requeue(candidate.jobId, { apply: true, confirm: true });
+      if (result.changed) {
+        requeuedCount++;
+        this.audit.record("audiobook_proof_reevaluated", "cli", "requeued", {
+          jobId: candidate.jobId,
+          audiobookId: candidate.audiobookId,
+          reason: candidate.reason
+        });
+      } else {
+        unresolvedCount++;
+      }
+    }
+    return { ok: true, dryRun: false, multiFileEnabled: this.multiFileEnabled, candidates, requeuedCount, unresolvedCount };
   }
 
   async runOnce(options: { force?: boolean; audiobookId?: number; now?: Date } = {}): Promise<ProofRunResult> {
@@ -456,6 +531,68 @@ export class AudiobookProofWorkerService {
       ORDER BY latest_playback_at IS NULL, latest_playback_at DESC, jobs.id
       LIMIT 1
     `).get(now.toISOString(), audiobookId ?? null, audiobookId ?? null);
+  }
+
+  private findUnsupportedReevaluationCandidates(target: ProofReevaluationTarget): ProofReevaluationCandidate[] {
+    const rows = this.db.prepare(`
+      SELECT jobs.id, jobs.audiobook_id, jobs.media_revision,
+             revision.file_count, revision.manifest_status,
+             book.current_media_revision,
+             COUNT(items.id) AS item_count,
+             SUM(CASE WHEN items.stable_identity IS NULL OR items.stable_identity = '' THEN 1 ELSE 0 END) AS missing_identity_count,
+             SUM(CASE WHEN items.private_file_path IS NULL OR items.private_file_path = '' THEN 1 ELSE 0 END) AS missing_path_count,
+             SUM(CASE WHEN items.duration_ms IS NULL OR items.duration_ms <= 0 THEN 1 ELSE 0 END) AS invalid_duration_count
+      FROM audiobook_proof_jobs jobs
+      JOIN audiobook_books book ON book.id = jobs.audiobook_id
+      LEFT JOIN audiobook_media_revisions revision
+        ON revision.audiobook_id = jobs.audiobook_id AND revision.media_revision = jobs.media_revision
+      LEFT JOIN audiobook_media_revision_items items ON items.revision_id = revision.id
+      WHERE jobs.state = 'unsupported_multi_file'
+        AND (? IS NULL OR jobs.audiobook_id = ?)
+        AND (? IS NULL OR jobs.id = ?)
+      GROUP BY jobs.id, jobs.audiobook_id, jobs.media_revision,
+               revision.file_count, revision.manifest_status, book.current_media_revision
+      ORDER BY jobs.id
+    `).all(
+      target.audiobookId ?? null,
+      target.audiobookId ?? null,
+      target.jobId ?? null,
+      target.jobId ?? null
+    ) as any[];
+
+    return rows.map((row) => {
+      const fileCount = Number(row.file_count ?? 0);
+      const itemCount = Number(row.item_count ?? 0);
+      const missingIdentityCount = Number(row.missing_identity_count ?? 0);
+      const missingPathCount = Number(row.missing_path_count ?? 0);
+      const invalidDurationCount = Number(row.invalid_duration_count ?? 0);
+      let reason: ProofReevaluationCandidate["reason"];
+      let decision: ProofReevaluationCandidate["decision"] = "unresolved";
+      if (row.current_media_revision !== row.media_revision) {
+        reason = "SUPERSEDED_REVISION";
+      } else if (row.manifest_status !== "unsupported_multi_file" || fileCount <= 1 || itemCount !== fileCount ||
+                 missingIdentityCount > 0 || missingPathCount > 0 || invalidDurationCount > 0) {
+        reason = "MULTI_FILE_MANIFEST_INCOMPLETE";
+      } else if (!this.multiFileEnabled) {
+        reason = "MULTI_FILE_FEATURE_DISABLED";
+      } else {
+        reason = "READY_FOR_MULTI_FILE_PROOF";
+        decision = "requeue";
+      }
+      return {
+        jobId: Number(row.id),
+        audiobookId: Number(row.audiobook_id),
+        mediaRevision: row.media_revision,
+        state: "unsupported_multi_file",
+        fileCount,
+        itemCount,
+        missingIdentityCount,
+        missingPathCount,
+        invalidDurationCount,
+        decision,
+        reason
+      };
+    });
   }
 
   private continueJob(job: any, now: Date, code: string): ProofRunResult {

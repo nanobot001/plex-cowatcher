@@ -18,7 +18,7 @@ Public status and health responses must not expose tokens, API keys, private pat
 
 Automatic proof defaults to `AUDIOBOOK_PROOF_ENABLED=false`. Configure `AUDIOBOOK_PROOF_EXECUTABLE` and `AUDIOBOOK_PROOF_SCRIPT` without enabling the worker; Whisper also requires `AUDIOBOOK_PROOF_WHISPER_ENABLED=true` and remains opt-in.
 
-Roll out in this order: back up live SQLite; deploy disabled; inspect `audiobook-proof --action status`; run a dry-run canary for one audiobook; run the same canary with `--apply --confirm`; verify its matching chapter revision, Progress output, audit redaction, and health summary; then enable the worker and restart PM2. The worker processes at most one job per 15-minute completion-based cycle with concurrency one. After restart, run `npm run verify:live-dashboard`.
+Roll out in this order: back up live SQLite; deploy disabled; inspect `audiobook-proof --action status`; run a dry-run canary for one audiobook; run the same canary with `--apply --confirm`; verify its matching chapter revision, Progress output, audit redaction, and health summary; then enable the worker and restart PM2. For existing `unsupported_multi_file` jobs, use `audiobook-proof --action reevaluate --audiobook-id <id>` first, then add `--apply --confirm` only after the multi-file flag is enabled and the returned capability reason is `READY_FOR_MULTI_FILE_PROOF`. The worker processes at most one job per 15-minute completion-based cycle with concurrency one. After restart, run `npm run verify:live-dashboard`.
 
 ## Readiness States
 

@@ -5137,6 +5137,36 @@ function seedProofRevision(db, {
   `).run(audiobookId, revision, status);
 }
 
+function seedMultiFileUnsupportedRevision(db, {
+  audiobookId = 204,
+  revision = "multi-proof-revision"
+} = {}) {
+  db.prepare(`
+    INSERT OR IGNORE INTO audiobook_books
+      (id, folder_key, title, source_provenance, enrichment_status, identity_status,
+       current_media_revision, created_at, updated_at)
+    VALUES (?, ?, 'Multi Proof Book', 'fixture', 'enriched', 'identified', ?,
+      '2026-07-12T00:00:00Z', '2026-07-12T00:00:00Z')
+  `).run(audiobookId, `multi-proof-${audiobookId}`, revision);
+  const inserted = db.prepare(`
+    INSERT INTO audiobook_media_revisions
+      (audiobook_id, media_revision, track_count, file_count, total_duration_ms, manifest_status, created_at)
+    VALUES (?, ?, 2, 2, 240000, 'unsupported_multi_file', '2026-07-12T00:00:00Z')
+  `).run(audiobookId, revision);
+  const insertItem = db.prepare(`
+    INSERT INTO audiobook_media_revision_items
+      (revision_id, item_order, stable_identity, rating_key, guid, duration_ms, private_file_path, path_hash)
+    VALUES (?, ?, ?, ?, ?, 120000, ?, ?)
+  `);
+  insertItem.run(Number(inserted.lastInsertRowid), 0, "guid:multi-1", "multi-1", "multi-1", "F:\\Private\\Multi 01.m4b", "multi-hash-1");
+  insertItem.run(Number(inserted.lastInsertRowid), 1, "guid:multi-2", "multi-2", "multi-2", "F:\\Private\\Multi 02.m4b", "multi-hash-2");
+  db.prepare(`
+    INSERT INTO audiobook_discovery_outbox
+      (audiobook_id, media_revision, trigger_reason, created_at, manifest_status)
+    VALUES (?, ?, 'manual', '2026-07-12T00:00:00Z', 'unsupported_multi_file')
+  `).run(audiobookId, revision);
+}
+
 function activatableProofResult(activate, activationBase) {
   const candidate = {
     chapters: [
@@ -5480,6 +5510,46 @@ test("audiobook proof worker recovers expired leases, prevents overlap, and requ
     const repeated = worker.requeue(job.id, { apply: true, confirm: true });
     assert.equal(repeated.changed, false);
     assert.throws(() => worker.requeue(job.id, { apply: true, confirm: false }), /PROOF_REQUEUE_CONFIRM_REQUIRED/);
+    const audits = db.prepare("SELECT payload_json FROM audit_log WHERE action LIKE 'audiobook_proof_%'").all();
+    assert.equal(JSON.stringify(audits).includes("Private"), false);
+  });
+});
+
+test("multi-file proof supports targeted dry-run and confirmed capability re-evaluation", async () => {
+  await withTestDb(async (db) => {
+    seedMultiFileUnsupportedRevision(db);
+    const now = new Date("2026-07-12T01:00:00Z");
+    const adapter = { proveAndActivate: async () => assert.fail("re-evaluation must not invoke the adapter") };
+    const disabledWorker = new AudiobookProofWorkerService(db, adapter, true, () => now, false);
+    assert.equal(disabledWorker.materializeOutbox(now), 1);
+    const job = db.prepare("SELECT id, state, safe_result_code FROM audiobook_proof_jobs WHERE audiobook_id = 204").get();
+    assert.deepEqual({ state: job.state, safe_result_code: job.safe_result_code }, {
+      state: "unsupported_multi_file",
+      safe_result_code: "MULTI_FILE_FEATURE_DISABLED"
+    });
+
+    const disabledPreview = disabledWorker.reevaluateUnsupported({ audiobookId: 204 }, { apply: false, confirm: false });
+    assert.equal(disabledPreview.dryRun, true);
+    assert.equal(disabledPreview.candidates.length, 1);
+    assert.equal(disabledPreview.candidates[0].reason, "MULTI_FILE_FEATURE_DISABLED");
+    assert.equal(disabledPreview.candidates[0].decision, "unresolved");
+    assert.equal(db.prepare("SELECT state FROM audiobook_proof_jobs WHERE id = ?").get(job.id).state, "unsupported_multi_file");
+
+    const enabledWorker = new AudiobookProofWorkerService(db, adapter, true, () => now, true);
+    assert.throws(() => enabledWorker.reevaluateUnsupported({}, { apply: false, confirm: false }), /PROOF_REEVALUATION_TARGET_REQUIRED/);
+    const enabledPreview = enabledWorker.reevaluateUnsupported({ jobId: job.id }, { apply: false, confirm: false });
+    assert.equal(enabledPreview.candidates[0].reason, "READY_FOR_MULTI_FILE_PROOF");
+    assert.equal(enabledPreview.candidates[0].decision, "requeue");
+    const applied = enabledWorker.reevaluateUnsupported({ jobId: job.id }, { apply: true, confirm: true });
+    assert.equal(applied.dryRun, false);
+    assert.equal(applied.requeuedCount, 1);
+    assert.equal(applied.unresolvedCount, 0);
+    const requeued = db.prepare("SELECT state, attempt_count, safe_result_code FROM audiobook_proof_jobs WHERE id = ?").get(job.id);
+    assert.deepEqual({ state: requeued.state, attempt_count: requeued.attempt_count, safe_result_code: requeued.safe_result_code }, {
+      state: "pending",
+      attempt_count: 0,
+      safe_result_code: null
+    });
     const audits = db.prepare("SELECT payload_json FROM audit_log WHERE action LIKE 'audiobook_proof_%'").all();
     assert.equal(JSON.stringify(audits).includes("Private"), false);
   });

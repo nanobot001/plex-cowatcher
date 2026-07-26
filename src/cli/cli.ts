@@ -511,6 +511,16 @@ async function main(): Promise<void> {
             print({ ok: true, tool: "project.audiobook_proof", timestamp, data });
             break;
           }
+          if (action === "reevaluate") {
+            const audiobookId = arg("audiobook-id") ? Number(arg("audiobook-id")) : undefined;
+            const jobId = arg("job-id") ? Number(arg("job-id")) : undefined;
+            const data = worker.reevaluateUnsupported(
+              { audiobookId, jobId },
+              { apply: args.includes("--apply"), confirm: args.includes("--confirm") }
+            );
+            print({ ok: true, tool: "project.audiobook_proof", timestamp, data });
+            break;
+          }
           throw new Error("INVALID_PROOF_ACTION");
         } catch (error) {
           print({
