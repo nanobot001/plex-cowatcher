@@ -11,6 +11,7 @@ export function openDatabase(sqlitePath = appConfig.SQLITE_PATH): Db {
   const absolutePath = path.resolve(sqlitePath);
   fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
   const db = new DatabaseSync(absolutePath);
+  db.exec("PRAGMA busy_timeout = 5000");
   db.exec("PRAGMA foreign_keys = ON");
   return db;
 }

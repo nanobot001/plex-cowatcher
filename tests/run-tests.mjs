@@ -28,10 +28,21 @@ import { AudiobookCatalogService, canonicalizeAudiobookSeriesTitle, isAudiobookM
 import { AudiobookBackfillService } from "../dist/service/audiobookBackfillService.js";
 import { AudiobookScannerService } from "../dist/service/audiobookScannerService.js";
 import { AudiobookDiscoveryService } from "../dist/service/audiobookDiscoveryService.js";
-import { reconcileLegacyDiscoveryOutbox } from "../dist/service/audiobookRevisionService.js";
-import { buildGlobalAudiobookTimeline, mapMultiFilePlaybackOffset } from "../dist/service/audiobookMultiFileService.js";
+import {
+  calculateMediaRevisionManifest,
+  reconcileLegacyDiscoveryOutbox
+} from "../dist/service/audiobookRevisionService.js";
+import {
+  assessFileBoundaryChapterProof,
+  buildGlobalAudiobookTimeline,
+  mapMultiFilePlaybackOffset
+} from "../dist/service/audiobookMultiFileService.js";
 import { AudiobookProofAdapter } from "../dist/service/audiobookProofAdapter.js";
-import { AudiobookProofRuntime, AudiobookProofWorkerService } from "../dist/service/audiobookProofWorkerService.js";
+import {
+  AudiobookProofRuntime,
+  AudiobookProofWorkerService,
+  safeWorkerFailureCode
+} from "../dist/service/audiobookProofWorkerService.js";
 import { HealthService } from "../dist/service/healthService.js";
 import { DashboardService, deriveDashboardCategory } from "../dist/service/dashboardService.js";
 import { AuditService } from "../dist/service/auditService.js";
@@ -5167,6 +5178,62 @@ function seedMultiFileUnsupportedRevision(db, {
   `).run(audiobookId, revision);
 }
 
+function seedFileBoundaryRevision(db, {
+  audiobookId = 205,
+  revision = "file-boundary-revision",
+  asin = "B000000000",
+  titles = ["Prologue", "Chapter 1"],
+  durations = [60_000, 60_000],
+  trackNumbers = titles.map((_title, index) => index + 1),
+  declaredChapterCount = titles.length,
+  declaredDurationSeconds = durations.reduce((total, duration) => total + duration, 0) / 1000
+} = {}) {
+  db.prepare(`
+    INSERT INTO audiobook_books
+      (id, folder_key, asin, title, source_provenance, enrichment_status, identity_status,
+       chapter_count, total_duration_seconds, current_media_revision, created_at, updated_at)
+    VALUES (?, ?, ?, 'File Boundary Book', 'fixture', 'enriched', 'identified', ?, ?, ?,
+      '2026-07-12T00:00:00Z', '2026-07-12T00:00:00Z')
+  `).run(audiobookId, `file-boundary-${audiobookId}`, asin, declaredChapterCount, declaredDurationSeconds, revision);
+  const revisionResult = db.prepare(`
+    INSERT INTO audiobook_media_revisions
+      (audiobook_id, media_revision, track_count, file_count, total_duration_ms, manifest_status, created_at)
+    VALUES (?, ?, ?, ?, ?, 'unsupported_multi_file', '2026-07-12T00:00:00Z')
+  `).run(audiobookId, revision, titles.length, titles.length, durations.reduce((total, duration) => total + duration, 0));
+  const insertItem = db.prepare(`
+    INSERT INTO audiobook_media_revision_items
+      (revision_id, item_order, stable_identity, rating_key, guid, duration_ms, private_file_path, path_hash)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertCatalog = db.prepare(`
+    INSERT INTO content_catalog
+      (rating_key, guid, media_type, title, duration, library_title, source_provenance,
+       refreshed_at, file_path, audiobook_id)
+    VALUES (?, ?, 'track', ?, ?, 'Audiobooks', 'fixture', '2026-07-12T00:00:00Z', ?, ?)
+  `);
+  for (let index = 0; index < titles.length; index++) {
+    const ratingKey = `boundary-${audiobookId}-${index + 1}`;
+    const guid = `com.plexapp.agents.audnexus://${asin}_ca/11/${trackNumbers[index]}?lang=en`;
+    const privatePath = `F:\\Private\\${String(index + 1).padStart(2, "0")}.mp3`;
+    insertItem.run(
+      Number(revisionResult.lastInsertRowid),
+      index,
+      `guid:${guid}`,
+      ratingKey,
+      guid,
+      durations[index],
+      privatePath,
+      `boundary-hash-${index + 1}`
+    );
+    insertCatalog.run(ratingKey, guid, titles[index], durations[index], privatePath, audiobookId);
+  }
+  db.prepare(`
+    INSERT INTO audiobook_discovery_outbox
+      (audiobook_id, media_revision, trigger_reason, created_at, manifest_status)
+    VALUES (?, ?, 'discovery', '2026-07-12T00:00:00Z', 'unsupported_multi_file')
+  `).run(audiobookId, revision);
+}
+
 function activatableProofResult(activate, activationBase) {
   const candidate = {
     chapters: [
@@ -5209,6 +5276,109 @@ test("multi-file proof remains an explicit fallback until its rollout flag is en
     const job = db.prepare("SELECT state, safe_result_code FROM audiobook_proof_jobs WHERE audiobook_id = 203").get();
     assert.deepEqual({ ...job }, { state: "unsupported_multi_file", safe_result_code: "MULTI_FILE_FEATURE_DISABLED" });
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audiobook_proof_file_jobs WHERE audiobook_id = 203").get().count, 0);
+  });
+});
+
+test("audiobook manifest prefers a complete Audnexus track sequence and retains natural path fallback", () => {
+  const audnexus = (trackNumber, filePath) => ({
+    ratingKey: `track-${trackNumber}`,
+    guid: `com.plexapp.agents.audnexus://B000000000_ca/11/${trackNumber}?lang=en`,
+    duration: 60_000,
+    filePath
+  });
+  const authoritative = calculateMediaRevisionManifest([
+    audnexus(1, "F:\\Book\\99.mp3"),
+    audnexus(3, "F:\\Book\\02.mp3"),
+    audnexus(2, "F:\\Book\\01.mp3")
+  ]);
+  assert.deepEqual(authoritative.items.map((item) => item.ratingKey), ["track-1", "track-2", "track-3"]);
+
+  const fallback = calculateMediaRevisionManifest([
+    { ratingKey: "ten", guid: "plex://track/ten", duration: 60_000, filePath: "F:\\Book\\10.mp3" },
+    { ratingKey: "one", guid: "plex://track/one", duration: 60_000, filePath: "F:\\Book\\1.mp3" },
+    { ratingKey: "two", guid: "plex://track/two", duration: 60_000, filePath: "F:\\Book\\2.mp3" }
+  ]);
+  assert.deepEqual(fallback.items.map((item) => item.ratingKey), ["one", "two", "ten"]);
+});
+
+test("file-boundary chapter proof requires exact identity count duration and title agreement", () => {
+  const asin = "B000000000";
+  const baseItems = ["Prologue: Opening", "Chapter 1: Arrival", "Chapter 2: Departure"].map((title, index) => ({
+    order: index,
+    stableIdentity: `guid:track-${index + 1}`,
+    ratingKey: `track-${index + 1}`,
+    guid: `com.plexapp.agents.audnexus://${asin}_ca/11/${index + 1}?lang=en`,
+    durationMs: 60_000,
+    title
+  }));
+  const assess = (overrides = {}) => assessFileBoundaryChapterProof({
+    asin,
+    declaredChapterCount: 3,
+    declaredDurationMs: 180_000,
+    revisionDurationMs: 180_000,
+    items: baseItems,
+    ...overrides
+  });
+
+  const ready = assess();
+  assert.equal(ready.eligible, true);
+  assert.deepEqual(ready.candidates.map((candidate) => candidate.chapters[0].title), [
+    "Prologue: Opening", "Chapter 1: Arrival", "Chapter 2: Departure"
+  ]);
+  assert.equal(assess({ declaredChapterCount: 4 }).reason, "MULTI_FILE_CHAPTER_COUNT_MISMATCH");
+  assert.equal(assess({ declaredDurationMs: 200_000 }).reason, "MULTI_FILE_DURATION_MISMATCH");
+  assert.equal(assess({
+    items: baseItems.map((item, index) => index === 1 ? { ...item, guid: item.guid.replace(asin, "B111111111") } : item)
+  }).reason, "MULTI_FILE_EDITION_IDENTITY_UNPROVEN");
+  assert.equal(assess({
+    items: [baseItems[0], baseItems[2], baseItems[1]].map((item, order) => ({ ...item, order }))
+  }).reason, "MULTI_FILE_TRACK_SEQUENCE_GAP");
+  assert.equal(assess({
+    items: baseItems.map((item, index) => index === 1 ? { ...item, guid: baseItems[0].guid } : item)
+  }).reason, "MULTI_FILE_TRACK_SEQUENCE_GAP");
+  assert.equal(assess({
+    items: baseItems.map((item, index) => index === 1 ? { ...item, title: "Chapter 1 (Part 1)" } : item)
+  }).reason, "MULTI_FILE_CHAPTER_TITLES_UNSUPPORTED");
+  assert.equal(assess({
+    items: baseItems.map((item) => ({ ...item, title: "File" }))
+  }).reason, "MULTI_FILE_CHAPTER_TITLES_UNSUPPORTED");
+});
+
+test("file-boundary proof automatically checkpoints one file per cycle and activates atomically", async () => {
+  await withTestDb(async (db) => {
+    seedFileBoundaryRevision(db);
+    const adapter = {
+      proveAndActivate: async () => assert.fail("file-boundary proof must not invoke the single-file adapter"),
+      prove: async () => assert.fail("file-boundary proof must not invoke the external analyzer")
+    };
+    const worker = new AudiobookProofWorkerService(
+      db,
+      adapter,
+      true,
+      () => new Date("2026-07-12T01:00:00Z"),
+      true
+    );
+    const first = await worker.runOnce({ force: true, audiobookId: 205, now: new Date("2026-07-12T01:00:00Z") });
+    assert.equal(first.safeCode, "FILE_BOUNDARY_PROOF_PROGRESS");
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audiobook_chapter_revisions").get().count, 0);
+    const second = await worker.runOnce({ force: true, audiobookId: 205, now: new Date("2026-07-12T01:15:00Z") });
+    assert.equal(second.safeCode, "FILE_BOUNDARY_PROOF_PROGRESS");
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audiobook_chapter_revisions").get().count, 0);
+    const third = await worker.runOnce({ force: true, audiobookId: 205, now: new Date("2026-07-12T01:30:00Z") });
+    assert.equal(third.safeCode, "VERIFIED_MULTI_FILE");
+    assert.equal(third.state, "succeeded");
+    assert.deepEqual(
+      db.prepare("SELECT chapter_index, title, start_offset_ms, end_offset_ms FROM audiobook_chapters ORDER BY chapter_index")
+        .all().map((row) => ({ ...row })),
+      [
+        { chapter_index: 1, title: "Prologue", start_offset_ms: 0, end_offset_ms: 60_000 },
+        { chapter_index: 2, title: "Chapter 1", start_offset_ms: 60_000, end_offset_ms: 120_000 }
+      ]
+    );
+    assert.equal(
+      db.prepare("SELECT source_type FROM audiobook_chapter_revisions").get().source_type,
+      "multi_file_audnexus_track"
+    );
   });
 });
 
@@ -5553,6 +5723,57 @@ test("multi-file proof supports targeted dry-run and confirmed capability re-eva
     const audits = db.prepare("SELECT payload_json FROM audit_log WHERE action LIKE 'audiobook_proof_%'").all();
     assert.equal(JSON.stringify(audits).includes("Private"), false);
   });
+});
+
+test("targeted re-evaluation revives only evidence-matching legacy invalid-chapter failures", async () => {
+  await withTestDb(async (db) => {
+    seedFileBoundaryRevision(db);
+    const disabledWorker = new AudiobookProofWorkerService(
+      db,
+      { proveAndActivate: async () => assert.fail("re-evaluation must not invoke an adapter") },
+      true,
+      () => new Date("2026-07-12T01:00:00Z"),
+      false
+    );
+    assert.equal(disabledWorker.materializeOutbox(new Date("2026-07-12T01:00:00Z")), 1);
+    const job = db.prepare("SELECT id FROM audiobook_proof_jobs WHERE audiobook_id = 205").get();
+    db.prepare(`
+      UPDATE audiobook_proof_jobs
+      SET state = 'failed_terminal', safe_result_code = 'MULTI_FILE_INVALID_CHAPTERS'
+      WHERE id = ?
+    `).run(job.id);
+
+    const enabledWorker = new AudiobookProofWorkerService(
+      db,
+      { proveAndActivate: async () => assert.fail("re-evaluation must not invoke an adapter") },
+      true,
+      () => new Date("2026-07-12T01:15:00Z"),
+      true
+    );
+    const preview = enabledWorker.reevaluateUnsupported({ jobId: job.id }, { apply: false, confirm: false });
+    assert.equal(preview.candidates.length, 1);
+    assert.equal(preview.candidates[0].state, "failed_terminal");
+    assert.equal(preview.candidates[0].reason, "READY_FOR_FILE_BOUNDARY_CHAPTER_PROOF");
+    assert.equal(preview.candidates[0].decision, "requeue");
+    const applied = enabledWorker.reevaluateUnsupported({ jobId: job.id }, { apply: true, confirm: true });
+    assert.equal(applied.requeuedCount, 1);
+
+    db.prepare(`
+      UPDATE audiobook_proof_jobs
+      SET state = 'failed_terminal', safe_result_code = 'EXTERNAL_TIMEOUT'
+      WHERE id = ?
+    `).run(job.id);
+    assert.equal(
+      enabledWorker.reevaluateUnsupported({ jobId: job.id }, { apply: false, confirm: false }).candidates.length,
+      0
+    );
+  });
+});
+
+test("audiobook proof worker preserves an allowlisted SQLite busy outcome", () => {
+  const sqliteBusy = Object.assign(new Error("database is locked"), { code: "ERR_SQLITE_ERROR" });
+  assert.equal(safeWorkerFailureCode(sqliteBusy), "SQLITE_BUSY");
+  assert.equal(safeWorkerFailureCode(new Error("private implementation detail")), "PROOF_WORKER_FAILURE");
 });
 
 test("audiobook proof health and runtime seams remain bounded while automatic proof is disabled by default", async () => {

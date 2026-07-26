@@ -3,11 +3,13 @@
 ## 2026-07-26
 
 Current state:
-- The two structurally different disabled canaries passed in an isolated, quick-checked backup: Path of Daggers recorded `MULTI_FILE_FEATURE_DISABLED` with no file jobs, and Raising Steam recorded the same safe result with no file jobs. Production remains untouched and the multi-file flag remains false.
-- Block 3-2n-5E now has a targeted `audiobook-proof --action reevaluate` operator path. It requires an audiobook or job target, is dry-run by default, reports `READY_FOR_MULTI_FILE_PROOF`, `MULTI_FILE_FEATURE_DISABLED`, `MULTI_FILE_MANIFEST_INCOMPLETE`, or `SUPERSEDED_REVISION`, and only requeues a capability-ready current job after `--apply --confirm` with the feature enabled.
+- **3-2n-5E-A: Evidence-Based File-Boundary Chapters is implemented, deterministically verified, and live-verified.** It reuses 5E with no schema, dependency, queue, or worker additions: complete same-edition Audnexus-agent track identities control order, strict Prologue/Chapter/Epilogue file boundaries checkpoint through existing file jobs, and SQLite locks use bounded wait plus `SQLITE_BUSY`.
+- `npm run verify:block` passed with 141 service/integration tests and 63 dashboard regressions plus one intentional skip. The final CoWatcher-only restart passed `npm run verify:live-dashboard`.
+- The fresh `pre-file-boundary-proof-2026-07-26T12-19-44-128Z.sqlite` backup passed `PRAGMA quick_check`. The targeted Path of Daggers recovery activated 32 chapters over the exact current media revision, all 32 file jobs succeeded, Progress reports verified chapter mode, the 40 raw playback observations were unchanged, and no lease remained.
+- Recurring multi-file execution remains disabled. The other 14 multi-file jobs were not requeued or processed; multipart, generic, gapped, mixed-edition, and count-mismatched layouts remain source-honest fallback.
 
 Next step:
-- Keep the multi-file flag disabled until explicit rollout approval. Before enabling, run the new targeted dry run against the selected live job(s), then apply one canary re-evaluation at a time and verify chapter/replay evidence and raw-count invariants.
+- Keep recurring multi-file execution disabled unless a separate reviewed rollout explicitly broadens it. Resume from the next planned project block; multipart grouping and generic segment promotion remain deferred.
 
 ## 2026-07-25
 

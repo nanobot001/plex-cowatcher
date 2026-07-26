@@ -52,6 +52,7 @@ Corrective sequence:
    3. `completed/block-3-2n-5d-2a-embedded-chapter-timeline-normalization.md` - implemented, verified, and passed the corrected Eric canary.
    4. `block-3-2n-5d-3-durable-proof-worker-and-rollout.md` - implemented, verified, and enabled in the recurring PM2 runtime.
 27. `block-3-2n-5e-multi-file-audiobook-timeline-proof.md` - implemented and deterministically verified; live multi-file rollout remains gated by `AUDIOBOOK_PROOF_MULTI_FILE_ENABLED`.
+   1. `block-3-2n-5e-a-evidence-based-file-boundary-chapters.md` - implemented, deterministically verified, and live-verified with a targeted Path of Daggers canary; recurring multi-file execution remains disabled.
 28. `completed/block-3-2n-6c-visible-progress-and-enriched-detail.md` - implemented and verified.
 29. `block-3-2n-6e-universal-detail-workspace-alignment.md` - planned umbrella; do not implement directly. Restore one canonical detail identity, read contract, shell, and route across every dashboard entry surface before adding resume UI.
    1. `completed/block-3-2n-6e-1-canonical-detail-contract-and-entry-resolution.md` - implemented and verified; adds the canonical detail identity/resolver and bounded additive workspace read contract.
@@ -140,6 +141,7 @@ The full 3-2m sequence is implemented and verified: household profiles, person p
 - `completed/block-3-2n-5d-2a-embedded-chapter-timeline-normalization.md` - implemented historical reference.
 - `block-3-2n-5d-3-durable-proof-worker-and-rollout.md` - implemented historical reference; recurring proof enabled 2026-07-25.
 - `block-3-2n-5e-multi-file-audiobook-timeline-proof.md` - implemented multi-file proof and historical playback mapping; live rollout remains gated.
+- `block-3-2n-5e-a-evidence-based-file-boundary-chapters.md` - implemented historical reference for exact one-file-per-chapter evidence, future discovery, and targeted legacy reevaluation.
 
 Completed blocks remain as historical references. Verify current behavior from code and current docs, not from older block assumptions.
 

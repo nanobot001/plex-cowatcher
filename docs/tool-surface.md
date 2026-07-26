@@ -32,7 +32,7 @@ Here is how the project's implemented commands and API routes map to the standar
 | `project.plex_movie_identity_repair` | `node dist/cli/cli.js plex-movie-identity` | *(none)* | `write_action` | Dry-run by default; inventories exact Plex GUID movie aliases, chooses a deterministic canonical rating key, and optionally writes local canonical identity/alias rows. No Plex or Tautulli source database is mutated. |
 | `project.audiobook_scan` | `node dist/cli/cli.js scan-audiobooks` | `POST /webhooks/plex` | `write_action` | Runs the shared restart-safe discovery coordinator. Full scans reconcile metadata and publish revision-deduplicated outbox events; webhooks perform fast item awareness. |
 | `project.audiobook_import_chapters` | `node dist/cli/cli.js import-audiobook-chapters` | *(none)* | `write_action` | Dry-run by default; imports verified audiobook chapter boundaries from a JSON file. |
-| `project.audiobook_proof` | `node dist/cli/cli.js audiobook-proof --action status\|canary\|requeue\|reevaluate` | *(none)* | `write_action` | Reports bounded queue status, runs one confirmed canary, idempotently requeues one job, or dry-runs/applies a targeted re-evaluation of existing multi-file fallback jobs. |
+| `project.audiobook_proof` | `node dist/cli/cli.js audiobook-proof --action status\|canary\|requeue\|reevaluate` | *(none)* | `write_action` | Reports bounded queue status, runs one confirmed canary, idempotently requeues one job, or dry-runs/applies a targeted re-evaluation of existing multi-file fallback jobs and exact legacy `MULTI_FILE_INVALID_CHAPTERS` results. |
 
 ## Contract Notes
 
@@ -44,7 +44,7 @@ Here is how the project's implemented commands and API routes map to the standar
 - `project.plex_movie_identity_repair` is intentionally CLI-only. Dry-run writes no identity data rows (startup may apply the additive schema migration); apply requires both `--apply` and `--confirm`, preserves every source rating key as an alias, leaves playback observations unchanged, and never mutates Plex or Tautulli.
 - Write-capable tools must preserve dry-run behavior unless the caller explicitly opts into apply mode and any required confirmations.
 - `project.audiobook_scan` preserves legacy `scanned`, `added`, `enriched`, and `errors` fields while adding track/book/pending/conflict/outbox counts. Outputs never include private paths or raw provider errors.
-- `project.audiobook_proof` is CLI-only. Canary, requeue, and reevaluate are dry-run by default and require both `--apply` and `--confirm`; reevaluate requires `--audiobook-id` or `--job-id` and only requeues a capability-ready current revision. Outputs contain only job IDs, counts, states, timing, and allowlisted codes.
+- `project.audiobook_proof` is CLI-only. Canary, requeue, and reevaluate are dry-run by default and require both `--apply` and `--confirm`; reevaluate requires `--audiobook-id` or `--job-id` and only requeues a capability-ready current revision. Exact one-file-per-chapter evidence can return `READY_FOR_FILE_BOUNDARY_CHAPTER_PROOF`; incomplete identity, sequence, count, duration, or title evidence remains unresolved under a specific `MULTI_FILE_*` code. Outputs contain only job IDs, counts, states, timing, and allowlisted codes.
 
 ## Output Contract
 

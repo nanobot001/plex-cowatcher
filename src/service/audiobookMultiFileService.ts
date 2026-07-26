@@ -1,4 +1,5 @@
 import type { ChapterActivationItem } from "./audiobookChapterActivationService.js";
+import { parseAudnexusTrackIdentity } from "./audiobookRevisionService.js";
 
 const DURATION_TOLERANCE_MS = 10_000;
 
@@ -16,6 +17,104 @@ export interface MultiFileProofCandidate {
   sourceType: string;
   confidence: number;
   warnings: string[];
+}
+
+export interface FileBoundaryProofItem extends MultiFileTimelineItem {
+  title: string | null;
+}
+
+export type FileBoundaryProofReason =
+  | "READY_FOR_FILE_BOUNDARY_CHAPTER_PROOF"
+  | "MULTI_FILE_MANIFEST_INCOMPLETE"
+  | "MULTI_FILE_CHAPTER_COUNT_MISMATCH"
+  | "MULTI_FILE_DURATION_MISMATCH"
+  | "MULTI_FILE_EDITION_IDENTITY_UNPROVEN"
+  | "MULTI_FILE_TRACK_SEQUENCE_GAP"
+  | "MULTI_FILE_CHAPTER_TITLES_UNSUPPORTED";
+
+export type FileBoundaryProofAssessment =
+  | { eligible: true; reason: "READY_FOR_FILE_BOUNDARY_CHAPTER_PROOF"; candidates: MultiFileProofCandidate[] }
+  | { eligible: false; reason: Exclude<FileBoundaryProofReason, "READY_FOR_FILE_BOUNDARY_CHAPTER_PROOF"> };
+
+export function assessFileBoundaryChapterProof(input: {
+  asin: string | null;
+  declaredChapterCount: number | null;
+  declaredDurationMs: number | null;
+  revisionDurationMs: number | null;
+  items: FileBoundaryProofItem[];
+}): FileBoundaryProofAssessment {
+  const items = [...input.items].sort((left, right) => left.order - right.order);
+  if (items.length < 2 || items.some((item) =>
+    !item.stableIdentity || !item.guid || !Number.isInteger(Number(item.durationMs)) || Number(item.durationMs) <= 0
+  )) {
+    return { eligible: false, reason: "MULTI_FILE_MANIFEST_INCOMPLETE" };
+  }
+  if (!Number.isInteger(Number(input.declaredChapterCount)) ||
+      Number(input.declaredChapterCount) !== items.length) {
+    return { eligible: false, reason: "MULTI_FILE_CHAPTER_COUNT_MISMATCH" };
+  }
+
+  const revisionDurationMs = Number(input.revisionDurationMs);
+  const declaredDurationMs = Number(input.declaredDurationMs);
+  const itemDurationMs = items.reduce((total, item) => total + Number(item.durationMs), 0);
+  if (!Number.isInteger(revisionDurationMs) || revisionDurationMs <= 0 ||
+      !Number.isInteger(declaredDurationMs) || declaredDurationMs <= 0 ||
+      Math.abs(itemDurationMs - revisionDurationMs) > DURATION_TOLERANCE_MS ||
+      Math.abs(itemDurationMs - declaredDurationMs) > DURATION_TOLERANCE_MS) {
+    return { eligible: false, reason: "MULTI_FILE_DURATION_MISMATCH" };
+  }
+
+  const identities = items.map((item) => parseAudnexusTrackIdentity(item.guid));
+  const firstIdentity = identities[0];
+  const asin = input.asin?.trim().toUpperCase();
+  if (!asin || !firstIdentity || firstIdentity.asin !== asin ||
+      identities.some((identity) =>
+        !identity || identity.asin !== asin || identity.editionKey !== firstIdentity.editionKey
+      )) {
+    return { eligible: false, reason: "MULTI_FILE_EDITION_IDENTITY_UNPROVEN" };
+  }
+  if (identities.some((identity, index) => identity!.trackNumber !== index + 1) ||
+      new Set(identities.map((identity) => identity!.trackNumber)).size !== items.length) {
+    return { eligible: false, reason: "MULTI_FILE_TRACK_SEQUENCE_GAP" };
+  }
+
+  const titles = items.map((item) => item.title?.trim() ?? "");
+  if (!isCompleteChapterTitleSequence(titles)) {
+    return { eligible: false, reason: "MULTI_FILE_CHAPTER_TITLES_UNSUPPORTED" };
+  }
+  return {
+    eligible: true,
+    reason: "READY_FOR_FILE_BOUNDARY_CHAPTER_PROOF",
+    candidates: items.map((item) => ({
+      chapters: [{
+        index: 1,
+        title: item.title!,
+        start_offset_ms: 0,
+        end_offset_ms: Number(item.durationMs)
+      }],
+      sourceType: "audnexus_track",
+      confidence: 1,
+      warnings: []
+    }))
+  };
+}
+
+function isCompleteChapterTitleSequence(titles: string[]): boolean {
+  if (titles.length < 2 || titles.some((title) => !title)) return false;
+  let index = 0;
+  if (/^prologue(?::\s+\S.*)?$/i.test(titles[index]!)) index++;
+  let chapterNumber = 1;
+  let chapterCount = 0;
+  while (index < titles.length) {
+    const match = /^chapter\s+(\d+)(?::\s+\S.*)?$/i.exec(titles[index]!);
+    if (!match) break;
+    if (Number(match[1]) !== chapterNumber) return false;
+    chapterNumber++;
+    chapterCount++;
+    index++;
+  }
+  if (index < titles.length && /^epilogue(?::\s+\S.*)?$/i.test(titles[index]!)) index++;
+  return chapterCount > 0 && index === titles.length;
 }
 
 export interface GlobalChapterTimeline {

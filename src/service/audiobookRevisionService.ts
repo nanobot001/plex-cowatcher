@@ -45,6 +45,31 @@ function compareNatural(left: string, right: string): number {
   return left.localeCompare(right);
 }
 
+export interface AudnexusTrackIdentity {
+  asin: string;
+  editionKey: string;
+  trackNumber: number;
+}
+
+export function parseAudnexusTrackIdentity(guid: string | null | undefined): AudnexusTrackIdentity | null {
+  const match = /^com\.plexapp\.agents\.audnexus:\/\/([a-z0-9]{10})(?:_([a-z]{2}))?\/(\d+)\/(\d+)(?:\?[^#]*)?$/i
+    .exec(guid?.trim() ?? "");
+  if (!match) return null;
+  const editionNumber = Number(match[3]);
+  const trackNumber = Number(match[4]);
+  if (!Number.isInteger(editionNumber) || editionNumber <= 0 ||
+      !Number.isInteger(trackNumber) || trackNumber <= 0) {
+    return null;
+  }
+  const asin = match[1]!.toUpperCase();
+  const locale = match[2]?.toLowerCase();
+  return {
+    asin,
+    editionKey: `${asin}${locale ? `_${locale}` : ""}/${editionNumber}`,
+    trackNumber
+  };
+}
+
 export function calculateMediaRevisionManifest(tracks: CatalogEntry[]): MediaRevisionManifest | null {
   const stableTracks = tracks.map((track) => {
     const normalizedPath = track.filePath ? normalizePath(track.filePath) : null;
@@ -58,13 +83,30 @@ export function calculateMediaRevisionManifest(tracks: CatalogEntry[]): MediaRev
       guid: track.guid,
       durationMs: track.duration,
       privateFilePath: track.filePath ?? null,
-      pathHash
+      pathHash,
+      audnexusTrack: parseAudnexusTrackIdentity(track.guid)
     };
   });
   if (stableTracks.some((track) => track === null)) return null;
 
-  const ordered = (stableTracks as Array<NonNullable<(typeof stableTracks)[number]>>)
-    .sort((left, right) => compareNatural(left.orderKey, right.orderKey) || left.stableIdentity.localeCompare(right.stableIdentity));
+  const sortable = stableTracks as Array<NonNullable<(typeof stableTracks)[number]>>;
+  const audnexusTracks = sortable.map((track) => track.audnexusTrack);
+  const firstAudnexusTrack = audnexusTracks[0];
+  const trackNumbers = audnexusTracks.map((track) => track?.trackNumber);
+  const hasCompleteAudnexusSequence = Boolean(
+    firstAudnexusTrack &&
+    audnexusTracks.every((track) =>
+      track?.editionKey === firstAudnexusTrack.editionKey
+    ) &&
+    new Set(trackNumbers).size === sortable.length &&
+    [...trackNumbers].sort((left, right) => Number(left) - Number(right))
+      .every((trackNumber, index) => trackNumber === index + 1)
+  );
+  const ordered = sortable.sort((left, right) =>
+    hasCompleteAudnexusSequence
+      ? left.audnexusTrack!.trackNumber - right.audnexusTrack!.trackNumber
+      : compareNatural(left.orderKey, right.orderKey) || left.stableIdentity.localeCompare(right.stableIdentity)
+  );
   const revisionParts = ordered.map((track, index) =>
     `${String(index).padStart(6, "0")}|${track.stableIdentity}|${track.durationMs ?? "unknown"}`
   );

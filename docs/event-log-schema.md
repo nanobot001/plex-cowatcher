@@ -103,11 +103,11 @@ Discovery events must not contain file paths, authenticated URLs, tokens, raw Pl
 
 ### Audiobook proof events
 
-- `audiobook_proof_completed` records job ID, terminal/retry state, attempt count, and an allowlisted result code.
-- `audiobook_proof_progress` records only the parent job ID, pending state, bounded attempt count, and allowlisted checkpoint code while a multi-file revision advances; it never includes paths, titles, or analyzer output.
+- `audiobook_proof_completed` records job ID, terminal/retry state, attempt count, and an allowlisted result code. A bounded SQLite lock is represented as `SQLITE_BUSY`, never as raw exception text.
+- `audiobook_proof_progress` records only the parent job ID, pending state, bounded attempt count, and allowlisted checkpoint code while a multi-file revision advances. `FILE_BOUNDARY_PROOF_PROGRESS` identifies an evidence-backed full-file chapter checkpoint; the event never includes paths, titles, or analyzer output.
 - `audiobook_proof_canary_requested` records a confirmed one-shot request and optional numeric audiobook ID.
 - `audiobook_proof_requeued` records the selected existing job ID and whether the confirmed request applied or was skipped.
-- `audiobook_proof_reevaluated` records only the selected job/audiobook IDs, the safe capability reason, and whether the job was requeued or remained unresolved; it never includes paths or analyzer output.
+- `audiobook_proof_reevaluated` records only the selected job/audiobook IDs, the safe capability reason, and whether the job was requeued or remained unresolved. The eligible file-boundary reason is `READY_FOR_FILE_BOUNDARY_CHAPTER_PROOF`; mismatch reasons remain allowlisted `MULTI_FILE_*` codes. It never includes paths, titles, or analyzer output.
 
 ### `plex_historical_backfill_started` and `plex_historical_backfill_completed`
 

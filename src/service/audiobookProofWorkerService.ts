@@ -2,13 +2,23 @@ import { randomUUID } from "node:crypto";
 import type { Db } from "../db/database.js";
 import { appConfig } from "../utils/config.js";
 import { AuditService } from "./auditService.js";
-import { AudiobookChapterActivationService } from "./audiobookChapterActivationService.js";
+import {
+  AudiobookChapterActivationService,
+  type ChapterActivationItem
+} from "./audiobookChapterActivationService.js";
 import {
   AudiobookProofAdapter,
   type AudiobookProofInput,
   type AudiobookProofResult
 } from "./audiobookProofAdapter.js";
-import { buildGlobalAudiobookTimeline, type MultiFileTimelineItem } from "./audiobookMultiFileService.js";
+import {
+  assessFileBoundaryChapterProof,
+  buildGlobalAudiobookTimeline,
+  type FileBoundaryProofAssessment,
+  type FileBoundaryProofItem,
+  type FileBoundaryProofReason,
+  type MultiFileTimelineItem
+} from "./audiobookMultiFileService.js";
 
 const RUN_INTERVAL_MS = 15 * 60 * 1000;
 const LEASE_MS = 2 * 60 * 1000;
@@ -28,14 +38,14 @@ export interface ProofReevaluationCandidate {
   jobId: number;
   audiobookId: number;
   mediaRevision: string;
-  state: "unsupported_multi_file";
+  state: "unsupported_multi_file" | "failed_terminal";
   fileCount: number;
   itemCount: number;
   missingIdentityCount: number;
   missingPathCount: number;
   invalidDurationCount: number;
   decision: "requeue" | "unresolved";
-  reason: "READY_FOR_MULTI_FILE_PROOF" | "MULTI_FILE_FEATURE_DISABLED" | "MULTI_FILE_MANIFEST_INCOMPLETE" | "SUPERSEDED_REVISION";
+  reason: "READY_FOR_MULTI_FILE_PROOF" | "MULTI_FILE_FEATURE_DISABLED" | "SUPERSEDED_REVISION" | FileBoundaryProofReason;
 }
 
 export interface ProofReevaluationResult {
@@ -250,7 +260,8 @@ export class AudiobookProofWorkerService {
         clearInterval(heartbeat);
       }
     } catch (error) {
-      if (job) this.finishUnexpectedFailure(job, now);
+      const safeCode = safeWorkerFailureCode(error);
+      if (job) this.finishUnexpectedFailure(job, now, safeCode);
       this.finishCycle(owner, options.now ?? this.now(), job?.id ?? null);
       const finalJob = job ? this.db.prepare("SELECT state, safe_result_code FROM audiobook_proof_jobs WHERE id = ?").get(job.id) as any : null;
       return {
@@ -259,7 +270,7 @@ export class AudiobookProofWorkerService {
         jobId: job?.id,
         audiobookId: job?.audiobook_id,
         state: finalJob?.state ?? "retry_wait",
-        safeCode: finalJob?.safe_result_code ?? "PROOF_WORKER_FAILURE",
+        safeCode: finalJob?.safe_result_code ?? safeCode,
         attemptCount: job?.attempt_count
       };
     }
@@ -325,7 +336,7 @@ export class AudiobookProofWorkerService {
     if (verified) return this.completeJob(job, now, "succeeded", "ALREADY_VERIFIED");
 
     const evidence = this.db.prepare(`
-      SELECT book.asin, book.current_media_revision, revision.manifest_status,
+      SELECT book.asin, book.chapter_count, book.total_duration_seconds, book.current_media_revision, revision.manifest_status,
              revision.track_count, revision.file_count, revision.total_duration_ms,
              item.private_file_path, item.duration_ms
       FROM audiobook_books book
@@ -364,7 +375,7 @@ export class AudiobookProofWorkerService {
   }
 
   private async processMultiFileJob(job: any, evidence: any, now: Date): Promise<ProofRunResult> {
-    if (!this.adapter.prove) return this.completeJob(job, now, "failed_terminal", "MULTI_FILE_ADAPTER_UNAVAILABLE");
+    const fileBoundaryProof = this.getFileBoundaryProofAssessment(job.audiobook_id, job.media_revision);
     this.ensureFileJobs(job.audiobook_id, job.media_revision, now);
     const fileJob = this.claimFileJob(job.audiobook_id, job.media_revision, job.lease_owner, now);
     if (fileJob) {
@@ -372,6 +383,18 @@ export class AudiobookProofWorkerService {
         this.failFileJob(fileJob, "MANIFEST_UNAVAILABLE", null, now);
         return this.completeJob(job, now, "failed_terminal", "MULTI_FILE_MANIFEST_UNAVAILABLE");
       }
+      if (fileBoundaryProof.eligible) {
+        const candidate = fileBoundaryProof.candidates[fileJob.item_order];
+        if (!candidate) {
+          this.failFileJob(fileJob, "MULTI_FILE_MANIFEST_INCOMPLETE", null, now);
+          return this.completeJob(job, now, "failed_terminal", "MULTI_FILE_MANIFEST_INCOMPLETE");
+        }
+        this.completeFileJob(fileJob, {
+          candidate
+        }, now);
+        return this.continueJob(job, now, "FILE_BOUNDARY_PROOF_PROGRESS");
+      }
+      if (!this.adapter.prove) return this.completeJob(job, now, "failed_terminal", "MULTI_FILE_ADAPTER_UNAVAILABLE");
       const result = await this.adapter.prove({
         privateFilePath: fileJob.private_file_path,
         durationMs: Number(fileJob.duration_ms),
@@ -383,16 +406,18 @@ export class AudiobookProofWorkerService {
         return this.continueJob(job, now, "FILE_PROOF_PROGRESS");
       }
       if (result.status === "diagnostic") {
-        this.failFileJob(fileJob, result.code, result.diagnostic, now);
-        return this.completeJob(job, now, "failed_terminal", `MULTI_FILE_${result.code}`);
+        const code = `MULTI_FILE_${result.code}`;
+        this.failFileJob(fileJob, code, result.diagnostic, now);
+        return this.completeJob(job, now, "failed_terminal", code);
       }
       if ((result.retryable || isWorkerTransient(result.code)) && fileJob.attempt_count < 5) {
         const delay = RETRY_DELAYS_MS[Math.min(fileJob.attempt_count - 1, RETRY_DELAYS_MS.length - 1)]!;
         this.retryFileJob(fileJob, result.code, new Date(now.getTime() + delay), now);
         return this.retryJob(job, now, `FILE_${result.code}`, delay);
       }
-      this.failFileJob(fileJob, result.code, null, now);
-      return this.completeJob(job, now, "failed_terminal", `MULTI_FILE_${result.code}`);
+      const code = result.code === "INVALID_CHAPTERS" ? fileBoundaryProof.reason : `MULTI_FILE_${result.code}`;
+      this.failFileJob(fileJob, code, null, now);
+      return this.completeJob(job, now, "failed_terminal", code);
     }
 
     const files = this.db.prepare(`
@@ -535,7 +560,7 @@ export class AudiobookProofWorkerService {
 
   private findUnsupportedReevaluationCandidates(target: ProofReevaluationTarget): ProofReevaluationCandidate[] {
     const rows = this.db.prepare(`
-      SELECT jobs.id, jobs.audiobook_id, jobs.media_revision,
+      SELECT jobs.id, jobs.audiobook_id, jobs.media_revision, jobs.state, jobs.safe_result_code,
              revision.file_count, revision.manifest_status,
              book.current_media_revision,
              COUNT(items.id) AS item_count,
@@ -547,7 +572,10 @@ export class AudiobookProofWorkerService {
       LEFT JOIN audiobook_media_revisions revision
         ON revision.audiobook_id = jobs.audiobook_id AND revision.media_revision = jobs.media_revision
       LEFT JOIN audiobook_media_revision_items items ON items.revision_id = revision.id
-      WHERE jobs.state = 'unsupported_multi_file'
+      WHERE (
+          jobs.state = 'unsupported_multi_file'
+          OR (jobs.state = 'failed_terminal' AND jobs.safe_result_code = 'MULTI_FILE_INVALID_CHAPTERS')
+        )
         AND (? IS NULL OR jobs.audiobook_id = ?)
         AND (? IS NULL OR jobs.id = ?)
       GROUP BY jobs.id, jobs.audiobook_id, jobs.media_revision,
@@ -566,6 +594,7 @@ export class AudiobookProofWorkerService {
       const missingIdentityCount = Number(row.missing_identity_count ?? 0);
       const missingPathCount = Number(row.missing_path_count ?? 0);
       const invalidDurationCount = Number(row.invalid_duration_count ?? 0);
+      const isLegacyInvalidChapters = row.state === "failed_terminal";
       let reason: ProofReevaluationCandidate["reason"];
       let decision: ProofReevaluationCandidate["decision"] = "unresolved";
       if (row.current_media_revision !== row.media_revision) {
@@ -573,6 +602,16 @@ export class AudiobookProofWorkerService {
       } else if (row.manifest_status !== "unsupported_multi_file" || fileCount <= 1 || itemCount !== fileCount ||
                  missingIdentityCount > 0 || missingPathCount > 0 || invalidDurationCount > 0) {
         reason = "MULTI_FILE_MANIFEST_INCOMPLETE";
+      } else if (isLegacyInvalidChapters) {
+        const assessment = this.getFileBoundaryProofAssessment(Number(row.audiobook_id), row.media_revision);
+        if (!assessment.eligible) {
+          reason = assessment.reason;
+        } else if (!this.multiFileEnabled) {
+          reason = "MULTI_FILE_FEATURE_DISABLED";
+        } else {
+          reason = assessment.reason;
+          decision = "requeue";
+        }
       } else if (!this.multiFileEnabled) {
         reason = "MULTI_FILE_FEATURE_DISABLED";
       } else {
@@ -583,7 +622,7 @@ export class AudiobookProofWorkerService {
         jobId: Number(row.id),
         audiobookId: Number(row.audiobook_id),
         mediaRevision: row.media_revision,
-        state: "unsupported_multi_file",
+        state: row.state,
         fileCount,
         itemCount,
         missingIdentityCount,
@@ -592,6 +631,43 @@ export class AudiobookProofWorkerService {
         decision,
         reason
       };
+    });
+  }
+
+  private getFileBoundaryProofAssessment(audiobookId: number, mediaRevision: string): FileBoundaryProofAssessment {
+    const evidence = this.db.prepare(`
+      SELECT book.asin, book.chapter_count, book.total_duration_seconds,
+             revision.total_duration_ms
+      FROM audiobook_books book
+      JOIN audiobook_media_revisions revision
+        ON revision.audiobook_id = book.id AND revision.media_revision = ?
+      WHERE book.id = ?
+    `).get(mediaRevision, audiobookId) as any;
+    const items = this.db.prepare(`
+      SELECT item.item_order, item.stable_identity, item.rating_key, item.guid, item.duration_ms,
+             catalog.title
+      FROM audiobook_media_revisions revision
+      JOIN audiobook_media_revision_items item ON item.revision_id = revision.id
+      LEFT JOIN content_catalog catalog
+        ON catalog.audiobook_id = revision.audiobook_id AND catalog.rating_key = item.rating_key
+      WHERE revision.audiobook_id = ? AND revision.media_revision = ?
+      ORDER BY item.item_order
+    `).all(audiobookId, mediaRevision) as any[];
+    return assessFileBoundaryChapterProof({
+      asin: evidence?.asin ?? null,
+      declaredChapterCount: evidence?.chapter_count == null ? null : Number(evidence.chapter_count),
+      declaredDurationMs: evidence?.total_duration_seconds == null
+        ? null
+        : Math.round(Number(evidence.total_duration_seconds) * 1000),
+      revisionDurationMs: evidence?.total_duration_ms == null ? null : Number(evidence.total_duration_ms),
+      items: items.map((item): FileBoundaryProofItem => ({
+        order: Number(item.item_order),
+        stableIdentity: item.stable_identity,
+        ratingKey: item.rating_key,
+        guid: item.guid,
+        durationMs: item.duration_ms == null ? null : Number(item.duration_ms),
+        title: item.title ?? null
+      }))
     });
   }
 
@@ -669,7 +745,11 @@ export class AudiobookProofWorkerService {
     `).get(file.id) : null;
   }
 
-  private completeFileJob(fileJob: any, result: Extract<AudiobookProofResult, { status: "activatable" }>, now: Date): void {
+  private completeFileJob(
+    fileJob: any,
+    result: { candidate: { chapters: ChapterActivationItem[]; sourceType: string; confidence: number; warnings: string[] } },
+    now: Date
+  ): void {
     this.db.prepare(`
       UPDATE audiobook_proof_file_jobs SET state = 'succeeded', safe_result_code = 'VERIFIED',
         source_type = ?, confidence = ?, chapters_json = ?, warnings_json = ?, completed_at = ?, updated_at = ?,
@@ -728,16 +808,30 @@ export class AudiobookProofWorkerService {
     `).run(now.toISOString(), new Date(now.getTime() + RUN_INTERVAL_MS).toISOString(), owner);
   }
 
-  private finishUnexpectedFailure(job: any, now: Date): void {
+  private finishUnexpectedFailure(job: any, now: Date, code: "SQLITE_BUSY" | "PROOF_WORKER_FAILURE"): void {
     const terminal = job.attempt_count >= 5;
     this.db.prepare(`
-      UPDATE audiobook_proof_jobs SET state = ?, safe_result_code = 'PROOF_WORKER_FAILURE',
+      UPDATE audiobook_proof_jobs SET state = ?, safe_result_code = ?,
         next_attempt_at = ?, completed_at = ?, updated_at = ?,
         lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL WHERE id = ?
-    `).run(terminal ? "failed_terminal" : "retry_wait",
+    `).run(terminal ? "failed_terminal" : "retry_wait", code,
       terminal ? null : new Date(now.getTime() + RETRY_DELAYS_MS[Math.min(job.attempt_count - 1, 3)]!).toISOString(),
       terminal ? now.toISOString() : null, now.toISOString(), job.id);
+    this.audit.record("audiobook_proof_completed", "worker", terminal ? "failed_terminal" : "retry_wait", {
+      jobId: job.id,
+      code,
+      attemptCount: job.attempt_count
+    });
   }
+}
+
+export function safeWorkerFailureCode(error: unknown): "SQLITE_BUSY" | "PROOF_WORKER_FAILURE" {
+  if (error && typeof error === "object") {
+    const code = "code" in error ? String(error.code) : "";
+    const message = "message" in error ? String(error.message) : "";
+    if (code === "SQLITE_BUSY" || /database is locked|database table is locked/i.test(message)) return "SQLITE_BUSY";
+  }
+  return "PROOF_WORKER_FAILURE";
 }
 
 export class AudiobookProofRuntime {
