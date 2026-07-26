@@ -333,6 +333,7 @@ export interface DashboardOperationItem {
 
 export interface DashboardActivityItem {
   id: number; userId: number; username: string; displayName: string; ratingKey: string;
+  plexGuid?: string;
   detailKey?: string;
   title: string; showTitle?: string; mediaType: string; category: DashboardCategory;
   categoryLabel: string; categoryDerived: boolean; libraryName?: string; watchedAt: string;

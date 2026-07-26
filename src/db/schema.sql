@@ -400,6 +400,8 @@ CREATE TABLE IF NOT EXISTS audiobook_media_revision_items (
   revision_id INTEGER NOT NULL,
   item_order INTEGER NOT NULL,
   stable_identity TEXT NOT NULL,
+  rating_key TEXT,
+  guid TEXT,
   duration_ms INTEGER,
   private_file_path TEXT,
   path_hash TEXT,
@@ -479,6 +481,38 @@ CREATE TABLE IF NOT EXISTS audiobook_proof_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_audiobook_proof_jobs_eligible
   ON audiobook_proof_jobs(state, next_attempt_at, id);
+
+CREATE TABLE IF NOT EXISTS audiobook_proof_file_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  audiobook_id INTEGER NOT NULL,
+  media_revision TEXT NOT NULL,
+  revision_item_id INTEGER NOT NULL,
+  item_order INTEGER NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('pending','running','retry_wait','succeeded','failed_terminal')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TEXT,
+  lease_owner TEXT,
+  lease_expires_at TEXT,
+  heartbeat_at TEXT,
+  safe_result_code TEXT,
+  diagnostic_source TEXT,
+  diagnostic_confidence TEXT,
+  diagnostic_chapter_count INTEGER,
+  diagnostic_warnings_json TEXT NOT NULL DEFAULT '[]',
+  source_type TEXT,
+  confidence REAL,
+  chapters_json TEXT,
+  warnings_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  started_at TEXT,
+  completed_at TEXT,
+  FOREIGN KEY(audiobook_id) REFERENCES audiobook_books(id) ON DELETE CASCADE,
+  FOREIGN KEY(revision_item_id) REFERENCES audiobook_media_revision_items(id) ON DELETE CASCADE,
+  UNIQUE(audiobook_id, media_revision, revision_item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_audiobook_proof_file_jobs_eligible
+  ON audiobook_proof_file_jobs(state, next_attempt_at, id);
 
 CREATE TABLE IF NOT EXISTS plex_historical_backfill_runs (
   id TEXT PRIMARY KEY,

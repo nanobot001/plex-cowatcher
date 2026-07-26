@@ -50,9 +50,13 @@ Corrective sequence:
    1. `completed/block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md` - implemented and verified.
    2. `completed/block-3-2n-5d-2-trusted-external-proof-adapter.md` - implemented and verified.
    3. `completed/block-3-2n-5d-2a-embedded-chapter-timeline-normalization.md` - implemented, verified, and passed the corrected Eric canary.
-   4. `block-3-2n-5d-3-durable-proof-worker-and-rollout.md` - implementation and canary verified; recurring enablement remains pending.
-27. `completed/block-3-2n-6c-visible-progress-and-enriched-detail.md` - implemented and verified.
-28. `block-3-2n-6e-universal-detail-workspace-alignment.md` - planned umbrella; do not implement directly. Restore one canonical detail identity, read contract, shell, and route across every dashboard entry surface before adding resume UI.
+   4. `block-3-2n-5d-3-durable-proof-worker-and-rollout.md` - implemented, verified, and enabled in the recurring PM2 runtime.
+27. `block-3-2n-5e-multi-file-audiobook-timeline-proof.md` - implemented and deterministically verified; live multi-file rollout remains gated by `AUDIOBOOK_PROOF_MULTI_FILE_ENABLED`.
+   1. `block-3-2n-5e-a-evidence-based-file-boundary-chapters.md` - implemented, deterministically verified, and live-verified with a targeted Path of Daggers canary; recurring multi-file execution remains disabled.
+   2. `block-3-2n-5e-b-audnexus-sentinel-and-title-compatibility.md` - implemented, deterministically verified, and live-verified for exact `-1` Audnexus sentinel and hyphenated chapter-title variants.
+   3. `block-3-2n-5e-c-deferred-multi-file-layouts.md` - deferred evidence inventory; multipart, named-section, damaged, and generic layouts must be split before implementation.
+28. `completed/block-3-2n-6c-visible-progress-and-enriched-detail.md` - implemented and verified.
+29. `block-3-2n-6e-universal-detail-workspace-alignment.md` - planned umbrella; do not implement directly. Restore one canonical detail identity, read contract, shell, and route across every dashboard entry surface before adding resume UI.
    1. `completed/block-3-2n-6e-1-canonical-detail-contract-and-entry-resolution.md` - implemented and verified; adds the canonical detail identity/resolver and bounded additive workspace read contract.
    2. `completed/block-3-2n-6e-2-shared-detail-shell-and-category-presenters.md` - implemented and verified; all non-Progress callers use the shared shell and explicit category presenters.
    3. `completed/block-3-2n-6e-2a-rich-detail-hero-and-watcher-lanes.md` - implemented and verified; adds the rich detail hero, honest Audiobook fallback, ordered watcher lanes, and accessible evidence interaction.
@@ -66,16 +70,16 @@ Corrective sequence:
    8. `completed/block-3-2n-6e-3a-replay-semantics-and-session-provenance.md` - implemented and verified; separates raw observations, reconstructed sessions, household-local viewing days, and evidence-backed replays across Progress and shared detail.
    9. `completed/block-3-2n-6e-3b-on-demand-plex-metadata-and-artwork-refresh.md` - implemented and verified; adds confirmed title-scoped Plex metadata/artwork refresh from the shared detail workspace with stable revisions, privacy-safe errors, and regression coverage.
    10. `block-3-2n-6e-3c-plex-historical-movie-backfill.md` - implemented and verified; supplements post-2022 Tautulli history with exact-GUID, explicitly labeled pre-2022 Plex movie evidence, durable raw snapshots, and idempotent CLI apply.
-29. `block-3-2n-6d-audiobook-resume-context.md` - planned umbrella; do not implement directly. Turn source-backed audiobook history stops into private bounded transcript context and a useful resume modal after 6E establishes the shared Audiobook presenter.
+30. `block-3-2n-6d-audiobook-resume-context.md` - planned umbrella; do not implement directly. Turn source-backed audiobook history stops into private bounded transcript context and a useful resume modal after 6E establishes the shared Audiobook presenter.
    1. `block-3-2n-6d-1-bounded-resume-transcription-contract.md` - add and verify the separate `audiobook` project's bounded read-only transcription command.
    2. `block-3-2n-6d-2-trusted-resume-adapter-and-state.md` - add CoWatcher's bounded trusted adapter and revision-safe durable job/result state without automatic execution.
    3. `block-3-2n-6d-3-stable-stop-worker-and-rollout.md` - connect source stop evidence to a disabled one-job worker, safe operations, and explicit resource canary.
    4. `block-3-2n-6d-4-audiobook-resume-modal.md` - present attributed current position, stopping-point excerpt, compact chapter map, up-next, and optional full-list views.
-30. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
+31. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
 
 Do not implement a later corrective block until the previous block's exit gate is recorded as passing. A later block must not conceal, waive, or silently absorb a failed earlier acceptance criterion.
 
-The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n code is implemented through 3-2n-5d-3, corrective 5D-2A plus the disabled Eric canary passed, and 6E-1/6E-2/6E-2A/6E-2B/6E-2C1/6E-2C2/6E-2C3/6E-2D/6E-3/6E-3A/6E-3B/6E-3C are implemented and verified. Continue with 6D-1 through 6D-4 and 3-2o. The explicit 5D-3 recurring-worker enablement decision remains pending. The pre-implementation reviews are `docs/process/block-3-2n-6e-design-review.md` and `docs/process/block-3-2n-6d-design-review.md`.
+The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n code is implemented through the enabled 3-2n-5d-3 recurring proof worker, 3-2n-5E is implemented and deterministically verified with live multi-file rollout still gated, and 6E-1/6E-2/6E-2A/6E-2B/6E-2C1/6E-2C2/6E-2C3/6E-2D/6E-3/6E-3A/6E-3B/6E-3C are implemented and verified. 6D-1 through 6D-4 and 3-2o remain planned. The pre-implementation reviews are `docs/process/block-3-2n-6e-design-review.md` and `docs/process/block-3-2n-6d-design-review.md`.
 
 ## Umbrella Specifications
 
@@ -137,7 +141,11 @@ The full 3-2m sequence is implemented and verified: household profiles, person p
 - `completed/block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md` - implemented historical reference.
 - `completed/block-3-2n-5d-2-trusted-external-proof-adapter.md` - implemented historical reference.
 - `completed/block-3-2n-5d-2a-embedded-chapter-timeline-normalization.md` - implemented historical reference.
-- `block-3-2n-5d-3-durable-proof-worker-and-rollout.md` - implementation and canary verified; recurring enablement pending.
+- `block-3-2n-5d-3-durable-proof-worker-and-rollout.md` - implemented historical reference; recurring proof enabled 2026-07-25.
+- `block-3-2n-5e-multi-file-audiobook-timeline-proof.md` - implemented multi-file proof and historical playback mapping; live rollout remains gated.
+- `block-3-2n-5e-a-evidence-based-file-boundary-chapters.md` - implemented historical reference for exact one-file-per-chapter evidence, future discovery, and targeted legacy reevaluation.
+- `block-3-2n-5e-b-audnexus-sentinel-and-title-compatibility.md` - implemented historical reference; three targeted exact file-boundary editions activated while recurring execution remained disabled.
+- `block-3-2n-5e-c-deferred-multi-file-layouts.md` - deferred planning inventory; do not implement directly without reviewed child scope.
 
 Completed blocks remain as historical references. Verify current behavior from code and current docs, not from older block assumptions.
 

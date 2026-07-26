@@ -7,6 +7,8 @@ export type ManifestStatus = "ready" | "unsupported_multi_file" | "unavailable";
 export interface MediaRevisionManifestItem {
   order: number;
   stableIdentity: string;
+  ratingKey: string | null;
+  guid: string | null;
   durationMs: number | null;
   privateFilePath: string | null;
   pathHash: string | null;
@@ -25,6 +27,49 @@ function normalizePath(value: string): string {
   return value.replace(/\\/g, "/").toLowerCase();
 }
 
+function compareNatural(left: string, right: string): number {
+  const leftParts = left.split(/(\d+)/);
+  const rightParts = right.split(/(\d+)/);
+  const length = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < length; index++) {
+    const a = leftParts[index] ?? "";
+    const b = rightParts[index] ?? "";
+    if (/^\d+$/.test(a) && /^\d+$/.test(b)) {
+      const numeric = Number(a) - Number(b);
+      if (numeric !== 0) return numeric;
+    } else {
+      const text = a.localeCompare(b);
+      if (text !== 0) return text;
+    }
+  }
+  return left.localeCompare(right);
+}
+
+export interface AudnexusTrackIdentity {
+  asin: string;
+  editionKey: string;
+  trackNumber: number;
+}
+
+export function parseAudnexusTrackIdentity(guid: string | null | undefined): AudnexusTrackIdentity | null {
+  const match = /^com\.plexapp\.agents\.audnexus:\/\/([a-z0-9]{10})(?:_([a-z]{2}))?\/(-?\d+)\/(\d+)(?:\?[^#]*)?$/i
+    .exec(guid?.trim() ?? "");
+  if (!match) return null;
+  const editionNumber = Number(match[3]);
+  const trackNumber = Number(match[4]);
+  if (!Number.isInteger(editionNumber) || (editionNumber !== -1 && editionNumber <= 0) ||
+      !Number.isInteger(trackNumber) || trackNumber <= 0) {
+    return null;
+  }
+  const asin = match[1]!.toUpperCase();
+  const locale = match[2]?.toLowerCase();
+  return {
+    asin,
+    editionKey: `${asin}${locale ? `_${locale}` : ""}/${editionNumber}`,
+    trackNumber
+  };
+}
+
 export function calculateMediaRevisionManifest(tracks: CatalogEntry[]): MediaRevisionManifest | null {
   const stableTracks = tracks.map((track) => {
     const normalizedPath = track.filePath ? normalizePath(track.filePath) : null;
@@ -34,15 +79,34 @@ export function calculateMediaRevisionManifest(tracks: CatalogEntry[]): MediaRev
     return {
       stableIdentity,
       orderKey: normalizedPath ?? stableIdentity,
+      ratingKey: track.ratingKey,
+      guid: track.guid,
       durationMs: track.duration,
       privateFilePath: track.filePath ?? null,
-      pathHash
+      pathHash,
+      audnexusTrack: parseAudnexusTrackIdentity(track.guid)
     };
   });
   if (stableTracks.some((track) => track === null)) return null;
 
-  const ordered = (stableTracks as Array<NonNullable<(typeof stableTracks)[number]>>)
-    .sort((left, right) => left.orderKey.localeCompare(right.orderKey));
+  const sortable = stableTracks as Array<NonNullable<(typeof stableTracks)[number]>>;
+  const audnexusTracks = sortable.map((track) => track.audnexusTrack);
+  const firstAudnexusTrack = audnexusTracks[0];
+  const trackNumbers = audnexusTracks.map((track) => track?.trackNumber);
+  const hasCompleteAudnexusSequence = Boolean(
+    firstAudnexusTrack &&
+    audnexusTracks.every((track) =>
+      track?.editionKey === firstAudnexusTrack.editionKey
+    ) &&
+    new Set(trackNumbers).size === sortable.length &&
+    [...trackNumbers].sort((left, right) => Number(left) - Number(right))
+      .every((trackNumber, index) => trackNumber === index + 1)
+  );
+  const ordered = sortable.sort((left, right) =>
+    hasCompleteAudnexusSequence
+      ? left.audnexusTrack!.trackNumber - right.audnexusTrack!.trackNumber
+      : compareNatural(left.orderKey, right.orderKey) || left.stableIdentity.localeCompare(right.stableIdentity)
+  );
   const revisionParts = ordered.map((track, index) =>
     `${String(index).padStart(6, "0")}|${track.stableIdentity}|${track.durationMs ?? "unknown"}`
   );
@@ -64,6 +128,8 @@ export function calculateMediaRevisionManifest(tracks: CatalogEntry[]): MediaRev
     items: ordered.map((track, order) => ({
       order,
       stableIdentity: track.stableIdentity,
+      ratingKey: track.ratingKey,
+      guid: track.guid,
       durationMs: track.durationMs,
       privateFilePath: track.privateFilePath,
       pathHash: track.pathHash
@@ -87,12 +153,12 @@ export function persistManifestAndOutbox(
     let revisionId: number;
     if (existing) {
       const items = db.prepare(`
-        SELECT item_order, stable_identity, duration_ms, private_file_path, path_hash
+        SELECT item_order, stable_identity, rating_key, guid, duration_ms, private_file_path, path_hash
         FROM audiobook_media_revision_items WHERE revision_id = ? ORDER BY item_order
       `).all(existing.id) as any[];
-      const expected = manifest.items.map((item) => [item.order, item.stableIdentity, item.durationMs,
+      const expected = manifest.items.map((item) => [item.order, item.stableIdentity, item.ratingKey, item.guid, item.durationMs,
         item.privateFilePath, item.pathHash]);
-      const actual = items.map((item) => [item.item_order, item.stable_identity, item.duration_ms,
+      const actual = items.map((item) => [item.item_order, item.stable_identity, item.rating_key, item.guid, item.duration_ms,
         item.private_file_path, item.path_hash]);
       if (existing.track_count !== manifest.trackCount || existing.file_count !== manifest.fileCount ||
           existing.total_duration_ms !== manifest.totalDurationMs || existing.manifest_status !== manifest.status ||
@@ -110,11 +176,11 @@ export function persistManifestAndOutbox(
       revisionId = Number(inserted.lastInsertRowid);
       const insertItem = db.prepare(`
         INSERT INTO audiobook_media_revision_items
-          (revision_id, item_order, stable_identity, duration_ms, private_file_path, path_hash)
-        VALUES (?, ?, ?, ?, ?, ?)
+          (revision_id, item_order, stable_identity, rating_key, guid, duration_ms, private_file_path, path_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
       for (const item of manifest.items) {
-        insertItem.run(revisionId, item.order, item.stableIdentity, item.durationMs,
+        insertItem.run(revisionId, item.order, item.stableIdentity, item.ratingKey, item.guid, item.durationMs,
           item.privateFilePath, item.pathHash);
       }
     }

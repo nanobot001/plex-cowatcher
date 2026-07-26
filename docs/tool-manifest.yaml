@@ -302,14 +302,14 @@ tools:
 
   - name: project.audiobook_proof
     risk: write_action
-    description: Inspect proof queue status, run one confirmed canary, or requeue one existing job.
+    description: Inspect proof queue status, run one confirmed canary, requeue one existing job, or dry-run/apply a targeted re-evaluation of existing multi-file fallback jobs.
     input_schema:
       type: object
       additionalProperties: false
       properties:
         action:
           type: string
-          enum: [status, canary, requeue]
+          enum: [status, canary, requeue, reevaluate]
           default: status
         audiobook_id:
           type: integer

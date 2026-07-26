@@ -11,6 +11,7 @@ export function openDatabase(sqlitePath = appConfig.SQLITE_PATH): Db {
   const absolutePath = path.resolve(sqlitePath);
   fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
   const db = new DatabaseSync(absolutePath);
+  db.exec("PRAGMA busy_timeout = 5000");
   db.exec("PRAGMA foreign_keys = ON");
   return db;
 }
@@ -40,6 +41,7 @@ export function migrateDatabase(db: Db): void {
   migrateAudiobookDiscovery(db);
   migrateAudiobookRevisionManifests(db);
   migrateAudiobookProofJobs(db);
+  migrateAudiobookMultiFileProof(db);
   migrateContentCatalogArtworkFingerprints(db);
   migratePlexHistoricalMovieBackfill(db);
   migrateArchiveOwnedViewRecovery(db);
@@ -540,6 +542,67 @@ function migrateAudiobookProofJobs(db: Db): void {
         ON audiobook_proof_jobs(state, next_attempt_at, id);
     `);
     db.prepare("INSERT INTO schema_migrations (version, name) VALUES (16, ?)").run("audiobook_proof_jobs");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrateAudiobookMultiFileProof(db: Db): void {
+  const applied = db.prepare("SELECT 1 FROM schema_migrations WHERE version = 26").get();
+  if (applied) return;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    ensureColumn(db, "audiobook_media_revision_items", "rating_key", "TEXT");
+    ensureColumn(db, "audiobook_media_revision_items", "guid", "TEXT");
+    db.exec(`
+      UPDATE audiobook_media_revision_items
+      SET guid = COALESCE(guid, substr(stable_identity, 6))
+      WHERE guid IS NULL AND stable_identity LIKE 'guid:%';
+      UPDATE audiobook_media_revision_items
+      SET rating_key = (
+        SELECT catalog.rating_key FROM content_catalog catalog
+        WHERE catalog.guid = audiobook_media_revision_items.guid
+        ORDER BY catalog.rating_key LIMIT 1
+      )
+      WHERE rating_key IS NULL AND guid IS NOT NULL;
+    `);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS audiobook_proof_file_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        audiobook_id INTEGER NOT NULL,
+        media_revision TEXT NOT NULL,
+        revision_item_id INTEGER NOT NULL,
+        item_order INTEGER NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('pending','running','retry_wait','succeeded','failed_terminal')),
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT,
+        lease_owner TEXT,
+        lease_expires_at TEXT,
+        heartbeat_at TEXT,
+        safe_result_code TEXT,
+        diagnostic_source TEXT,
+        diagnostic_confidence TEXT,
+        diagnostic_chapter_count INTEGER,
+        diagnostic_warnings_json TEXT NOT NULL DEFAULT '[]',
+        source_type TEXT,
+        confidence REAL,
+        chapters_json TEXT,
+        warnings_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT,
+        FOREIGN KEY(audiobook_id) REFERENCES audiobook_books(id) ON DELETE CASCADE,
+        FOREIGN KEY(revision_item_id) REFERENCES audiobook_media_revision_items(id) ON DELETE CASCADE,
+        UNIQUE(audiobook_id, media_revision, revision_item_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_audiobook_proof_file_jobs_eligible
+        ON audiobook_proof_file_jobs(state, next_attempt_at, id);
+    `);
+    db.prepare("INSERT INTO schema_migrations (version, name) VALUES (26, ?)")
+      .run("audiobook_multi_file_proof");
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");

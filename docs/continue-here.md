@@ -1,5 +1,34 @@
 # Continue Here
 
+## 2026-07-26
+
+Current state:
+- **3-2n-5E-A: Evidence-Based File-Boundary Chapters is implemented, deterministically verified, and live-verified.** It reuses 5E with no schema, dependency, queue, or worker additions: complete same-edition Audnexus-agent track identities control order, strict Prologue/Chapter/Epilogue file boundaries checkpoint through existing file jobs, and SQLite locks use bounded wait plus `SQLITE_BUSY`.
+- `npm run verify:block` passed with 141 service/integration tests and 63 dashboard regressions plus one intentional skip. The final CoWatcher-only restart passed `npm run verify:live-dashboard`.
+- The fresh `pre-file-boundary-proof-2026-07-26T12-19-44-128Z.sqlite` backup passed `PRAGMA quick_check`. The targeted Path of Daggers recovery activated 32 chapters over the exact current media revision, all 32 file jobs succeeded, Progress reports verified chapter mode, the 40 raw playback observations were unchanged, and no lease remained.
+- Recurring multi-file execution remains disabled. The other 14 multi-file jobs were not requeued or processed; multipart, generic, gapped, mixed-edition, and count-mismatched layouts remain source-honest fallback.
+- **3-2n-5E-B is implemented, deterministically verified, and live-verified.** It adds only the observed Audnexus-agent `-1` edition sentinel and whitespace-delimited hyphen subtitle variant. `npm run verify:block` passed with 141 service/integration tests and 63 dashboard regressions plus one intentional skip.
+- The quick-checked backup is `pre-audnexus-sentinel-proof-2026-07-26T13-33-07-742Z.sqlite`. Targeted operations activated The Fires of Heaven (57 chapters; 71 raw observations unchanged), Towers of Midnight (59 chapters; 65 unchanged), and The Shadow Rising (58 chapters; 80 unchanged). Every file job succeeded, Progress is chapter-verified, and no lease remains.
+- Only `plex-cowatch-service` was restarted and `npm run verify:live-dashboard` passed. Recurring multi-file execution remains false; queue status is 52 succeeded, 12 failed terminal, 11 unsupported, and zero pending/running/retrying.
+- **3-2n-5E-C records later work without implementing it.** Lord of Chaos, A Crown of Swords, and Crossroads of Twilight need multipart decisions; Knife of Dreams and Winter's Heart have track-sequence defects; A Memory of Light has a count mismatch; The Gathering Storm, Going Postal, Raising Steam, and AI at the Edge need truthful nonstandard-section decisions; The Light Fantastic has generic repeated titles.
+
+Next step:
+- Keep recurring multi-file execution disabled. Review and split 3-2n-5E-C by evidence group before implementing any multipart, named-section, repair, or generic-label behavior.
+
+## 2026-07-25
+
+Current state:
+- **3-2n-5D-3 recurring audiobook proof is live.** Commit `195437bf` scopes targeted canary materialization to one audiobook and prioritizes ordinary eligible jobs by latest linked playback while preserving the existing durable backlog.
+- A fresh `pre-audiobook-proof-enable-2026-07-25T05-07-33-076Z.sqlite` backup passed `PRAGMA quick_check`. The disabled deployment restart left all 53 existing pending jobs untouched.
+- The targeted Way of Kings canary succeeded once with 88 active revision-matched embedded chapters. Its live detail now reports verified chapter progress at Chapter 7 and 8%; the separate stored-title defect still labels the book `Brandon Sanderson`.
+- After `AUDIOBOOK_PROOF_ENABLED=true` and a PM2 restart, the normal scheduled worker selected Monstrous Regiment ahead of the older backlog and succeeded once with 72 active revision-matched embedded chapters. Its live detail reports Chapter 3 and 2%.
+- The recurring queue has drained: zero jobs are pending or retrying, 48 revisions succeeded with verified chapters, 10 original single-file revisions were safely rejected for low-confidence or invalid chapter evidence, 2 later revisions were safely superseded, and 15 multi-file revisions remain on track/file fallback. `npm run verify:block` passed with 132 service tests and 61 dashboard regressions plus one intentional skip; the final enabled deployment passed `npm run verify:live-dashboard`.
+- **Block 3-2n-5E: Multi-File Audiobook Timeline Proof** is implemented and deterministically verified. It applies capability-based, resumable file-local proof and book-global playback mapping to any multi-file edition; Wheel of Time and Discworld are examples and canary candidates, never title-specific scope. `AUDIOBOOK_PROOF_MULTI_FILE_ENABLED` remains false pending live rollout gates.
+
+Next step:
+- Before re-evaluating the 15 current multi-file revisions, create a fresh backup, run `PRAGMA quick_check`, record pre-canary counts, perform a dry-run and disabled structural canary, and obtain explicit approval to enable `AUDIOBOOK_PROOF_MULTI_FILE_ENABLED`; keep recurring multi-file execution disabled until those gates pass.
+- The separate Way of Kings stored-title defect remains open and must be corrected without weakening exact audiobook/revision identity.
+
 ## 2026-07-23
 
 Current state:

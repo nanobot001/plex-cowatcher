@@ -598,6 +598,30 @@ test("verified Audiobook detail summary matches the expanded chapter hierarchy",
   await expect(dialog.getByTestId("detail-workspace-progress")).not.toContainText("chapters");
 });
 
+test("verified multi-file Audiobook detail maps file-local progress onto the global chapter timeline", async ({ page }) => {
+  const seedResponse = await page.request.post("/__test/seed-multi-file-audiobook");
+  expect(seedResponse.ok()).toBeTruthy();
+  try {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Media Explorer" }).click();
+
+    const card = page.locator('[data-section="audiobook"]').getByTestId("library-card").filter({ hasText: "Verified Multi-File Audiobook" }).first();
+    await expect(card).toBeVisible();
+    await card.click();
+
+    const dialog = page.locator("#detail-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByTestId("detail-workspace-progress")).toContainText("3 chapters");
+    await expect(dialog.getByTestId("detail-workspace-progress")).toContainText("80%");
+    await expect(dialog.getByTestId("detail-workspace-source")).toContainText("Verified audiobook chapters");
+    await expect(dialog.getByTestId("detail-workspace-hierarchy")).toContainText("Multi Chapter 1");
+    await expect(dialog.getByTestId("detail-workspace-hierarchy")).toContainText("Multi Chapter 3");
+    await expectNoVisualOverflow(page);
+  } finally {
+    await page.request.post("/__test/clear-multi-file-audiobook");
+  }
+});
+
 test("same-session observations never become a replay across API and detail UI", async ({ page }) => {
   const detailKey = "series:anime:anime-regression";
   const baseResponse = await page.request.get("/api/dashboard/detail-workspace/" + encodeURIComponent(detailKey));
