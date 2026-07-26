@@ -5185,6 +5185,7 @@ function seedFileBoundaryRevision(db, {
   titles = ["Prologue", "Chapter 1"],
   durations = [60_000, 60_000],
   trackNumbers = titles.map((_title, index) => index + 1),
+  editionComponent = "11",
   declaredChapterCount = titles.length,
   declaredDurationSeconds = durations.reduce((total, duration) => total + duration, 0) / 1000
 } = {}) {
@@ -5213,7 +5214,7 @@ function seedFileBoundaryRevision(db, {
   `);
   for (let index = 0; index < titles.length; index++) {
     const ratingKey = `boundary-${audiobookId}-${index + 1}`;
-    const guid = `com.plexapp.agents.audnexus://${asin}_ca/11/${trackNumbers[index]}?lang=en`;
+    const guid = `com.plexapp.agents.audnexus://${asin}_ca/${editionComponent}/${trackNumbers[index]}?lang=en`;
     const privatePath = `F:\\Private\\${String(index + 1).padStart(2, "0")}.mp3`;
     insertItem.run(
       Number(revisionResult.lastInsertRowid),
@@ -5280,9 +5281,9 @@ test("multi-file proof remains an explicit fallback until its rollout flag is en
 });
 
 test("audiobook manifest prefers a complete Audnexus track sequence and retains natural path fallback", () => {
-  const audnexus = (trackNumber, filePath) => ({
+  const audnexus = (trackNumber, filePath, editionComponent = "11") => ({
     ratingKey: `track-${trackNumber}`,
-    guid: `com.plexapp.agents.audnexus://B000000000_ca/11/${trackNumber}?lang=en`,
+    guid: `com.plexapp.agents.audnexus://B000000000_ca/${editionComponent}/${trackNumber}?lang=en`,
     duration: 60_000,
     filePath
   });
@@ -5292,6 +5293,12 @@ test("audiobook manifest prefers a complete Audnexus track sequence and retains 
     audnexus(2, "F:\\Book\\01.mp3")
   ]);
   assert.deepEqual(authoritative.items.map((item) => item.ratingKey), ["track-1", "track-2", "track-3"]);
+  const sentinel = calculateMediaRevisionManifest([
+    audnexus(1, "F:\\Book\\99.mp3", "-1"),
+    audnexus(3, "F:\\Book\\02.mp3", "-1"),
+    audnexus(2, "F:\\Book\\01.mp3", "-1")
+  ]);
+  assert.deepEqual(sentinel.items.map((item) => item.ratingKey), ["track-1", "track-2", "track-3"]);
 
   const fallback = calculateMediaRevisionManifest([
     { ratingKey: "ten", guid: "plex://track/ten", duration: 60_000, filePath: "F:\\Book\\10.mp3" },
@@ -5342,11 +5349,29 @@ test("file-boundary chapter proof requires exact identity count duration and tit
   assert.equal(assess({
     items: baseItems.map((item) => ({ ...item, title: "File" }))
   }).reason, "MULTI_FILE_CHAPTER_TITLES_UNSUPPORTED");
+  const sentinelItems = ["Prologue - Opening", "Chapter 1 - Arrival", "Epilogue - Departure"].map((title, index) => ({
+    ...baseItems[index],
+    guid: `com.plexapp.agents.audnexus://${asin}_ca/-1/${index + 1}?lang=en`,
+    title
+  }));
+  assert.equal(assess({ items: sentinelItems }).reason, "READY_FOR_FILE_BOUNDARY_CHAPTER_PROOF");
+  assert.equal(assess({
+    items: sentinelItems.map((item) => ({ ...item, guid: item.guid.replace("/-1/", "/0/") }))
+  }).reason, "MULTI_FILE_EDITION_IDENTITY_UNPROVEN");
+  assert.equal(assess({
+    items: sentinelItems.map((item) => ({ ...item, guid: item.guid.replace("/-1/", "/-2/") }))
+  }).reason, "MULTI_FILE_EDITION_IDENTITY_UNPROVEN");
+  assert.equal(assess({
+    items: sentinelItems.map((item, index) => index === 1 ? { ...item, guid: item.guid.replace("/-1/", "/11/") } : item)
+  }).reason, "MULTI_FILE_EDITION_IDENTITY_UNPROVEN");
 });
 
 test("file-boundary proof automatically checkpoints one file per cycle and activates atomically", async () => {
   await withTestDb(async (db) => {
-    seedFileBoundaryRevision(db);
+    seedFileBoundaryRevision(db, {
+      titles: ["Prologue - Opening", "Chapter 1 - Arrival"],
+      editionComponent: "-1"
+    });
     const adapter = {
       proveAndActivate: async () => assert.fail("file-boundary proof must not invoke the single-file adapter"),
       prove: async () => assert.fail("file-boundary proof must not invoke the external analyzer")
@@ -5371,8 +5396,8 @@ test("file-boundary proof automatically checkpoints one file per cycle and activ
       db.prepare("SELECT chapter_index, title, start_offset_ms, end_offset_ms FROM audiobook_chapters ORDER BY chapter_index")
         .all().map((row) => ({ ...row })),
       [
-        { chapter_index: 1, title: "Prologue", start_offset_ms: 0, end_offset_ms: 60_000 },
-        { chapter_index: 2, title: "Chapter 1", start_offset_ms: 60_000, end_offset_ms: 120_000 }
+        { chapter_index: 1, title: "Prologue - Opening", start_offset_ms: 0, end_offset_ms: 60_000 },
+        { chapter_index: 2, title: "Chapter 1 - Arrival", start_offset_ms: 60_000, end_offset_ms: 120_000 }
       ]
     );
     assert.equal(
@@ -5727,7 +5752,10 @@ test("multi-file proof supports targeted dry-run and confirmed capability re-eva
 
 test("targeted re-evaluation revives only evidence-matching legacy invalid-chapter failures", async () => {
   await withTestDb(async (db) => {
-    seedFileBoundaryRevision(db);
+    seedFileBoundaryRevision(db, {
+      titles: ["Prologue - Opening", "Chapter 1 - Arrival"],
+      editionComponent: "-1"
+    });
     const disabledWorker = new AudiobookProofWorkerService(
       db,
       { proveAndActivate: async () => assert.fail("re-evaluation must not invoke an adapter") },
@@ -5737,11 +5765,6 @@ test("targeted re-evaluation revives only evidence-matching legacy invalid-chapt
     );
     assert.equal(disabledWorker.materializeOutbox(new Date("2026-07-12T01:00:00Z")), 1);
     const job = db.prepare("SELECT id FROM audiobook_proof_jobs WHERE audiobook_id = 205").get();
-    db.prepare(`
-      UPDATE audiobook_proof_jobs
-      SET state = 'failed_terminal', safe_result_code = 'MULTI_FILE_INVALID_CHAPTERS'
-      WHERE id = ?
-    `).run(job.id);
 
     const enabledWorker = new AudiobookProofWorkerService(
       db,
@@ -5750,6 +5773,15 @@ test("targeted re-evaluation revives only evidence-matching legacy invalid-chapt
       () => new Date("2026-07-12T01:15:00Z"),
       true
     );
+    const unsupportedPreview = enabledWorker.reevaluateUnsupported({ jobId: job.id }, { apply: false, confirm: false });
+    assert.equal(unsupportedPreview.candidates[0].state, "unsupported_multi_file");
+    assert.equal(unsupportedPreview.candidates[0].reason, "READY_FOR_FILE_BOUNDARY_CHAPTER_PROOF");
+
+    db.prepare(`
+      UPDATE audiobook_proof_jobs
+      SET state = 'failed_terminal', safe_result_code = 'MULTI_FILE_INVALID_CHAPTERS'
+      WHERE id = ?
+    `).run(job.id);
     const preview = enabledWorker.reevaluateUnsupported({ jobId: job.id }, { apply: false, confirm: false });
     assert.equal(preview.candidates.length, 1);
     assert.equal(preview.candidates[0].state, "failed_terminal");

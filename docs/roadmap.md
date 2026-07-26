@@ -168,6 +168,8 @@ The corrective sequence is mandatory and ordered:
     4. **3-2n-5d-3 - Durable Proof Worker And Rollout:** Implemented and enabled 2026-07-25. Targeted canaries remain audiobook-scoped, ordinary work prioritizes recent playback, and the worker processes one durable job per 15-minute cycle.
 27. **3-2n-5E - Multi-File Audiobook Timeline Proof:** Implemented and deterministically verified. Replace blanket multi-file rejection with capability-based, resumable book-global proof and map retained historical playback through exact file-local offsets without title-specific rules or invented evidence; keep live execution gated until canary rollout evidence is recorded.
     1. **3-2n-5E-A - Evidence-Based File-Boundary Chapters:** Implemented and live-verified 2026-07-26. Reuses 5E infrastructure to recognize strict exact one-file-per-chapter evidence for existing and future revisions, prefer authoritative Audnexus track order, preserve honest fallback for multipart/generic/gapped layouts, and report bounded SQLite locks safely.
+    2. **3-2n-5E-B - Audnexus Sentinel And Title Compatibility:** Implemented and live-verified 2026-07-26. Accepts only the observed exact `-1` edition sentinel and hyphen subtitle separator while preserving every 5E-A proof gate and keeping recurring multi-file execution disabled.
+    3. **3-2n-5E-C - Deferred Multi-File Layouts:** Deferred planning inventory. Multipart chapters, named nonstandard sections, count/track defects, and generic files require separate evidence-first child blocks.
 28. **3-2n-6C - Visible Progress And Enriched Detail:** Implemented 2026-07-12. Progress cards expose explicit completed/total/percentage summaries, and the larger lazy modal adds source, activity, and participant context without weakening unknown-total honesty.
 29. **3-2n-6E - Universal Detail Workspace Alignment:** Planned umbrella inserted before 6D implementation to correct the separate Overview/Progress detail paths while preserving the already-published 6D numbering; do not implement the umbrella directly.
     1. **3-2n-6E-1 - Canonical Detail Contract And Entry Resolution:** Implemented 2026-07-13. Added one typed identity resolver and bounded additive workspace read contract while preserving existing UI/endpoints.
@@ -234,6 +236,14 @@ Implemented and deterministically verified. Extends the verified chapter pipelin
 ### Block 3-2n-5E-A: Evidence-Based File-Boundary Chapters
 
 Implemented and verified. The first live enabled 5E canary proved that common multi-file editions may encode one chapter per physical file rather than internal chapter markers. The correction adds only the strict evidence-based file-boundary path, authoritative track order, future automatic discovery behavior, targeted legacy recovery, and bounded lock reporting. A backed-up targeted Path of Daggers canary activated 32 revision-matched chapters without changing 40 raw playback observations; recurring multi-file execution remains disabled. Multipart grouping and generic segment interpretation remain deferred.
+
+### Block 3-2n-5E-B: Audnexus Sentinel And Title Compatibility
+
+Implemented and verified. The strict file-boundary evidence parser now accepts only the live-observed Audnexus `-1` edition sentinel and ` - ` chapter subtitle separator. Backed-up targeted operations activated 57 chapters for The Fires of Heaven, 59 for Towers of Midnight, and 58 for The Shadow Rising without changing their 71, 65, and 80 raw playback observations. No multipart, named-section, repair, or recurring rollout scope was included.
+
+### Block 3-2n-5E-C: Deferred Multi-File Layouts
+
+Deferred planning inventory. Eleven current multi-file jobs remain in source-honest fallback. Record and later split the materially different layouts: multipart chapters; Foreword, credits, and numbered sections; track/count defects; and generic repeated titles. Do not implement this umbrella directly.
 
 ### Deferred Beyond The Phase 3 MVP
 

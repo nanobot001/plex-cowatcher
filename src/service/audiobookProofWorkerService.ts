@@ -615,7 +615,8 @@ export class AudiobookProofWorkerService {
       } else if (!this.multiFileEnabled) {
         reason = "MULTI_FILE_FEATURE_DISABLED";
       } else {
-        reason = "READY_FOR_MULTI_FILE_PROOF";
+        const assessment = this.getFileBoundaryProofAssessment(Number(row.audiobook_id), row.media_revision);
+        reason = assessment.eligible ? assessment.reason : "READY_FOR_MULTI_FILE_PROOF";
         decision = "requeue";
       }
       return {

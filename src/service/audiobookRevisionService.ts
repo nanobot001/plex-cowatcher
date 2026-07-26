@@ -52,12 +52,12 @@ export interface AudnexusTrackIdentity {
 }
 
 export function parseAudnexusTrackIdentity(guid: string | null | undefined): AudnexusTrackIdentity | null {
-  const match = /^com\.plexapp\.agents\.audnexus:\/\/([a-z0-9]{10})(?:_([a-z]{2}))?\/(\d+)\/(\d+)(?:\?[^#]*)?$/i
+  const match = /^com\.plexapp\.agents\.audnexus:\/\/([a-z0-9]{10})(?:_([a-z]{2}))?\/(-?\d+)\/(\d+)(?:\?[^#]*)?$/i
     .exec(guid?.trim() ?? "");
   if (!match) return null;
   const editionNumber = Number(match[3]);
   const trackNumber = Number(match[4]);
-  if (!Number.isInteger(editionNumber) || editionNumber <= 0 ||
+  if (!Number.isInteger(editionNumber) || (editionNumber !== -1 && editionNumber <= 0) ||
       !Number.isInteger(trackNumber) || trackNumber <= 0) {
     return null;
   }

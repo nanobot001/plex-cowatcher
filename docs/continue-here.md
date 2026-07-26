@@ -7,9 +7,13 @@ Current state:
 - `npm run verify:block` passed with 141 service/integration tests and 63 dashboard regressions plus one intentional skip. The final CoWatcher-only restart passed `npm run verify:live-dashboard`.
 - The fresh `pre-file-boundary-proof-2026-07-26T12-19-44-128Z.sqlite` backup passed `PRAGMA quick_check`. The targeted Path of Daggers recovery activated 32 chapters over the exact current media revision, all 32 file jobs succeeded, Progress reports verified chapter mode, the 40 raw playback observations were unchanged, and no lease remained.
 - Recurring multi-file execution remains disabled. The other 14 multi-file jobs were not requeued or processed; multipart, generic, gapped, mixed-edition, and count-mismatched layouts remain source-honest fallback.
+- **3-2n-5E-B is implemented, deterministically verified, and live-verified.** It adds only the observed Audnexus-agent `-1` edition sentinel and whitespace-delimited hyphen subtitle variant. `npm run verify:block` passed with 141 service/integration tests and 63 dashboard regressions plus one intentional skip.
+- The quick-checked backup is `pre-audnexus-sentinel-proof-2026-07-26T13-33-07-742Z.sqlite`. Targeted operations activated The Fires of Heaven (57 chapters; 71 raw observations unchanged), Towers of Midnight (59 chapters; 65 unchanged), and The Shadow Rising (58 chapters; 80 unchanged). Every file job succeeded, Progress is chapter-verified, and no lease remains.
+- Only `plex-cowatch-service` was restarted and `npm run verify:live-dashboard` passed. Recurring multi-file execution remains false; queue status is 52 succeeded, 12 failed terminal, 11 unsupported, and zero pending/running/retrying.
+- **3-2n-5E-C records later work without implementing it.** Lord of Chaos, A Crown of Swords, and Crossroads of Twilight need multipart decisions; Knife of Dreams and Winter's Heart have track-sequence defects; A Memory of Light has a count mismatch; The Gathering Storm, Going Postal, Raising Steam, and AI at the Edge need truthful nonstandard-section decisions; The Light Fantastic has generic repeated titles.
 
 Next step:
-- Keep recurring multi-file execution disabled unless a separate reviewed rollout explicitly broadens it. Resume from the next planned project block; multipart grouping and generic segment promotion remain deferred.
+- Keep recurring multi-file execution disabled. Review and split 3-2n-5E-C by evidence group before implementing any multipart, named-section, repair, or generic-label behavior.
 
 ## 2026-07-25
 

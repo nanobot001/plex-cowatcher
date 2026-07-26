@@ -102,18 +102,18 @@ export function assessFileBoundaryChapterProof(input: {
 function isCompleteChapterTitleSequence(titles: string[]): boolean {
   if (titles.length < 2 || titles.some((title) => !title)) return false;
   let index = 0;
-  if (/^prologue(?::\s+\S.*)?$/i.test(titles[index]!)) index++;
+  if (/^prologue(?:(?::|\s+-)\s+\S.*)?$/i.test(titles[index]!)) index++;
   let chapterNumber = 1;
   let chapterCount = 0;
   while (index < titles.length) {
-    const match = /^chapter\s+(\d+)(?::\s+\S.*)?$/i.exec(titles[index]!);
+    const match = /^chapter\s+(\d+)(?:(?::|\s+-)\s+\S.*)?$/i.exec(titles[index]!);
     if (!match) break;
     if (Number(match[1]) !== chapterNumber) return false;
     chapterNumber++;
     chapterCount++;
     index++;
   }
-  if (index < titles.length && /^epilogue(?::\s+\S.*)?$/i.test(titles[index]!)) index++;
+  if (index < titles.length && /^epilogue(?:(?::|\s+-)\s+\S.*)?$/i.test(titles[index]!)) index++;
   return chapterCount > 0 && index === titles.length;
 }
 

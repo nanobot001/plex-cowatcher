@@ -14,6 +14,19 @@ For numbered block work, use the global `implement-block` skill. Do not create p
 - After rebuilding or restarting the deployed dashboard, run `npm run verify:live-dashboard` as the separate read-only live smoke gate.
 - Follow `docs/testing/dashboard-regression-contract.md` for selector, fixture, and anti-drift rules.
 
+## Evidence-First Corrective Work
+
+For failed ticket outcomes, production-data anomalies, and corrective blocks:
+
+- Begin with a read-only audit of representative live data or a verified copy when it is safe and relevant. Record the exact source fields, observed shapes, and uncertainty before designing the correction.
+- State the simplest plausible explanation and test it first. Do not introduce architecture to solve an assumption that has not been verified.
+- Treat canaries as tests of the core assumption as well as the implementation outcome. When feasible, include one positive case and one structurally different negative case before broad rollout.
+- Keep observations separate from interpretations. Preserve raw evidence and provenance; label inferences and never convert missing evidence into a negative fact.
+- If live evidence contradicts a ticket's core assumption, stop and re-scope the ticket instead of layering patches around the assumption.
+- Prefer the smallest change that reuses existing schemas, queues, workers, services, and runtime controls. New tables, dependencies, background workers, or abstraction layers require explicit evidence that the existing design cannot satisfy the acceptance criteria.
+- Keep production behavior capability-based. Do not add title, author, series, or item allowlists to make selected canaries pass.
+- Define explicit non-goals and escalation conditions for corrective blocks so adjacent edge cases do not silently expand the implementation.
+
 ## Tool-Friendly Project Rules
 
 This project may be called by another program, bot, supervisor, CLI wrapper, local HTTP API, or future MCP-style wrapper.
