@@ -45,6 +45,12 @@ const envSchema = z.object({
       return value;
     }, z.boolean())
     .default(false),
+  AUDIOBOOK_PROOF_MULTI_FILE_ENABLED: z
+    .preprocess((value) => {
+      if (typeof value === "string") return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+      return value;
+    }, z.boolean())
+    .default(false),
   MEDIA_BOT_PROFILE_EXECUTABLE: z.string().default(""),
   MEDIA_BOT_PROFILE_ROOT: z.string().default(""),
   MEDIA_BOT_PROFILE_PYTHON_VERSION: z.string().regex(/^\d+\.\d+$/).default("3.12"),

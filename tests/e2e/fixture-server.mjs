@@ -91,6 +91,9 @@ db.prepare("UPDATE audiobook_books SET cover_url = ? WHERE id = 20")
 db.prepare(`INSERT INTO audiobook_books
   (id,folder_key,title,series_title,chapter_count,source_provenance,enrichment_status,created_at,updated_at)
   VALUES (21,'verified-fixture-audiobook','Verified Fixture Audiobook','Fixture Series',3,'fixture','enriched',?,?)`).run(isoMinutesAgo(5), isoMinutesAgo(5));
+db.prepare(`INSERT INTO audiobook_books
+  (id,folder_key,title,series_title,chapter_count,source_provenance,enrichment_status,current_media_revision,created_at,updated_at)
+  VALUES (22,'verified-multi-fixture-audiobook','Verified Multi-File Audiobook','Fixture Series',3,'fixture','enriched','multi-current-media',?,?)`).run(isoMinutesAgo(5), isoMinutesAgo(5));
 // Book 20 deliberately carries a verified cache for an older media revision. Progress must ignore it.
 db.prepare("UPDATE audiobook_books SET current_media_revision = 'fixture-current-media' WHERE id = 20").run();
 db.prepare(`INSERT INTO audiobook_chapter_sources
@@ -124,6 +127,39 @@ for (const [chapterIndex, title, startOffset, endOffset] of [
   db.prepare(`INSERT INTO audiobook_chapters
     (audiobook_id,chapter_index,title,start_offset_ms,end_offset_ms,created_at,updated_at)
     VALUES (?,?,?,?,?,?,?)`).run(21, chapterIndex, title, startOffset, endOffset, isoMinutesAgo(5), isoMinutesAgo(5));
+}
+const multiMediaRevision = db.prepare(`
+  INSERT INTO audiobook_media_revisions
+    (audiobook_id,media_revision,track_count,file_count,total_duration_ms,manifest_status,created_at)
+  VALUES (22,'multi-current-media',2,2,300000,'ready',?)
+`).run(isoMinutesAgo(5));
+for (const [itemOrder, ratingKey, guid, duration, filePath] of [
+  [0, "multi-audio-file-1", "plex://track/multi-file-1", 180000, "F:\\fixture\\multi-1.m4b"],
+  [1, "multi-audio-file-2", "plex://track/multi-file-2", 120000, "F:\\fixture\\multi-2.m4b"]
+]) {
+  db.prepare(`
+    INSERT INTO audiobook_media_revision_items
+      (revision_id,item_order,stable_identity,rating_key,guid,duration_ms,private_file_path,path_hash)
+    VALUES (?,?,?,?,?,?,?,?)
+  `).run(Number(multiMediaRevision.lastInsertRowid), itemOrder, `guid:${guid}`, ratingKey, guid, duration, filePath, `hash-${itemOrder}`);
+}
+const multiChapterRevision = db.prepare(`
+  INSERT INTO audiobook_chapter_revisions
+    (audiobook_id,media_revision,source_type,source_status,confidence,chapter_digest,duration_ms,created_at,activated_at)
+  VALUES (22,'multi-current-media','audiobook_tool','active',0.98,'fixture-multi-digest',300000,?,?)
+`).run(isoMinutesAgo(5), isoMinutesAgo(5));
+db.prepare("UPDATE audiobook_books SET active_chapter_revision_id = ? WHERE id = 22").run(Number(multiChapterRevision.lastInsertRowid));
+db.prepare(`INSERT INTO audiobook_chapter_sources
+  (audiobook_id,source_type,source_status,confidence,refreshed_at)
+  VALUES (22,'audiobook_tool','active',0.98,?)`).run(isoMinutesAgo(5));
+for (const [chapterIndex, title, startOffset, endOffset] of [
+  [1, "Multi Chapter 1", 0, 90000],
+  [2, "Multi Chapter 2", 90000, 180000],
+  [3, "Multi Chapter 3", 180000, 300000]
+]) {
+  db.prepare(`INSERT INTO audiobook_chapters
+    (audiobook_id,chapter_index,title,start_offset_ms,end_offset_ms,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?)`).run(22, chapterIndex, title, startOffset, endOffset, isoMinutesAgo(5), isoMinutesAgo(5));
 }
 db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,leaf_count,source_provenance,refreshed_at)
@@ -159,6 +195,15 @@ db.prepare(`INSERT INTO content_catalog
 db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,audiobook_id,source_provenance,refreshed_at)
   VALUES ('verified-audio-file','track','Verified Single File',180000,'5','Audiobooks','[]',21,'fixture',?)`).run(isoMinutesAgo(5));
+for (const [ratingKey, title, duration] of [
+  ["multi-audio-file-1", "Part 1", 180000],
+  ["multi-audio-file-2", "Part 2", 120000]
+]) {
+  db.prepare(`INSERT INTO content_catalog
+    (rating_key,guid,media_type,title,duration,library_id,library_title,genres_json,audiobook_id,source_provenance,refreshed_at)
+    VALUES (?,?, 'track', ?, ?, '5', 'Audiobooks', '[]', 22, 'fixture', ?)`)
+    .run(ratingKey, `plex://track/${ratingKey.replace("multi-audio-", "multi-")}`, title, duration, isoMinutesAgo(5));
+}
 db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,source_provenance,refreshed_at)
   VALUES ('movie-regression','movie','Fixture Movie',7200000,'1','Movies','[]','fixture',?)`).run(isoMinutesAgo(5));
@@ -300,6 +345,20 @@ app.post("/__test/artwork/audiobook/:id", (req, res) => {
   const result = db.prepare("UPDATE audiobook_books SET cover_url = ?, updated_at = ? WHERE id = ?")
     .run(cover, new Date().toISOString(), audiobookId);
   res.json({ ok: Number(result.changes) === 1, variant });
+});
+
+app.post("/__test/seed-multi-file-audiobook", (req, res) => {
+  const watchedAt = isoMinutesAgo(45);
+  db.prepare(`
+    INSERT OR IGNORE INTO playback_observations
+      (user_id,rating_key,plex_guid,media_type,library_name,title,show_title,watched_at,percent_complete,percent_complete_provenance,view_offset,duration,completed,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(userIds.Tony, "multi-audio-file-2", "plex://track/multi-file-2", "track", "Audiobooks", "Part 2", "Verified Multi-File Audiobook", watchedAt, 80, "fixture", 60000, 120000, 0, watchedAt, watchedAt);
+  res.json({ ok: true });
+});
+app.post("/__test/clear-multi-file-audiobook", (_req, res) => {
+  const result = db.prepare("DELETE FROM playback_observations WHERE rating_key = 'multi-audio-file-2'").run();
+  res.json({ ok: true, deleted: Number(result.changes) });
 });
 app.post("/__test/reset-movie", (_req, res) => {
   const result = db.prepare(`UPDATE content_catalog

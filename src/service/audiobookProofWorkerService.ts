@@ -8,13 +8,15 @@ import {
   type AudiobookProofInput,
   type AudiobookProofResult
 } from "./audiobookProofAdapter.js";
+import { buildGlobalAudiobookTimeline, type MultiFileTimelineItem } from "./audiobookMultiFileService.js";
 
 const RUN_INTERVAL_MS = 15 * 60 * 1000;
 const LEASE_MS = 2 * 60 * 1000;
 const HEARTBEAT_MS = 60 * 1000;
 const RETRY_DELAYS_MS = [15 * 60 * 1000, 60 * 60 * 1000, 6 * 60 * 60 * 1000, 24 * 60 * 60 * 1000];
 
-type ProofAdapter = Pick<AudiobookProofAdapter, "proveAndActivate">;
+type ProofAdapter = Pick<AudiobookProofAdapter, "proveAndActivate"> &
+  Partial<Pick<AudiobookProofAdapter, "prove">>;
 type JobState = "pending" | "running" | "retry_wait" | "succeeded" | "failed_terminal" | "unsupported_multi_file";
 
 export interface ProofRunResult {
@@ -40,7 +42,8 @@ export class AudiobookProofWorkerService {
       whisperEnabled: appConfig.AUDIOBOOK_PROOF_WHISPER_ENABLED
     }),
     private readonly enabled = appConfig.AUDIOBOOK_PROOF_ENABLED,
-    private readonly now: () => Date = () => new Date()
+    private readonly now: () => Date = () => new Date(),
+    private readonly multiFileEnabled = appConfig.AUDIOBOOK_PROOF_MULTI_FILE_ENABLED
   ) {
     this.audit = new AuditService(db);
     this.activation = new AudiobookChapterActivationService(db);
@@ -48,11 +51,20 @@ export class AudiobookProofWorkerService {
 
   getStatus(limit = 20): {
     enabled: boolean;
+    multiFileEnabled: boolean;
     counts: Record<JobState, number>;
     nextRunAt?: string;
     lastCompletedAt?: string;
     leaseActive: boolean;
-    jobs: Array<{ id: number; audiobookId: number; state: JobState; attemptCount: number; safeCode?: string; nextAttemptAt?: string }>;
+    jobs: Array<{
+      id: number;
+      audiobookId: number;
+      state: JobState;
+      attemptCount: number;
+      safeCode?: string;
+      nextAttemptAt?: string;
+      fileProgress?: { completed: number; total: number; failed: number };
+    }>;
   } {
     const state = this.db.prepare("SELECT * FROM audiobook_proof_state WHERE id = 1").get() as any;
     const countRows = this.db.prepare("SELECT state, COUNT(*) AS count FROM audiobook_proof_jobs GROUP BY state").all() as any[];
@@ -60,11 +72,12 @@ export class AudiobookProofWorkerService {
       "pending", "running", "retry_wait", "succeeded", "failed_terminal", "unsupported_multi_file"
     ].map((jobState) => [jobState, Number(countRows.find((row) => row.state === jobState)?.count ?? 0)])) as Record<JobState, number>;
     const jobs = this.db.prepare(`
-      SELECT id, audiobook_id, state, attempt_count, safe_result_code, next_attempt_at
+      SELECT id, audiobook_id, media_revision, state, attempt_count, safe_result_code, next_attempt_at
       FROM audiobook_proof_jobs ORDER BY id DESC LIMIT ?
     `).all(Math.max(1, Math.min(50, Math.trunc(limit)))) as any[];
     return {
       enabled: this.enabled,
+      multiFileEnabled: this.multiFileEnabled,
       counts,
       nextRunAt: state?.next_run_at ?? undefined,
       lastCompletedAt: state?.last_completed_at ?? undefined,
@@ -75,12 +88,25 @@ export class AudiobookProofWorkerService {
         state: job.state,
         attemptCount: job.attempt_count,
         safeCode: job.safe_result_code ?? undefined,
-        nextAttemptAt: job.next_attempt_at ?? undefined
+        nextAttemptAt: job.next_attempt_at ?? undefined,
+        fileProgress: this.getFileProgress(job.audiobook_id, job.media_revision)
       }))
     };
   }
 
   previewCanary(audiobookId?: number): { ok: true; dryRun: true; eligibleJobId?: number; audiobookId?: number; reason?: string } {
+    if (!this.multiFileEnabled) {
+      const multiFile = this.db.prepare(`
+        SELECT outbox.audiobook_id
+        FROM audiobook_discovery_outbox outbox
+        JOIN audiobook_media_revisions revision
+          ON revision.audiobook_id = outbox.audiobook_id AND revision.media_revision = outbox.media_revision
+        WHERE outbox.consumed_at IS NULL AND revision.manifest_status = 'unsupported_multi_file'
+          AND (? IS NULL OR outbox.audiobook_id = ?)
+        ORDER BY outbox.id LIMIT 1
+      `).get(audiobookId ?? null, audiobookId ?? null) as any;
+      if (multiFile) return { ok: true, dryRun: true, audiobookId: multiFile.audiobook_id, reason: "MULTI_FILE_FEATURE_DISABLED" };
+    }
     const job = this.findEligibleJob(this.now(), audiobookId);
     if (job) return { ok: true, dryRun: true, eligibleJobId: job.id, audiobookId: job.audiobook_id };
     const outbox = this.db.prepare(`
@@ -89,7 +115,8 @@ export class AudiobookProofWorkerService {
       JOIN audiobook_media_revisions revision
         ON revision.audiobook_id = outbox.audiobook_id AND revision.media_revision = outbox.media_revision
       WHERE outbox.consumed_at IS NULL AND book.current_media_revision = outbox.media_revision
-        AND revision.manifest_status = 'ready' AND (? IS NULL OR outbox.audiobook_id = ?)
+        AND revision.manifest_status IN ('ready', 'unsupported_multi_file')
+        AND (? IS NULL OR outbox.audiobook_id = ?)
       ORDER BY outbox.id LIMIT 1
     `).get(audiobookId ?? null, audiobookId ?? null) as any;
     return outbox
@@ -114,6 +141,7 @@ export class AudiobookProofWorkerService {
         AND NOT (state = 'pending' AND attempt_count = 0 AND next_attempt_at IS NULL AND safe_result_code IS NULL)
     `).run(now, jobId);
     const applied = Number(changed.changes) > 0;
+    if (applied) this.resetFileJobs(row.id, now);
     this.audit.record("audiobook_proof_requeued", "cli", applied ? "applied" : "skipped", { jobId });
     return { ok: true, dryRun: false, jobId, changed: applied, state: applied ? "pending" : row.state };
   }
@@ -186,7 +214,8 @@ export class AudiobookProofWorkerService {
         } else if (!row.revision_status || row.revision_status === "unavailable") {
           state = "failed_terminal"; code = "MANIFEST_UNAVAILABLE";
         } else if (row.revision_status === "unsupported_multi_file") {
-          state = "unsupported_multi_file"; code = "UNSUPPORTED_MULTI_FILE";
+          if (this.multiFileEnabled) state = "pending";
+          else { state = "unsupported_multi_file"; code = "MULTI_FILE_FEATURE_DISABLED"; }
         }
         const inserted = this.db.prepare(`
           INSERT OR IGNORE INTO audiobook_proof_jobs
@@ -198,6 +227,7 @@ export class AudiobookProofWorkerService {
         const job = this.db.prepare(`SELECT id FROM audiobook_proof_jobs WHERE audiobook_id = ? AND media_revision = ?`)
           .get(row.audiobook_id, row.media_revision);
         if (job) {
+          if (state === "pending") this.ensureFileJobs(row.audiobook_id, row.media_revision, now);
           this.db.prepare("UPDATE audiobook_discovery_outbox SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL")
             .run(now.toISOString(), row.id);
         }
@@ -233,14 +263,16 @@ export class AudiobookProofWorkerService {
     if (evidence?.current_media_revision !== job.media_revision) {
       return this.completeJob(job, now, "failed_terminal", "SUPERSEDED_REVISION");
     }
-    if (!evidence || evidence.manifest_status === "unavailable" || !evidence.private_file_path) {
+    if (!evidence || evidence.manifest_status === "unavailable" ||
+        (Number(evidence.file_count) <= 1 && !evidence.private_file_path)) {
       return this.completeJob(job, now, "failed_terminal", "MANIFEST_UNAVAILABLE");
     }
-    if (evidence.manifest_status === "unsupported_multi_file") {
-      return this.completeJob(job, now, "unsupported_multi_file", "UNSUPPORTED_MULTI_FILE");
+    if (evidence.file_count > 1 || evidence.manifest_status === "unsupported_multi_file") {
+      if (!this.multiFileEnabled) return this.completeJob(job, now, "unsupported_multi_file", "MULTI_FILE_FEATURE_DISABLED");
+      return this.processMultiFileJob(job, evidence, now);
     }
     if (evidence.track_count !== 1 || evidence.file_count !== 1) {
-      return this.completeJob(job, now, "unsupported_multi_file", "UNSUPPORTED_MULTI_FILE");
+      return this.completeJob(job, now, "failed_terminal", "UNSUPPORTED_MEDIA_LAYOUT");
     }
     const proofInput: AudiobookProofInput = {
       privateFilePath: evidence.private_file_path,
@@ -254,6 +286,80 @@ export class AudiobookProofWorkerService {
       activatedAt: now.toISOString()
     }, (input) => this.activation.activate(input));
     return this.handleProofResult(job, result, now);
+  }
+
+  private async processMultiFileJob(job: any, evidence: any, now: Date): Promise<ProofRunResult> {
+    if (!this.adapter.prove) return this.completeJob(job, now, "failed_terminal", "MULTI_FILE_ADAPTER_UNAVAILABLE");
+    this.ensureFileJobs(job.audiobook_id, job.media_revision, now);
+    const fileJob = this.claimFileJob(job.audiobook_id, job.media_revision, job.lease_owner, now);
+    if (fileJob) {
+      if (!fileJob.private_file_path || Number(fileJob.duration_ms) <= 0) {
+        this.failFileJob(fileJob, "MANIFEST_UNAVAILABLE", null, now);
+        return this.completeJob(job, now, "failed_terminal", "MULTI_FILE_MANIFEST_UNAVAILABLE");
+      }
+      const result = await this.adapter.prove({
+        privateFilePath: fileJob.private_file_path,
+        durationMs: Number(fileJob.duration_ms),
+        asin: evidence.asin ?? undefined,
+        whisper: appConfig.AUDIOBOOK_PROOF_WHISPER_ENABLED
+      });
+      if (result.status === "activatable") {
+        this.completeFileJob(fileJob, result, now);
+        return this.continueJob(job, now, "FILE_PROOF_PROGRESS");
+      }
+      if (result.status === "diagnostic") {
+        this.failFileJob(fileJob, result.code, result.diagnostic, now);
+        return this.completeJob(job, now, "failed_terminal", `MULTI_FILE_${result.code}`);
+      }
+      if ((result.retryable || isWorkerTransient(result.code)) && fileJob.attempt_count < 5) {
+        const delay = RETRY_DELAYS_MS[Math.min(fileJob.attempt_count - 1, RETRY_DELAYS_MS.length - 1)]!;
+        this.retryFileJob(fileJob, result.code, new Date(now.getTime() + delay), now);
+        return this.retryJob(job, now, `FILE_${result.code}`, delay);
+      }
+      this.failFileJob(fileJob, result.code, null, now);
+      return this.completeJob(job, now, "failed_terminal", `MULTI_FILE_${result.code}`);
+    }
+
+    const files = this.db.prepare(`
+      SELECT file_jobs.*, item.private_file_path, item.duration_ms, item.rating_key, item.guid, item.stable_identity
+      FROM audiobook_proof_file_jobs file_jobs
+      JOIN audiobook_media_revision_items item ON item.id = file_jobs.revision_item_id
+      WHERE file_jobs.audiobook_id = ? AND file_jobs.media_revision = ?
+      ORDER BY file_jobs.item_order
+    `).all(job.audiobook_id, job.media_revision) as any[];
+    const failed = files.find((file) => file.state === "failed_terminal");
+    if (failed) return this.completeJob(job, now, "failed_terminal", failed.safe_result_code ?? "MULTI_FILE_PROOF_FAILED");
+    if (files.length === 0 || files.some((file) => file.state !== "succeeded")) {
+      return this.retryJob(job, now, "FILE_PROOF_WAITING", RETRY_DELAYS_MS[0]!);
+    }
+
+    const items: MultiFileTimelineItem[] = files.map((file) => ({
+      order: file.item_order,
+      stableIdentity: file.stable_identity,
+      ratingKey: file.rating_key,
+      guid: file.guid,
+      durationMs: file.duration_ms
+    }));
+    const candidates = files.map((file) => ({
+      chapters: JSON.parse(file.chapters_json ?? "[]"),
+      sourceType: file.source_type,
+      confidence: Number(file.confidence ?? 0),
+      warnings: JSON.parse(file.warnings_json ?? "[]")
+    }));
+    const timeline = buildGlobalAudiobookTimeline(items, candidates);
+    if (!timeline.ok) return this.completeJob(job, now, "failed_terminal", `MULTI_FILE_${timeline.code}`);
+    this.activation.activate({
+      audiobookId: job.audiobook_id,
+      mediaRevision: job.media_revision,
+      chapters: timeline.timeline.chapters,
+      sourceType: timeline.timeline.sourceType,
+      sourceStatus: "active",
+      confidence: timeline.timeline.confidence,
+      contractVersion: 1,
+      warnings: timeline.timeline.warnings,
+      activatedAt: now.toISOString()
+    });
+    return this.completeJob(job, now, "succeeded", "VERIFIED_MULTI_FILE");
   }
 
   private handleProofResult(job: any, result: AudiobookProofResult, now: Date): ProofRunResult {
@@ -302,6 +408,15 @@ export class AudiobookProofWorkerService {
           lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?
       WHERE state = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?
     `).run(now.toISOString(), now.toISOString(), now.toISOString(), now.toISOString());
+    this.db.prepare(`
+      UPDATE audiobook_proof_file_jobs
+      SET state = CASE WHEN attempt_count >= 5 THEN 'failed_terminal' ELSE 'retry_wait' END,
+          safe_result_code = 'LEASE_EXPIRED',
+          next_attempt_at = CASE WHEN attempt_count >= 5 THEN NULL ELSE ? END,
+          completed_at = CASE WHEN attempt_count >= 5 THEN ? ELSE NULL END,
+          lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?
+      WHERE state = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?
+    `).run(now.toISOString(), now.toISOString(), now.toISOString(), now.toISOString());
   }
 
   private acquireLease(owner: string, now: Date): boolean {
@@ -343,12 +458,129 @@ export class AudiobookProofWorkerService {
     `).get(now.toISOString(), audiobookId ?? null, audiobookId ?? null);
   }
 
+  private continueJob(job: any, now: Date, code: string): ProofRunResult {
+    this.db.prepare(`
+      UPDATE audiobook_proof_jobs SET state = 'pending', safe_result_code = ?, next_attempt_at = NULL,
+        updated_at = ?, lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL
+      WHERE id = ?
+    `).run(code, now.toISOString(), job.id);
+    this.audit.record("audiobook_proof_progress", "worker", "pending", { jobId: job.id, code, attemptCount: job.attempt_count });
+    return processed(job, "pending", code);
+  }
+
+  private retryJob(job: any, now: Date, code: string, delayMs: number): ProofRunResult {
+    this.db.prepare(`
+      UPDATE audiobook_proof_jobs SET state = 'retry_wait', safe_result_code = ?, next_attempt_at = ?,
+        updated_at = ?, lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL
+      WHERE id = ?
+    `).run(code, new Date(now.getTime() + delayMs).toISOString(), now.toISOString(), job.id);
+    this.audit.record("audiobook_proof_completed", "worker", "retry_wait", { jobId: job.id, code, attemptCount: job.attempt_count });
+    return processed(job, "retry_wait", code);
+  }
+
+  private ensureFileJobs(audiobookId: number, mediaRevision: string, now: Date): void {
+    const items = this.db.prepare(`
+      SELECT id, item_order FROM audiobook_media_revision_items
+      WHERE revision_id = (SELECT id FROM audiobook_media_revisions WHERE audiobook_id = ? AND media_revision = ?)
+      ORDER BY item_order
+    `).all(audiobookId, mediaRevision) as any[];
+    const insert = this.db.prepare(`
+      INSERT OR IGNORE INTO audiobook_proof_file_jobs
+        (audiobook_id, media_revision, revision_item_id, item_order, state, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'pending', ?, ?)
+    `);
+    for (const item of items) insert.run(audiobookId, mediaRevision, item.id, item.item_order, now.toISOString(), now.toISOString());
+  }
+
+  private resetFileJobs(jobId: number, now: string): void {
+    const job = this.db.prepare("SELECT audiobook_id, media_revision FROM audiobook_proof_jobs WHERE id = ?").get(jobId) as any;
+    if (!job) return;
+    this.db.prepare(`
+      UPDATE audiobook_proof_file_jobs
+      SET state = 'pending', attempt_count = 0, next_attempt_at = NULL, lease_owner = NULL,
+          lease_expires_at = NULL, heartbeat_at = NULL, safe_result_code = NULL,
+          diagnostic_source = NULL, diagnostic_confidence = NULL, diagnostic_chapter_count = NULL,
+          diagnostic_warnings_json = '[]', source_type = NULL, confidence = NULL,
+          chapters_json = NULL, warnings_json = '[]', started_at = NULL, completed_at = NULL, updated_at = ?
+      WHERE audiobook_id = ? AND media_revision = ?
+    `).run(now, job.audiobook_id, job.media_revision);
+  }
+
+  private claimFileJob(audiobookId: number, mediaRevision: string, owner: string, now: Date): any {
+    const file = this.db.prepare(`
+      SELECT file_jobs.*, item.private_file_path, item.duration_ms
+      FROM audiobook_proof_file_jobs file_jobs
+      JOIN audiobook_media_revision_items item ON item.id = file_jobs.revision_item_id
+      WHERE file_jobs.audiobook_id = ? AND file_jobs.media_revision = ?
+        AND file_jobs.state IN ('pending', 'retry_wait')
+        AND (file_jobs.next_attempt_at IS NULL OR file_jobs.next_attempt_at <= ?)
+      ORDER BY file_jobs.item_order
+      LIMIT 1
+    `).get(audiobookId, mediaRevision, now.toISOString()) as any;
+    if (!file) return null;
+    const changed = this.db.prepare(`
+      UPDATE audiobook_proof_file_jobs
+      SET state = 'running', attempt_count = attempt_count + 1, lease_owner = ?,
+          lease_expires_at = ?, heartbeat_at = ?, started_at = COALESCE(started_at, ?), updated_at = ?
+      WHERE id = ? AND state IN ('pending', 'retry_wait')
+    `).run(owner, new Date(now.getTime() + LEASE_MS).toISOString(), now.toISOString(), now.toISOString(), now.toISOString(), file.id);
+    return Number(changed.changes) ? this.db.prepare(`
+      SELECT file_jobs.*, item.private_file_path, item.duration_ms
+      FROM audiobook_proof_file_jobs file_jobs
+      JOIN audiobook_media_revision_items item ON item.id = file_jobs.revision_item_id
+      WHERE file_jobs.id = ?
+    `).get(file.id) : null;
+  }
+
+  private completeFileJob(fileJob: any, result: Extract<AudiobookProofResult, { status: "activatable" }>, now: Date): void {
+    this.db.prepare(`
+      UPDATE audiobook_proof_file_jobs SET state = 'succeeded', safe_result_code = 'VERIFIED',
+        source_type = ?, confidence = ?, chapters_json = ?, warnings_json = ?, completed_at = ?, updated_at = ?,
+        lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL, next_attempt_at = NULL
+      WHERE id = ?
+    `).run(result.candidate.sourceType, result.candidate.confidence, JSON.stringify(result.candidate.chapters),
+      JSON.stringify(result.candidate.warnings), now.toISOString(), now.toISOString(), fileJob.id);
+  }
+
+  private retryFileJob(fileJob: any, code: string, nextAttempt: Date, now: Date): void {
+    this.db.prepare(`
+      UPDATE audiobook_proof_file_jobs SET state = 'retry_wait', safe_result_code = ?, next_attempt_at = ?, updated_at = ?,
+        lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL
+      WHERE id = ?
+    `).run(code, nextAttempt.toISOString(), now.toISOString(), fileJob.id);
+  }
+
+  private failFileJob(fileJob: any, code: string, diagnostic: any, now: Date): void {
+    this.db.prepare(`
+      UPDATE audiobook_proof_file_jobs SET state = 'failed_terminal', safe_result_code = ?,
+        diagnostic_source = ?, diagnostic_confidence = ?, diagnostic_chapter_count = ?,
+        diagnostic_warnings_json = ?, completed_at = ?, updated_at = ?,
+        lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL
+      WHERE id = ?
+    `).run(code, diagnostic?.source ?? null, diagnostic?.confidence ?? null, diagnostic?.chapterCount ?? null,
+      JSON.stringify(diagnostic?.warnings ?? []), now.toISOString(), now.toISOString(), fileJob.id);
+  }
+
+  private getFileProgress(audiobookId: number, mediaRevision: string): { completed: number; total: number; failed: number } | undefined {
+    const row = this.db.prepare(`
+      SELECT COUNT(*) AS total,
+        SUM(CASE WHEN state = 'succeeded' THEN 1 ELSE 0 END) AS completed,
+        SUM(CASE WHEN state = 'failed_terminal' THEN 1 ELSE 0 END) AS failed
+      FROM audiobook_proof_file_jobs WHERE audiobook_id = ? AND media_revision = ?
+    `).get(audiobookId, mediaRevision) as any;
+    return Number(row?.total ?? 0) > 0
+      ? { completed: Number(row.completed ?? 0), total: Number(row.total ?? 0), failed: Number(row.failed ?? 0) }
+      : undefined;
+  }
+
   private renewLease(owner: string, jobId: number, now: Date): void {
     const expires = new Date(now.getTime() + LEASE_MS).toISOString();
     this.db.prepare(`UPDATE audiobook_proof_state SET lease_expires_at = ?, heartbeat_at = ? WHERE id = 1 AND lease_owner = ?`)
       .run(expires, now.toISOString(), owner);
     this.db.prepare(`UPDATE audiobook_proof_jobs SET lease_expires_at = ?, heartbeat_at = ? WHERE id = ? AND lease_owner = ? AND state = 'running'`)
       .run(expires, now.toISOString(), jobId, owner);
+    this.db.prepare(`UPDATE audiobook_proof_file_jobs SET lease_expires_at = ?, heartbeat_at = ? WHERE lease_owner = ? AND state = 'running'`)
+      .run(expires, now.toISOString(), owner);
   }
 
   private finishCycle(owner: string, now: Date, jobId: number | null): void {

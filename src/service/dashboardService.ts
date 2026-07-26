@@ -8,6 +8,7 @@ import { evaluateReplaySemantics, type ReplayObservation, type ReplaySemantics }
 import { ArchivePlexViewRecoveryService } from "./archivePlexViewRecoveryService.js";
 import { getCanonicalMovieRatingKey, getMovieIdentityGuid, getMovieIdentityKeys, warmMovieIdentityCache } from "./plexMovieIdentityService.js";
 import { appConfig } from "../utils/config.js";
+import { mapMultiFilePlaybackOffset, type MultiFileTimelineItem } from "./audiobookMultiFileService.js";
 
 const HOUSEHOLD_CATEGORIES = ["movie", "tv", "classic_tv", "anime", "audiobook"] as const;
 const SUMMARY_SAMPLE_LIMIT = 500;
@@ -1121,6 +1122,9 @@ export class DashboardService {
     const p = parseFilters(input);
     let where = " WHERE COALESCE(u.dashboard_shown, u.enabled) = 1";
     const args: any[] = [];
+    const historicalAudiobookIdSql = `(SELECT revision.audiobook_id FROM audiobook_media_revision_items item JOIN audiobook_media_revisions revision ON revision.id = item.revision_id WHERE item.rating_key = po.rating_key OR (po.plex_guid IS NOT NULL AND item.guid = po.plex_guid) ORDER BY revision.created_at DESC, revision.id DESC LIMIT 1)`;
+    const audiobookIdSql = `COALESCE(cat.audiobook_id, ${historicalAudiobookIdSql})`;
+    const audiobookTitleSql = `(SELECT book.title FROM audiobook_media_revision_items item JOIN audiobook_media_revisions revision ON revision.id = item.revision_id JOIN audiobook_books book ON book.id = revision.audiobook_id WHERE item.rating_key = po.rating_key OR (po.plex_guid IS NOT NULL AND item.guid = po.plex_guid) ORDER BY revision.created_at DESC, revision.id DESC LIMIT 1)`;
     if (p.dateFrom) { where += " AND po.watched_at >= ?"; args.push(new Date(p.dateFrom).toISOString()); }
     if (p.dateTo) { where += " AND po.watched_at <= ?"; args.push(new Date(p.dateTo).toISOString()); }
     if (p.user) { where += " AND u.plex_username = ?"; args.push(p.user); }
@@ -1131,7 +1135,7 @@ export class DashboardService {
       args.push(...movieKeys);
     }
     if (p.grandparentRatingKey) { where += " AND (po.grandparent_rating_key = ? OR po.rating_key = ?)"; args.push(p.grandparentRatingKey, p.grandparentRatingKey); }
-    if (p.audiobookId) { where += " AND cat.audiobook_id = ?"; args.push(p.audiobookId); }
+    if (p.audiobookId) { where += ` AND ${audiobookIdSql} = ?`; args.push(p.audiobookId); }
     if (p.library) { where += " AND COALESCE(NULLIF(po.library_name, ''), cat.library_title, groupcat.library_title) = ?"; args.push(p.library); }
     if (p.completed !== undefined) { where += " AND po.completed = ?"; args.push(p.completed ? 1 : 0); }
     if (p.search) { where += " AND (po.title LIKE ? OR po.show_title LIKE ?)"; args.push(`%${p.search}%`, `%${p.search}%`); }
@@ -1149,7 +1153,7 @@ export class DashboardService {
       ? `EXISTS(SELECT 1 FROM archive_observation_links historyLink JOIN archive_watch_events historyEvent ON historyEvent.id=historyLink.archive_event_id WHERE historyLink.playback_observation_id=po.id AND historyLink.relation IN ('same_event','duplicate') AND historyEvent.source='plex_api_history')`
       : "0";
     const candidateLimit = Math.min(100_000, p.offset + p.limit);
-    const directRows = this.db.prepare(`SELECT po.*,u.plex_username,u.display_name AS synced_display_name,u.dashboard_alias,u.dashboard_shown,we.prompt_status,cc.status confirmation_status,cc.plex_sync_status,cat.library_title AS catalog_library_title,groupcat.library_title AS group_catalog_library_title,cat.audiobook_id AS audiobook_id,ab.title AS audiobook_title,cat.parent_title AS catalog_parent_title,cat.grandparent_title AS catalog_grandparent_title,${plexHistoryLinkedSql} AS plex_history_linked,${confirmedParticipantsSql}${from}${where} ORDER BY ${order} LIMIT ? OFFSET 0`).all(...confirmedArgs, ...args, candidateLimit) as any[];
+    const directRows = this.db.prepare(`SELECT po.*,u.plex_username,u.display_name AS synced_display_name,u.dashboard_alias,u.dashboard_shown,we.prompt_status,cc.status confirmation_status,cc.plex_sync_status,cat.library_title AS catalog_library_title,groupcat.library_title AS group_catalog_library_title,${audiobookIdSql} AS audiobook_id,COALESCE(ab.title, ${audiobookTitleSql}) AS audiobook_title,cat.parent_title AS catalog_parent_title,cat.grandparent_title AS catalog_grandparent_title,${plexHistoryLinkedSql} AS plex_history_linked,${confirmedParticipantsSql}${from}${where} ORDER BY ${order} LIMIT ? OFFSET 0`).all(...confirmedArgs, ...args, candidateLimit) as any[];
     const archiveRows = this.archiveService.queryDashboardActivity(100_000, this.includePlexPlayHistory)
       .filter((row) => this.archiveActivityMatchesFilters(row, p));
     const rows = [...directRows, ...archiveRows]
@@ -3083,8 +3087,9 @@ export class DashboardService {
   ): AudiobookChapterProgressSnapshot {
     const source = this.getActiveAudiobookChapterSource(audiobook.id);
     const cachedChapters = source ? this.getCachedAudiobookChapters(audiobook.id) : [];
+    const manifestItems = this.getAudiobookTimelineItems(audiobook.id);
     if (source && cachedChapters.length > 0) {
-      return this.buildVerifiedAudiobookChapterProgress(audiobook, plays, people, source, cachedChapters);
+      return this.buildVerifiedAudiobookChapterProgress(audiobook, plays, people, source, cachedChapters, manifestItems);
     }
 
     return this.buildTrackFileAudiobookProgress(audiobook, plays, people);
@@ -3125,15 +3130,35 @@ export class DashboardService {
       .filter((chapter) => chapter.end_offset_ms > chapter.start_offset_ms);
   }
 
+  private getAudiobookTimelineItems(audiobookId: number): MultiFileTimelineItem[] {
+    const rows = this.db.prepare(`
+      SELECT item.item_order, item.stable_identity, item.rating_key, item.guid, item.duration_ms
+      FROM audiobook_books book
+      JOIN audiobook_media_revisions revision
+        ON revision.audiobook_id = book.id AND revision.media_revision = book.current_media_revision
+      JOIN audiobook_media_revision_items item ON item.revision_id = revision.id
+      WHERE book.id = ?
+      ORDER BY item.item_order
+    `).all(audiobookId) as any[];
+    return rows.map((row) => ({
+      order: Number(row.item_order),
+      stableIdentity: row.stable_identity,
+      ratingKey: row.rating_key ?? null,
+      guid: row.guid ?? null,
+      durationMs: row.duration_ms == null ? null : Number(row.duration_ms)
+    }));
+  }
+
   private buildVerifiedAudiobookChapterProgress(
     audiobook: any,
     plays: DashboardActivityItem[],
     people: Array<{ displayName: string; userId?: number | null }>,
     source: CachedAudiobookSource,
-    cachedChapters: CachedAudiobookChapter[]
+    cachedChapters: CachedAudiobookChapter[],
+    manifestItems: MultiFileTimelineItem[]
   ): AudiobookChapterProgressSnapshot {
     const bookDurationMs = Math.max(...cachedChapters.map((chapter) => chapter.end_offset_ms));
-    const currentPosition = this.resolveCurrentAudiobookPosition(plays, cachedChapters, bookDurationMs);
+    const currentPosition = this.resolveCurrentAudiobookPosition(plays, cachedChapters, bookDurationMs, manifestItems);
     const completedChapters = new Set<number>();
     const touchedChapters = new Set<number>();
     const replaySemantics = emptyReplaySemantics();
@@ -3159,7 +3184,7 @@ export class DashboardService {
         let sawUncertainEvidence = false;
 
         for (const play of userPlays) {
-          const offset = this.resolveAudiobookOffsetMs(play, bookDurationMs);
+          const offset = this.resolveAudiobookOffsetMs(play, bookDurationMs, manifestItems);
           if (offset.status === "valid") {
             if (offset.value >= chapter.end_offset_ms) {
               mappedStates.push("watched");
@@ -3265,11 +3290,12 @@ export class DashboardService {
   private resolveCurrentAudiobookPosition(
     plays: DashboardActivityItem[],
     cachedChapters: CachedAudiobookChapter[],
-    bookDurationMs: number
+    bookDurationMs: number,
+    manifestItems: MultiFileTimelineItem[]
   ): { chapterIndex: number; progressPercent: number } | null {
     const orderedPlays = [...plays].sort((a, b) => b.watchedAt.localeCompare(a.watchedAt) || b.id - a.id);
     for (const play of orderedPlays) {
-      const offset = this.resolveAudiobookOffsetMs(play, bookDurationMs);
+      const offset = this.resolveAudiobookOffsetMs(play, bookDurationMs, manifestItems);
       if (offset.status === "valid") {
         const chapter = cachedChapters.find((candidate) => offset.value < candidate.end_offset_ms) ?? cachedChapters[cachedChapters.length - 1];
         if (!chapter) continue;
@@ -3279,7 +3305,7 @@ export class DashboardService {
           : Math.max(0, Math.min(100, Math.round((offset.value / bookDurationMs) * 100)));
         return { chapterIndex: chapter.chapter_index, progressPercent };
       }
-      if (play.completed) {
+      if (play.completed && manifestItems.length <= 1) {
         const finalChapter = cachedChapters[cachedChapters.length - 1];
         if (finalChapter) return { chapterIndex: finalChapter.chapter_index, progressPercent: 100 };
       }
@@ -3287,7 +3313,24 @@ export class DashboardService {
     return null;
   }
 
-  private resolveAudiobookOffsetMs(play: DashboardActivityItem, bookDurationMs: number): { status: "valid"; value: number } | { status: "missing" | "uncertain" } {
+  private resolveAudiobookOffsetMs(
+    play: DashboardActivityItem,
+    bookDurationMs: number,
+    manifestItems: MultiFileTimelineItem[] = []
+  ): { status: "valid"; value: number } | { status: "missing" | "uncertain" } {
+    if (manifestItems.length > 1) {
+      const mapped = mapMultiFilePlaybackOffset({
+        ratingKey: play.ratingKey,
+        plexGuid: play.plexGuid,
+        viewOffset: play.viewOffset,
+        duration: play.duration,
+        percentComplete: play.percentComplete,
+        completed: play.completed
+      }, manifestItems);
+      return mapped.status === "mapped"
+        ? { status: "valid", value: mapped.globalOffsetMs }
+        : { status: "uncertain" };
+    }
     let offset = normalizeAudiobookEvidenceOffsetMs(play.viewOffset, bookDurationMs);
     if (offset <= 0 && play.percentComplete != null && bookDurationMs > 0) {
       offset = Math.round(bookDurationMs * Math.max(0, Math.min(100, play.percentComplete)) / 100);
@@ -3615,6 +3658,7 @@ export class DashboardService {
       userId: row.user_id, 
       username: row.plex_username, 
       displayName,
+      plexGuid: row.plex_guid ?? undefined,
       displayNames,
       confirmedUserIds,
       displayTitle: resolveDashboardDisplayTitle({

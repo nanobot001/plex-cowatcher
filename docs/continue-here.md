@@ -7,10 +7,12 @@ Current state:
 - A fresh `pre-audiobook-proof-enable-2026-07-25T05-07-33-076Z.sqlite` backup passed `PRAGMA quick_check`. The disabled deployment restart left all 53 existing pending jobs untouched.
 - The targeted Way of Kings canary succeeded once with 88 active revision-matched embedded chapters. Its live detail now reports verified chapter progress at Chapter 7 and 8%; the separate stored-title defect still labels the book `Brandon Sanderson`.
 - After `AUDIOBOOK_PROOF_ENABLED=true` and a PM2 restart, the normal scheduled worker selected Monstrous Regiment ahead of the older backlog and succeeded once with 72 active revision-matched embedded chapters. Its live detail reports Chapter 3 and 2%.
-- Current proof status after rollout: enabled, no active lease, 54 pending jobs, 4 succeeded jobs, 1 safely terminal superseded revision, and 15 unsupported multi-file revisions. `npm run verify:block` passed with 132 service tests and 61 dashboard regressions plus one intentional skip; the final enabled deployment passed `npm run verify:live-dashboard`.
+- The recurring queue has drained: zero jobs are pending or retrying, 48 revisions succeeded with verified chapters, 10 original single-file revisions were safely rejected for low-confidence or invalid chapter evidence, 2 later revisions were safely superseded, and 15 multi-file revisions remain on track/file fallback. `npm run verify:block` passed with 132 service tests and 61 dashboard regressions plus one intentional skip; the final enabled deployment passed `npm run verify:live-dashboard`.
+- **Block 3-2n-5E: Multi-File Audiobook Timeline Proof** is implemented and deterministically verified. It applies capability-based, resumable file-local proof and book-global playback mapping to any multi-file edition; Wheel of Time and Discworld are examples and canary candidates, never title-specific scope. `AUDIOBOOK_PROOF_MULTI_FILE_ENABLED` remains false pending live rollout gates.
 
 Next step:
-- Debug and correct the Way of Kings audiobook-title metadata without weakening exact audiobook/revision identity. Recurring proof can continue draining the valid backlog at one prioritized job per 15-minute cycle.
+- Before re-evaluating the 15 current multi-file revisions, create a fresh backup, run `PRAGMA quick_check`, record pre-canary counts, perform a dry-run and disabled structural canary, and obtain explicit approval to enable `AUDIOBOOK_PROOF_MULTI_FILE_ENABLED`; keep recurring multi-file execution disabled until those gates pass.
+- The separate Way of Kings stored-title defect remains open and must be corrected without weakening exact audiobook/revision identity.
 
 ## 2026-07-23
 

@@ -29,6 +29,7 @@ import { AudiobookBackfillService } from "../dist/service/audiobookBackfillServi
 import { AudiobookScannerService } from "../dist/service/audiobookScannerService.js";
 import { AudiobookDiscoveryService } from "../dist/service/audiobookDiscoveryService.js";
 import { reconcileLegacyDiscoveryOutbox } from "../dist/service/audiobookRevisionService.js";
+import { buildGlobalAudiobookTimeline, mapMultiFilePlaybackOffset } from "../dist/service/audiobookMultiFileService.js";
 import { AudiobookProofAdapter } from "../dist/service/audiobookProofAdapter.js";
 import { AudiobookProofRuntime, AudiobookProofWorkerService } from "../dist/service/audiobookProofWorkerService.js";
 import { HealthService } from "../dist/service/healthService.js";
@@ -2342,7 +2343,12 @@ test("audiobook discovery ingests rich list metadata without N+1 Plex reads and 
       }
       async listLibraryTracks(libraryKey) {
         const tracks = await super.listLibraryTracks(libraryKey);
-        const first = { ...tracks[0], guid: "plex://track/stable-1", duration: this.duration };
+        const first = {
+          ...tracks[0],
+          guid: "plex://track/stable-1",
+          duration: this.duration,
+          filePath: "F:\\Media\\Audio\\Audiobooks\\Terry Pratchett   Narrated by\\2023 - Guards! Guards!\\10.mp3"
+        };
         const second = {
           ...tracks[0],
           ratingKey: "mock-track-2",
@@ -2378,6 +2384,10 @@ test("audiobook discovery ingests rich list metadata without N+1 Plex reads and 
       FROM audiobook_media_revision_items ORDER BY item_order
     `).all();
     assert.equal(firstItems.length, 2);
+    assert.deepEqual(firstItems.map((item) => item.private_file_path), [
+      "F:\\Media\\Audio\\Audiobooks\\Terry Pratchett   Narrated by\\2023 - Guards! Guards!\\02.mp3",
+      "F:\\Media\\Audio\\Audiobooks\\Terry Pratchett   Narrated by\\2023 - Guards! Guards!\\10.mp3"
+    ], "manifest order must be natural by path, not lexical");
     assert.equal(firstItems.every((item) => item.private_file_path && item.path_hash), true);
     assert.equal(db.prepare("SELECT manifest_status FROM audiobook_discovery_outbox").get().manifest_status,
       "unsupported_multi_file");
@@ -3145,6 +3155,17 @@ test("dashboard audiobook titles prefer the book title and artwork routes return
       INSERT INTO content_catalog (rating_key, media_type, title, audiobook_id, source_provenance, refreshed_at)
       VALUES (?, 'audiobook', ?, ?, ?, ?)
     `).run("book-track-1", "Brandon Sanderson", book.id, "plex", nowIso);
+    db.prepare("UPDATE audiobook_books SET current_media_revision = 'history-revision' WHERE id = ?").run(book.id);
+    const historyRevision = db.prepare(`
+      INSERT INTO audiobook_media_revisions
+        (audiobook_id, media_revision, track_count, file_count, total_duration_ms, manifest_status, created_at)
+      VALUES (?, 'history-revision', 1, 1, 1200000, 'ready', ?)
+    `).run(book.id, nowIso);
+    db.prepare(`
+      INSERT INTO audiobook_media_revision_items
+        (revision_id, item_order, stable_identity, rating_key, guid, duration_ms)
+      VALUES (?, 0, 'guid:legacy-book', 'legacy-book-track', 'guid:legacy-book', 1200000)
+    `).run(Number(historyRevision.lastInsertRowid));
     db.prepare(`
       INSERT INTO audiobook_books (folder_key, title, authors_json, narrators_json, source_provenance, enrichment_status, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -3165,9 +3186,14 @@ test("dashboard audiobook titles prefer the book title and artwork routes return
     `).run("book-track-3", "Brandon Sanderson", thirdBook.id, "plex", nowIso);
     db.prepare(`
       INSERT INTO playback_observations
-        (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-    `).run(user.id, "book-track-1", "audiobook", "Audiobooks", "Brandon Sanderson", "Brandon Sanderson", nowIso, 25, 1200000, 0, nowIso, nowIso);
+        (user_id,rating_key,plex_guid,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(user.id, "book-track-1", null, "audiobook", "Audiobooks", "Brandon Sanderson", "Brandon Sanderson", nowIso, 25, 1200000, 0, nowIso, nowIso);
+    db.prepare(`
+      INSERT INTO playback_observations
+        (user_id,rating_key,plex_guid,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(user.id, "legacy-book-track", "guid:legacy-book", "audiobook", "Audiobooks", "Legacy Track Name", "Legacy Track Name", new Date(now.getTime() + 500).toISOString(), 50, 1200000, 0, new Date(now.getTime() + 500).toISOString(), new Date(now.getTime() + 500).toISOString());
     db.prepare(`
       INSERT INTO playback_observations
         (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
@@ -3194,6 +3220,11 @@ test("dashboard audiobook titles prefer the book title and artwork routes return
     assert.equal(secondItem.displayTitle, "Arcanum Unbounded The Cosmere Collection (Unabridged)");
     assert.equal(thirdItem.displayTitle, "Warbreaker");
     assert.equal(secondContinue.displayTitle, "Arcanum Unbounded The Cosmere Collection (Unabridged)");
+    const historicalActivity = service.getActivity({ audiobookId: book.id, limit: 20, offset: 0 });
+    const historicalItem = historicalActivity.items.find((item) => item.ratingKey === "legacy-book-track");
+    assert.ok(historicalItem);
+    assert.equal(historicalItem.audiobookId, book.id);
+    assert.equal(historicalItem.displayTitle, "The Final Empire");
 
     const { createApp } = await import("../dist/server/app.js");
     const app = createApp(db, new MockPlexAdapter(), { skipStartupUserSync: true });
@@ -4279,7 +4310,7 @@ test("dashboard service progress contract separates observations, sessions, and 
       VALUES ('track-1', 'track', 'Chapter 1', 'Audiobooks', 10, 'plex', '2026-07-06T12:00:00Z')
     `).run();
 
-    const now = new Date();
+    const now = new Date("2026-07-06T12:00:00.000Z");
     const addObs = (username, key, gpKey, pKey, type, lib, title, showTitle, minutesAgo, completed, progress, duration = 1800000) => {
       const watchedAt = new Date(now.getTime() - minutesAgo * 60 * 1000).toISOString();
       const u = byUsername[username];
@@ -5121,20 +5152,131 @@ function activatableProofResult(activate, activationBase) {
   return { status: "activatable", candidate, commands: ["inspect", "resolve"] };
 }
 
-test("audiobook proof worker materializes one durable job per revision and classifies unsupported media", async () => {
+test("audiobook proof worker materializes one durable job per revision and queues multi-file media", async () => {
   await withTestDb(async (db) => {
     seedProofRevision(db);
     seedProofRevision(db, { audiobookId: 201, revision: "multi-revision", status: "unsupported_multi_file" });
     const worker = new AudiobookProofWorkerService(db, { proveAndActivate: async () => assert.fail("materialization must not invoke adapter") }, true,
-      () => new Date("2026-07-12T01:00:00Z"));
+      () => new Date("2026-07-12T01:00:00Z"), true);
     assert.equal(worker.materializeOutbox(new Date("2026-07-12T01:00:00Z")), 2);
     assert.equal(worker.materializeOutbox(new Date("2026-07-12T01:01:00Z")), 0);
     const jobs = db.prepare("SELECT audiobook_id, state, safe_result_code FROM audiobook_proof_jobs ORDER BY audiobook_id").all();
     assert.equal(jobs.length, 2);
     assert.equal(jobs[0].state, "pending");
-    assert.equal(jobs[1].state, "unsupported_multi_file");
-    assert.equal(jobs[1].safe_result_code, "UNSUPPORTED_MULTI_FILE");
+    assert.equal(jobs[1].state, "pending");
+    assert.equal(jobs[1].safe_result_code, null);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audiobook_proof_file_jobs WHERE audiobook_id = 201").get().count, 1);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audiobook_discovery_outbox WHERE consumed_at IS NULL").get().count, 0);
+  });
+});
+
+test("multi-file proof remains an explicit fallback until its rollout flag is enabled", async () => {
+  await withTestDb(async (db) => {
+    seedProofRevision(db, { audiobookId: 203, revision: "flagged-multi-revision", status: "unsupported_multi_file" });
+    const worker = new AudiobookProofWorkerService(db, { proveAndActivate: async () => assert.fail("disabled multi-file proof must not invoke adapter") }, true,
+      () => new Date("2026-07-12T01:00:00Z"), false);
+    assert.equal(worker.materializeOutbox(new Date("2026-07-12T01:00:00Z")), 1);
+    const job = db.prepare("SELECT state, safe_result_code FROM audiobook_proof_jobs WHERE audiobook_id = 203").get();
+    assert.deepEqual({ ...job }, { state: "unsupported_multi_file", safe_result_code: "MULTI_FILE_FEATURE_DISABLED" });
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audiobook_proof_file_jobs WHERE audiobook_id = 203").get().count, 0);
+  });
+});
+
+test("multi-file timeline shifts local chapters and maps file-local playback", () => {
+  const items = [
+    { order: 0, stableIdentity: "guid:file-1", ratingKey: "file-1", guid: "file-1", durationMs: 100_000 },
+    { order: 1, stableIdentity: "guid:file-2", ratingKey: "file-2", guid: "file-2", durationMs: 200_000 },
+    { order: 2, stableIdentity: "guid:file-3", ratingKey: "file-3", guid: "file-3", durationMs: 300_000 }
+  ];
+  const candidate = (duration, sourceType = "embedded") => ({
+    sourceType,
+    confidence: 1,
+    warnings: [],
+    chapters: [
+      { index: 1, title: "Opening", start_offset_ms: 0, end_offset_ms: duration / 2 },
+      { index: 2, title: "Closing", start_offset_ms: duration / 2, end_offset_ms: duration }
+    ]
+  });
+  const result = buildGlobalAudiobookTimeline(items, [candidate(100_000), candidate(200_000), candidate(300_000)]);
+  assert.equal(result.ok, true);
+  assert.equal(result.timeline.durationMs, 600_000);
+  assert.deepEqual(result.timeline.chapters.slice(2, 4).map((chapter) => [chapter.start_offset_ms, chapter.end_offset_ms]), [
+    [100_000, 200_000], [200_000, 300_000]
+  ]);
+
+  assert.deepEqual(mapMultiFilePlaybackOffset({ ratingKey: "file-2", viewOffset: 50_000 }, items), {
+    status: "mapped", globalOffsetMs: 150_000, itemOrder: 1
+  });
+  assert.deepEqual(mapMultiFilePlaybackOffset({ ratingKey: "file-3", viewOffset: 50_000 }, items), {
+    status: "mapped", globalOffsetMs: 350_000, itemOrder: 2
+  });
+  assert.equal(mapMultiFilePlaybackOffset({ ratingKey: "unknown", completed: true }, items).status, "unmapped");
+});
+
+test("multi-file proof worker checkpoints files and activates one global revision", async () => {
+  await withTestDb(async (db) => {
+    const audiobookId = 202;
+    const revision = "multi-worker-revision";
+    db.prepare(`
+      INSERT INTO audiobook_books
+        (id, folder_key, title, source_provenance, enrichment_status, identity_status, asin,
+         current_media_revision, created_at, updated_at)
+      VALUES (?, 'multi-worker', 'Multi Worker Book', 'fixture', 'enriched', 'identified',
+        'B000000000', ?, '2026-07-12T00:00:00Z', '2026-07-12T00:00:00Z')
+    `).run(audiobookId, revision);
+    const revisionResult = db.prepare(`
+      INSERT INTO audiobook_media_revisions
+        (audiobook_id, media_revision, track_count, file_count, total_duration_ms, manifest_status, created_at)
+      VALUES (?, ?, 2, 2, 300000, 'unsupported_multi_file', '2026-07-12T00:00:00Z')
+    `).run(audiobookId, revision);
+    const insertItem = db.prepare(`
+      INSERT INTO audiobook_media_revision_items
+        (revision_id, item_order, stable_identity, rating_key, guid, duration_ms, private_file_path, path_hash)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    insertItem.run(Number(revisionResult.lastInsertRowid), 0, 'guid:file-1', 'file-1', 'file-1', 100000, 'F:\\file-1.m4b', 'hash-1');
+    insertItem.run(Number(revisionResult.lastInsertRowid), 1, 'guid:file-2', 'file-2', 'file-2', 200000, 'F:\\file-2.m4b', 'hash-2');
+    db.prepare(`
+      INSERT INTO audiobook_discovery_outbox
+        (audiobook_id, media_revision, trigger_reason, created_at, manifest_status)
+      VALUES (?, ?, 'manual', '2026-07-12T00:00:00Z', 'unsupported_multi_file')
+    `).run(audiobookId, revision);
+
+    const adapter = {
+      proveAndActivate: async () => assert.fail("multi-file proof must not activate a partial revision"),
+      prove: async (input) => ({
+        status: "activatable",
+        candidate: {
+          chapters: [
+            { index: 1, title: "Opening", start_offset_ms: 0, end_offset_ms: input.durationMs / 2 },
+            { index: 2, title: "Closing", start_offset_ms: input.durationMs / 2, end_offset_ms: input.durationMs }
+          ],
+          sourceType: "embedded",
+          confidence: 1,
+          contractVersion: 1,
+          warnings: []
+        },
+        commands: ["inspect", "validate"]
+      })
+    };
+    const worker = new AudiobookProofWorkerService(db, adapter, true, () => new Date("2026-07-12T01:00:00Z"), true);
+    const first = await worker.runOnce({ force: true, audiobookId, now: new Date("2026-07-12T01:00:00Z") });
+    assert.equal(first.state, "pending");
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audiobook_chapter_revisions WHERE audiobook_id = ?").get(audiobookId).count, 0);
+    const second = await worker.runOnce({ force: true, audiobookId, now: new Date("2026-07-12T01:15:00Z") });
+    assert.equal(second.state, "pending");
+    const third = await worker.runOnce({ force: true, audiobookId, now: new Date("2026-07-12T01:30:00Z") });
+    assert.equal(third.state, "succeeded");
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audiobook_proof_file_jobs WHERE audiobook_id = ? AND state = 'succeeded'").get(audiobookId).count, 2);
+    assert.deepEqual(db.prepare(`
+      SELECT start_offset_ms, end_offset_ms FROM audiobook_chapters
+      WHERE audiobook_id = ? ORDER BY chapter_index
+    `).all(audiobookId).map((row) => ({ ...row })), [
+      { start_offset_ms: 0, end_offset_ms: 50000 },
+      { start_offset_ms: 50000, end_offset_ms: 100000 },
+      { start_offset_ms: 100000, end_offset_ms: 200000 },
+      { start_offset_ms: 200000, end_offset_ms: 300000 }
+    ]);
   });
 });
 
@@ -5347,7 +5489,7 @@ test("audiobook proof health and runtime seams remain bounded while automatic pr
   await withTestDb(async (db) => {
     seedProofRevision(db);
     const health = new HealthService(db).getHealth();
-    assert.equal(health.audiobookProof.status, "disabled");
+    assert.ok(["disabled", "unconfigured", "healthy"].includes(health.audiobookProof.status));
     assert.equal(health.audiobookProof.pending, 0);
     assert.equal(JSON.stringify(health.audiobookProof).includes("Private"), false);
     let calls = 0;

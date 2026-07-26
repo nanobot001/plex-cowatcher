@@ -104,6 +104,7 @@ Discovery events must not contain file paths, authenticated URLs, tokens, raw Pl
 ### Audiobook proof events
 
 - `audiobook_proof_completed` records job ID, terminal/retry state, attempt count, and an allowlisted result code.
+- `audiobook_proof_progress` records only the parent job ID, pending state, bounded attempt count, and allowlisted checkpoint code while a multi-file revision advances; it never includes paths, titles, or analyzer output.
 - `audiobook_proof_canary_requested` records a confirmed one-shot request and optional numeric audiobook ID.
 - `audiobook_proof_requeued` records the selected existing job ID and whether the confirmed request applied or was skipped.
 

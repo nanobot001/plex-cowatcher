@@ -166,8 +166,9 @@ The corrective sequence is mandatory and ordered:
     2. **3-2n-5d-2 - Trusted External Proof Adapter:** Validate the configured read-only `audiobook` JSON boundary with strict quality, timeout, and privacy controls.
     3. **3-2n-5d-2A - Embedded Chapter Timeline Normalization:** Implemented 2026-07-12. Normalize valid embedded starts into duration-bounded ranges; the corrected Eric canary activated 57 revision-matched embedded chapters.
     4. **3-2n-5d-3 - Durable Proof Worker And Rollout:** Implemented and enabled 2026-07-25. Targeted canaries remain audiobook-scoped, ordinary work prioritizes recent playback, and the worker processes one durable job per 15-minute cycle.
-27. **3-2n-6C - Visible Progress And Enriched Detail:** Implemented 2026-07-12. Progress cards expose explicit completed/total/percentage summaries, and the larger lazy modal adds source, activity, and participant context without weakening unknown-total honesty.
-28. **3-2n-6E - Universal Detail Workspace Alignment:** Planned umbrella inserted before 6D implementation to correct the separate Overview/Progress detail paths while preserving the already-published 6D numbering; do not implement the umbrella directly.
+27. **3-2n-5E - Multi-File Audiobook Timeline Proof:** Implemented and deterministically verified. Replace blanket multi-file rejection with capability-based, resumable book-global proof and map retained historical playback through exact file-local offsets without title-specific rules or invented evidence; keep live execution gated until canary rollout evidence is recorded.
+28. **3-2n-6C - Visible Progress And Enriched Detail:** Implemented 2026-07-12. Progress cards expose explicit completed/total/percentage summaries, and the larger lazy modal adds source, activity, and participant context without weakening unknown-total honesty.
+29. **3-2n-6E - Universal Detail Workspace Alignment:** Planned umbrella inserted before 6D implementation to correct the separate Overview/Progress detail paths while preserving the already-published 6D numbering; do not implement the umbrella directly.
     1. **3-2n-6E-1 - Canonical Detail Contract And Entry Resolution:** Implemented 2026-07-13. Added one typed identity resolver and bounded additive workspace read contract while preserving existing UI/endpoints.
     2. **3-2n-6E-2 - Shared Detail Shell And Category Presenters:** Implemented 2026-07-14. Added one content-first accessible shell, explicit media-category presenters, and canonical routing for all non-Progress callers.
     3. **3-2n-6E-2A - Rich Detail Hero And Watcher Lanes:** Implemented 2026-07-14. Added distinct private poster/backdrop handling, honest Audiobook fallback treatment, and ordered interactive watcher lanes before 6E-3 inherits the shell.
@@ -181,12 +182,12 @@ The corrective sequence is mandatory and ordered:
     8. **3-2n-6E-3A - Replay Semantics And Session Provenance:** Implemented 2026-07-16. Raw observations, reconstructed sessions, household-local viewing days, and evidence-backed replays are separate across all replay-facing Progress and shared-detail projections.
     9. **3-2n-6E-3B - On-Demand Plex Metadata And Artwork Refresh:** Implemented 2026-07-17. Added confirmed title-scoped shared-detail refresh from Plex with exact identity/GUID targeting, stable artwork revisions, privacy-safe failure handling, and no restart or whole-library refresh requirement.
     10. **3-2n-6E-3C - Plex Historical Movie Backfill:** Implemented 2026-07-18. Added per-user Plex movie last-view recovery before the 2022 cutoff with exact-GUID identity, durable raw snapshots, source-labeled derived observations, dry-run/apply confirmation, idempotent reruns, and no replay inflation.
-29. **3-2n-6D - Whisper-Assisted Audiobook Resume Context:** Planned umbrella. Convert source-backed audiobook history stops into private bounded transcript context and a useful resume modal after 6E establishes the shared Audiobook presenter, 6E-3A has corrected replay/session semantics, and 6E-3B/6E-3C provide explicit metadata/artwork revalidation and historical-source reconciliation; do not implement the umbrella directly.
+30. **3-2n-6D - Whisper-Assisted Audiobook Resume Context:** Planned umbrella. Convert source-backed audiobook history stops into private bounded transcript context and a useful resume modal after 6E establishes the shared Audiobook presenter, 6E-3A has corrected replay/session semantics, and 6E-3B/6E-3C provide explicit metadata/artwork revalidation and historical-source reconciliation; do not implement the umbrella directly.
     1. **3-2n-6D-1 - Bounded Resume Transcription Contract:** Add and verify a tool-agnostic read-only `transcribe-window` JSON command in the separate `audiobook` project, plus sanitized CoWatcher fixtures.
     2. **3-2n-6D-2 - Trusted Resume Adapter And State:** Validate the external transcript contract and add revision-safe durable jobs/results without connecting automatic execution.
     3. **3-2n-6D-3 - Stable-Stop Worker And Rollout:** Preserve explicit Tautulli stop evidence, coalesce candidates, run one bounded background job, expose safe operations, and verify resource behavior with a canary.
     4. **3-2n-6D-4 - Audiobook Resume Modal:** Replace the default chapter wall with listener-attributed position, completed stopping-point excerpt, compact chapter map, up-next, and optional complete-list disclosure.
-30. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
+31. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
 
 Each block, including every 3-2m sub-block, must pass its own exit gate before the next begins. Block 3-3 is paused until 3-2o completes.
 
@@ -224,6 +225,10 @@ Implemented on 2026-07-11. Whole-library discovery now runs on a persisted PM2 c
 ### Block 3-2n-5d: Automatic Audiobook Chapter Proof Handoff
 
 Umbrella only. Blocks 5D-1, 5D-2, 5D-2A, and 5D-3 are implemented and verified. The recurring proof worker was enabled on 2026-07-25 after a fresh database backup, a targeted Way of Kings canary activated 88 revision-matched embedded chapters, and the next automatic cycle activated 72 embedded chapters for Monstrous Regiment without Whisper or media rewriting.
+
+### Block 3-2n-5E: Multi-File Audiobook Timeline Proof
+
+Implemented and deterministically verified. Extends the verified chapter pipeline to any deterministically ordered multi-file edition through resumable per-file proof, atomic book-global timeline assembly, and exact file-local playback mapping. `AUDIOBOOK_PROOF_MULTI_FILE_ENABLED` remains false until the documented backup, disabled canary, targeted re-evaluation, and explicit recurring rollout gates pass. Current Wheel of Time and Discworld editions are representative canary candidates only; behavior remains capability-based and preserves unresolved history as source-honest fallback.
 
 ### Deferred Beyond The Phase 3 MVP
 
