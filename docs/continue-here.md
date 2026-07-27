@@ -1,16 +1,33 @@
 # Continue Here
 
+## 2026-07-27 — Project-Wide Audiobook Progress Sequence Planned
+
+Current state:
+- Blocks **3-2n-6F** and **3-2n-6G** are merged into local and remote `main` at merge commit `88eff0a2`.
+- 6G validates existing audiobook position evidence and keeps raw observations unchanged, but the high-water fallback cannot reliably distinguish an intentional rewind from stale/reset evidence without an exact offset.
+- Overview, Progress, and shared detail use the 6G resolver. Timeline activity rings, Media Explorer bars/sorting, and the raw CSV path still consume source percentages under their existing contracts.
+- Three planned blocks now lock the project-wide correction:
+  1. **3-2n-6H** — canonical current/furthest/session/chapter/rewind evaluator;
+  2. **3-2n-6I** — exact future position evidence capture after a configured-source audit;
+  3. **3-2n-6J-A** — service/API consumer inventory, canonical projection adoption, compatibility, raw export preservation, and write isolation;
+  4. **3-2n-6J-B** — browser presentation and cross-surface regression over the stable 6J-A contract.
+- The planned 6D resume-context sequence must reuse 6I exact stop evidence; 6D-3 must not create a competing capture path.
+
+Next step:
+- Implement **3-2n-6H only** on a dedicated branch such as `codex/3-2n-6h-canonical-audiobook-progress-timeline`.
+- Keep 6I ingestion and 6J-A/6J-B adoption out of the 6H branch. Each child must independently pass `npm run verify:block`; only deployed dashboard/runtime changes require the separate live gate.
+
 ## 2026-07-26 — Audiobook Progress Repair Implemented
 
 Current state:
 - The Overview digest block **3-2n-6F** is merged into `main`; this branch is based on that merged result.
-- **3-2n-6G: Audiobook Progress Evidence Repair And Retroactive Rebuild** is implemented on `codex/audiobook-progress-evidence-repair`.
+- **3-2n-6G: Audiobook Progress Evidence Repair And Retroactive Rebuild** was implemented on `codex/audiobook-progress-evidence-repair` and later merged through PR #32.
 - Raw audiobook observations remain unchanged. Shared derived progress now validates position evidence, exposes verified/approximate/stale/unavailable quality, and uses a high-water mark so tiny Tautulli `play_duration` reset rows do not discard the cumulative position or inflate listening time.
 - The live Way of Kings canary now has distinct per-session chapter progress, while Progress and shared detail agree on chapter 18, 19% book progress, `stale_progress`, `play_duration`, and unverified status.
 - `npm run verify:block` passed (145 service tests, 69 browser regressions plus one intentional skip, syntax/tool contracts, 131.95 ms load canary). Only `plex-cowatch-service` was restarted and `npm run verify:live-dashboard` passed. A read-only before/after hash confirmed all 46 source-evidence rows were unchanged by dashboard reads.
 
 Next step:
-- Review the pushed 3-2n-6G branch and merge it through the normal pull-request path. Keep the separate planned 3-2n-6D resume-context work out of this branch.
+- Historical note: the 3-2n-6G review/merge step is complete. Use the newer 2026-07-27 handoff above.
 
 ## 2026-07-26
 

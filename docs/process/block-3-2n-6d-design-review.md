@@ -3,6 +3,7 @@
 > Review status: Pre-implementation review complete.
 > Reviewed scope: 3-2n-6D umbrella and children 6D-1 through 6D-4.
 > Intended outcome: A private, useful audiobook resume experience built from a bounded transcript near a trustworthy stopping position without noticeable service lag or source dishonesty.
+> 2026-07-27 dependency update: Block 3-2n-6I now owns exact stop/activity position capture and provenance; 6D consumes that evidence and does not add a competing ingestion path.
 
 ## Outcome Verdict
 
@@ -14,15 +15,15 @@ The current stack can plausibly produce a short verbatim stopping-point excerpt.
 
 | Dimension | Finding | Resolution in tickets |
 | --- | --- | --- |
-| Clarity | “Stop” previously implied a live pause event, but CoWatcher polls Tautulli history rows. | Umbrella and 6D-3 define `history_stop_candidate` and forbid live-pause claims. |
+| Clarity | “Stop” previously implied a live pause event, while existing CoWatcher ingestion polls Tautulli history rows. | 6I preserves the exact source classification; the umbrella and 6D-3 consume only eligible exact stop evidence and forbid unsupported live-pause claims. |
 | Scope | External transcription, adapter/state, worker rollout, and UI were too large for one turn; the first backend split remained oversized. | Split into 6D-1 external contract, 6D-2 adapter/state, 6D-3 worker/rollout, and 6D-4 modal. |
 | Acceptance criteria | “Low CPU” and “no lag” were hardware-dependent and untestable as written. | Test concurrency/thread/priority/clip limits deterministically; record CPU, peak working set, wall time, watcher continuity, and dashboard responsiveness during canary without inventing a universal CPU percentage. |
-| Assumptions | Python, ffmpeg, `faster-whisper`, model cache, process-priority support, stop timestamps, and offset units were inferred rather than proven. | 6D-1 requires runtime probes; 6D-3 preserves raw `stopped_at` separately and locks millisecond offset fixtures before clipping. |
+| Assumptions | Python, ffmpeg, `faster-whisper`, model cache, process-priority support, stop timestamps, and offset units were inferred rather than proven. | 6D-1 requires runtime probes; 6I proves and preserves exact stop time/offset provenance; 6D-3 revalidates that contract before clipping. |
 | Risks | Private paths, copyrighted text, raw transcript, temp clips, and child errors could leak. | Trusted boundary, path-safe envelopes, 20-word local excerpt, no full transcript persistence, inert rendering, and cleanup gates. |
 | Drift | A resume feature could become full-book transcription, cloud AI, search, or chapter repair. | Each ticket explicitly forbids those expansions and keeps independent enablement. |
 | Dependencies | CoWatcher has a trusted proof adapter, but `audiobook` has no arbitrary-window command. | 6D-1 adds an additive tool-agnostic `transcribe-window` command before 6D-2 invokes anything. |
 | Opportunities | Semantic summaries, multi-file mapping, and active-playback-aware scheduling could add value. | Record as follow-ups requiring separate evidence/tickets; do not smuggle them into this sequence. |
-| Blast radius | Two repositories, SQLite, ingestion, PM2 runtime, CLI/tool contracts, and dashboard are touched. | Separate child ownership, separate cross-repo commits, additive schema/contracts, disabled rollout, and UI last. |
+| Blast radius | Two repositories, SQLite resume state, PM2 runtime, CLI/tool contracts, and dashboard are touched. | 6I owns capture separately; 6D retains separate child ownership, cross-repo commits, additive contracts, disabled rollout, and UI last. |
 | Compatibility | Refactoring process execution could regress current chapter proof or legacy audiobook CLI parsing. | Keep proof/resume result types separate; shared runner only if content-agnostic; preserve `inspect`/`validate`/`resolve` and golden tests. |
 | Edge cases | Silence, music, stop near zero/end, rewinds, repeats, multiple listeners, hidden users, stale revisions, completed books, and no direct offset were unspecified. | Child acceptance criteria now classify or test each family and fall back without invented context. |
 | Security | Transcript text may contain HTML or instruction-like language; model loading may trigger network access. | No LLM/tool interpretation, escaped text-only rendering, local-files-only model policy, bounded output, no public mutation route. |
@@ -44,8 +45,7 @@ The current stack can plausibly produce a short verbatim stopping-point excerpt.
 ### 2. Reliable live stoppage is not available
 
 - **Problem:** Current ingestion polls `get_history`, normalizes `date`/`stopped`, and stores a history observation. It does not observe a live pause transition or active-session state.
-- **Fix adopted:** Define eligibility from a source-backed history-session offset plus a 15-minute quiet/coalescing window. Do not display “paused at” or claim real-time detection.
-- **Future split if needed:** Add Tautulli `get_activity` or Plex session events only if canary evidence shows history rows are too delayed or ambiguous.
+- **Updated prerequisite:** Block 3-2n-6I now owns the configured-source audit and exact stop/activity position capture. 6D consumes only eligible exact stop evidence and retains its 15-minute quiet/coalescing window; it does not display “paused at” or create another capture path.
 
 ### 3. Offset precision and media mapping are conditional
 
@@ -56,7 +56,7 @@ The current stack can plausibly produce a short verbatim stopping-point excerpt.
 ### 3A. Existing `watched_at` is not a safe stop timestamp
 
 - **Problem:** The current adapter sets `watched_at` from `date ?? stopped`, so a row containing both prefers `date`. Reinterpreting it as the stop time would corrupt quiet-window semantics.
-- **Fix adopted:** 6D-3 adds an optional source `stopped_at` from raw Tautulli `stopped`, preserves legacy `watched_at`, and makes rows without explicit stop evidence ineligible.
+- **Updated prerequisite:** 6I preserves an explicit source stop time and direct-offset provenance additively while leaving legacy `watched_at` unchanged. 6D-3 consumes that evidence and keeps rows without an explicit exact stop ineligible.
 
 ### 4. Runtime availability is unproven
 
