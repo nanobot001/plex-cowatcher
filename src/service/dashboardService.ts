@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Db } from "../db/database.js";
-import type { DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket, ProgressHierarchyExpansion, ProgressNodeState, ProgressNodeStateSource, ProgressWatcherEvidence, DashboardDetailIdentity, DashboardDetailIdentityInput, DashboardDetailResolution, DashboardDetailWorkspaceResult, DashboardDetailWorkspaceHierarchyResult, DashboardMovieHistory, DashboardMovieHistoryRow, DashboardArchiveIdentityReview } from "../types/api.js";
+import type { DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket, ProgressHierarchyExpansion, ProgressNodeState, ProgressNodeStateSource, ProgressWatcherEvidence, DashboardDetailIdentity, DashboardDetailIdentityInput, DashboardDetailResolution, DashboardDetailWorkspaceResult, DashboardDetailWorkspaceHierarchyResult, DashboardMovieHistory, DashboardMovieHistoryRow, DashboardArchiveIdentityReview, DashboardPlaybackDigest, DashboardPlaybackDigestChapter, DashboardPlaybackDigestEpisode, DashboardPlaybackDigestSession } from "../types/api.js";
 import { CowatchingIntelligenceService } from "./cowatchingIntelligenceService.js";
 import { CowatchAdjudicationService } from "./cowatchAdjudicationService.js";
 import { buildDashboardArtworkDescriptor, type DashboardArtworkDescriptor } from "./artworkService.js";
@@ -185,10 +185,10 @@ function normalizeAudiobookDisplayTitle(value?: string | null): string {
   return title.trim();
 }
 
-function resolveDashboardDisplayTitle(item: Pick<DashboardActivityItem, "category" | "showTitle" | "title" | "audiobookId" | "audiobookTitle" | "parentTitle">): string {
+function resolveDashboardDisplayTitle(item: Pick<DashboardActivityItem, "category" | "showTitle" | "title" | "audiobookId" | "audiobookTitle" | "audiobookAuthors" | "parentTitle">): string {
   if (item.category === "audiobook") {
     const rawTitle = item.title?.trim() || "";
-    const author = item.showTitle?.trim() || "";
+    const authors = item.audiobookAuthors ?? [];
     const canonicalTitle = item.audiobookTitle ?? item.parentTitle;
     const normalizedIdentity = (value: string) => normalizeAudiobookDisplayTitle(value)
       .replace(/\s*\([^()]*\)\s*/g, " ")
@@ -197,15 +197,19 @@ function resolveDashboardDisplayTitle(item: Pick<DashboardActivityItem, "categor
       .toLocaleLowerCase();
     const rawIdentity = normalizedIdentity(rawTitle);
     const canonicalIdentity = normalizedIdentity(canonicalTitle ?? "");
+    const canonicalLooksLikeAuthor = Boolean(canonicalIdentity && authors.some((author) => canonicalIdentity === normalizedIdentity(author)));
+    const canonicalLooksLikeParent = Boolean(canonicalIdentity && item.parentTitle?.trim() && canonicalIdentity === normalizedIdentity(item.parentTitle));
     const rawLooksLikeCanonicalBook = Boolean(rawIdentity && canonicalIdentity && (
       rawIdentity.includes(canonicalIdentity) || canonicalIdentity.includes(rawIdentity)
     ));
-    const preferredTitle = canonicalTitle && !rawLooksLikeCanonicalBook
+    const preferredTitle = canonicalTitle && !rawLooksLikeCanonicalBook && !canonicalLooksLikeAuthor && !canonicalLooksLikeParent
       ? canonicalTitle
       : rawTitle || canonicalTitle;
     return normalizeAudiobookDisplayTitle(preferredTitle)
       || normalizeAudiobookDisplayTitle(item.audiobookTitle ?? item.parentTitle ?? rawTitle)
-      || author;
+      || authors[0]
+      || item.showTitle
+      || "";
   }
   if (item.category === "tv" || item.category === "classic_tv" || item.category === "anime") {
     return item.showTitle?.trim() || item.title.trim() || "";
@@ -213,7 +217,7 @@ function resolveDashboardDisplayTitle(item: Pick<DashboardActivityItem, "categor
   return item.title.trim();
 }
 
-function explorerTitle(item: Pick<DashboardActivityItem, "category" | "showTitle" | "title" | "audiobookTitle" | "parentTitle">): string {
+function explorerTitle(item: Pick<DashboardActivityItem, "category" | "showTitle" | "title" | "audiobookTitle" | "audiobookAuthors" | "parentTitle">): string {
   return resolveDashboardDisplayTitle(item);
 }
 
@@ -1125,6 +1129,7 @@ export class DashboardService {
     const historicalAudiobookIdSql = `(SELECT revision.audiobook_id FROM audiobook_media_revision_items item JOIN audiobook_media_revisions revision ON revision.id = item.revision_id WHERE item.rating_key = po.rating_key OR (po.plex_guid IS NOT NULL AND item.guid = po.plex_guid) ORDER BY revision.created_at DESC, revision.id DESC LIMIT 1)`;
     const audiobookIdSql = `COALESCE(cat.audiobook_id, ${historicalAudiobookIdSql})`;
     const audiobookTitleSql = `(SELECT book.title FROM audiobook_media_revision_items item JOIN audiobook_media_revisions revision ON revision.id = item.revision_id JOIN audiobook_books book ON book.id = revision.audiobook_id WHERE item.rating_key = po.rating_key OR (po.plex_guid IS NOT NULL AND item.guid = po.plex_guid) ORDER BY revision.created_at DESC, revision.id DESC LIMIT 1)`;
+    const audiobookAuthorsSql = `(SELECT book.authors_json FROM audiobook_media_revision_items item JOIN audiobook_media_revisions revision ON revision.id = item.revision_id JOIN audiobook_books book ON book.id = revision.audiobook_id WHERE item.rating_key = po.rating_key OR (po.plex_guid IS NOT NULL AND item.guid = po.plex_guid) ORDER BY revision.created_at DESC, revision.id DESC LIMIT 1)`;
     if (p.dateFrom) { where += " AND po.watched_at >= ?"; args.push(new Date(p.dateFrom).toISOString()); }
     if (p.dateTo) { where += " AND po.watched_at <= ?"; args.push(new Date(p.dateTo).toISOString()); }
     if (p.user) { where += " AND u.plex_username = ?"; args.push(p.user); }
@@ -1153,7 +1158,7 @@ export class DashboardService {
       ? `EXISTS(SELECT 1 FROM archive_observation_links historyLink JOIN archive_watch_events historyEvent ON historyEvent.id=historyLink.archive_event_id WHERE historyLink.playback_observation_id=po.id AND historyLink.relation IN ('same_event','duplicate') AND historyEvent.source='plex_api_history')`
       : "0";
     const candidateLimit = Math.min(100_000, p.offset + p.limit);
-    const directRows = this.db.prepare(`SELECT po.*,u.plex_username,u.display_name AS synced_display_name,u.dashboard_alias,u.dashboard_shown,we.prompt_status,cc.status confirmation_status,cc.plex_sync_status,cat.library_title AS catalog_library_title,groupcat.library_title AS group_catalog_library_title,${audiobookIdSql} AS audiobook_id,COALESCE(ab.title, ${audiobookTitleSql}) AS audiobook_title,cat.parent_title AS catalog_parent_title,cat.grandparent_title AS catalog_grandparent_title,${plexHistoryLinkedSql} AS plex_history_linked,${confirmedParticipantsSql}${from}${where} ORDER BY ${order} LIMIT ? OFFSET 0`).all(...confirmedArgs, ...args, candidateLimit) as any[];
+    const directRows = this.db.prepare(`SELECT po.*,u.plex_username,u.display_name AS synced_display_name,u.dashboard_alias,u.dashboard_shown,we.prompt_status,cc.status confirmation_status,cc.plex_sync_status,cat.library_title AS catalog_library_title,groupcat.library_title AS group_catalog_library_title,COALESCE(ab.authors_json, ${audiobookAuthorsSql}) AS audiobook_authors_json,${audiobookIdSql} AS audiobook_id,COALESCE(ab.title, ${audiobookTitleSql}) AS audiobook_title,cat.parent_title AS catalog_parent_title,cat.grandparent_title AS catalog_grandparent_title,${plexHistoryLinkedSql} AS plex_history_linked,${confirmedParticipantsSql}${from}${where} ORDER BY ${order} LIMIT ? OFFSET 0`).all(...confirmedArgs, ...args, candidateLimit) as any[];
     const archiveRows = this.archiveService.queryDashboardActivity(100_000, this.includePlexPlayHistory)
       .filter((row) => this.archiveActivityMatchesFilters(row, p));
     const rows = [...directRows, ...archiveRows]
@@ -1422,6 +1427,7 @@ export class DashboardService {
       });
 
       const recentPlayback = this.buildRecentPlaybackCards(all, 24);
+      const recentPlaybackDigests = this.buildRecentPlaybackDigests(all, 24);
       const householdActivity = [...householdActivityMap.values()]
         .map((item) => ({
           ...item,
@@ -1439,6 +1445,7 @@ export class DashboardService {
       return {
         activity: baseActivity,
         recentPlayback,
+        recentPlaybackDigests,
         totals: { plays: baseActivity.total, people: new Set(all.map((item) => item.userId)).size, minutes: minutesFromSeconds(all.reduce((minutes, item) => minutes + normalizeDurationSeconds(item.duration), 0)), pendingPrompts: Number(pending.count) },
         categories: [...categoryStats.values()].map(s => ({ category: s.category, count: s.plays })),
         users,
@@ -3057,11 +3064,16 @@ export class DashboardService {
         episodeNumber = epPlays[0].episodeNumber;
       }
 
+      const episodeArtwork = buildDashboardArtworkDescriptor(this.db, ep.rating_key);
+
       seasonsMap.get(seasonName)!.episodes.push({
         ratingKey: ep.rating_key,
         title: ep.title,
         episodeNumber,
         duration: epPlays[0]?.duration || 0,
+        posterUrl: episodeArtwork.posterUrl,
+        artworkUrl: episodeArtwork.artworkUrl,
+        artworkRevision: episodeArtwork.artworkRevision,
         watchedStates,
         watcherEvidence
       });
@@ -3083,7 +3095,7 @@ export class DashboardService {
   private buildAudiobookHierarchy(
     audiobook: any,
     plays: DashboardActivityItem[],
-    people: Array<{ displayName: string }>
+    people: Array<{ displayName: string; userId?: number | null }>
   ): AudiobookChapterProgressSnapshot {
     const source = this.getActiveAudiobookChapterSource(audiobook.id);
     const cachedChapters = source ? this.getCachedAudiobookChapters(audiobook.id) : [];
@@ -3616,6 +3628,13 @@ export class DashboardService {
     const artworkKey = this.resolveArtworkKey({ ...row, rating_key: canonicalRatingKey }, category.category);
     const artwork = buildDashboardArtworkDescriptor(this.db, artworkKey);
     const displayName = resolveDashboardAlias(row.dashboard_alias, row.plex_username);
+    let audiobookAuthors: string[] = [];
+    if (typeof row.audiobook_authors_json === "string") {
+      try {
+        const parsed = JSON.parse(row.audiobook_authors_json);
+        if (Array.isArray(parsed)) audiobookAuthors = parsed.filter((value: unknown): value is string => typeof value === "string" && value.trim().length > 0);
+      } catch {}
+    }
     
     const cowatch = cowatchMap?.get(row.id);
     let relationship = "watched_by";
@@ -3666,6 +3685,7 @@ export class DashboardService {
         title: row.title,
         showTitle: row.show_title ?? undefined,
         audiobookTitle: row.audiobook_title ?? undefined,
+        audiobookAuthors,
         parentTitle: row.catalog_parent_title ?? undefined
       }),
       ratingKey: canonicalRatingKey,
@@ -3693,6 +3713,7 @@ export class DashboardService {
       parentRatingKey: row.parent_rating_key ?? undefined, 
       audiobookId: row.audiobook_id ?? undefined, 
       audiobookTitle: row.audiobook_title ?? undefined, 
+      audiobookAuthors,
       seasonNumber: row.season_number ?? undefined, 
       episodeNumber: row.episode_number ?? undefined, 
         evidence: { 
@@ -3748,6 +3769,226 @@ export class DashboardService {
       posterUrl: descriptor.posterUrl,
       artworkRevision: descriptor.artworkRevision
     };
+  }
+
+  private playbackDigestCanonicalKey(item: DashboardActivityItem): string {
+    if (item.category === "audiobook") {
+      if (item.audiobookId != null) return `audiobook:${item.audiobookId}`;
+      return `audiobook:${item.libraryName ?? ""}:${(item.showTitle ?? "").trim().toLocaleLowerCase()}:${resolveDashboardDisplayTitle(item).toLocaleLowerCase()}`;
+    }
+    if (item.category === "tv" || item.category === "classic_tv" || item.category === "anime") {
+      return `series:${item.category}:${item.grandparentRatingKey ?? item.ratingKey}`;
+    }
+    return `${item.category}:${item.ratingKey}`;
+  }
+
+  private buildRecentPlaybackSessionGroups(items: DashboardActivityItem[]) {
+    const sessionGapMs = 2 * 60 * 60 * 1000;
+    type SessionGroup = {
+      canonicalKey: string;
+      items: DashboardActivityItem[];
+      startMs: number;
+      endMs: number;
+      completedUsers: Set<number>;
+      eventIds: Set<string>;
+    };
+    const groupsByCanonical = new Map<string, SessionGroup[]>();
+    const groupsByEvent = new Map<string, SessionGroup>();
+    const groups: SessionGroup[] = [];
+    const ordered = [...items]
+      .filter(Boolean)
+      .sort((a, b) => a.watchedAt.localeCompare(b.watchedAt) || a.id - b.id);
+    const eventId = (item: DashboardActivityItem) => {
+      const value = item.evidence?.cowatchEventId;
+      return value == null || value === "" ? null : String(value);
+    };
+    const addToGroup = (group: SessionGroup, item: DashboardActivityItem) => {
+      const watchedMs = new Date(item.watchedAt).getTime();
+      const startMs = new Date(item.sessionStartAt ?? item.watchedAt).getTime();
+      const endMs = new Date(item.sessionEndAt ?? item.watchedAt).getTime();
+      group.items.push(item);
+      group.startMs = Math.min(group.startMs, watchedMs, startMs);
+      group.endMs = Math.max(group.endMs, watchedMs, endMs);
+      if (item.completed) group.completedUsers.add(item.userId);
+      const stableEventId = eventId(item);
+      if (stableEventId) {
+        group.eventIds.add(stableEventId);
+        groupsByEvent.set(`${group.canonicalKey}:${stableEventId}`, group);
+      }
+    };
+
+    for (const item of ordered) {
+      const key = this.playbackDigestCanonicalKey(item);
+      const stableEventId = eventId(item);
+      let group = stableEventId ? groupsByEvent.get(`${key}:${stableEventId}`) : undefined;
+      if (!group && stableEventId) {
+        const candidates = groupsByCanonical.get(key) ?? [];
+        const candidate = candidates[candidates.length - 1];
+        const watchedMs = new Date(item.watchedAt).getTime();
+        const withinGap = candidate && watchedMs - candidate.endMs < sessionGapMs;
+        const replayAfterCompletion = candidate && candidate.completedUsers.has(item.userId);
+        if (withinGap && !replayAfterCompletion && candidate.eventIds.size === 0) group = candidate;
+      }
+      if (!group && !stableEventId) {
+        const candidates = groupsByCanonical.get(key) ?? [];
+        const candidate = candidates[candidates.length - 1];
+        const watchedMs = new Date(item.watchedAt).getTime();
+        const withinGap = candidate && watchedMs - candidate.endMs < sessionGapMs;
+        const replayAfterCompletion = candidate && candidate.completedUsers.has(item.userId);
+        if (withinGap && !replayAfterCompletion) group = candidate;
+      }
+      if (!group) {
+        const watchedMs = new Date(item.watchedAt).getTime();
+        group = {
+          canonicalKey: key,
+          items: [],
+          startMs: watchedMs,
+          endMs: watchedMs,
+          completedUsers: new Set<number>(),
+          eventIds: new Set<string>()
+        };
+        groups.push(group);
+        const candidates = groupsByCanonical.get(key) ?? [];
+        candidates.push(group);
+        groupsByCanonical.set(key, candidates);
+      }
+      addToGroup(group, item);
+    }
+    return groups;
+  }
+
+  private buildAudiobookDigestChapterSummary(items: DashboardActivityItem[], userId: number, displayName: string): Pick<DashboardPlaybackDigestSession, "completedChapters" | "currentChapter"> {
+    const audiobookId = items.find((item) => item.audiobookId != null)?.audiobookId;
+    if (audiobookId == null) return { completedChapters: [], currentChapter: null };
+    const audiobook = this.db.prepare(`
+      SELECT id, title, parent_series_title, subseries_title, series_title, chapter_count, cover_url
+      FROM audiobook_books WHERE id = ?
+    `).get(audiobookId) as any;
+    if (!audiobook) return { completedChapters: [], currentChapter: null };
+    const progress = this.buildAudiobookHierarchy(audiobook, items, [{ userId, displayName }]);
+    if (!progress.hasVerifiedChapters) return { completedChapters: [], currentChapter: null };
+    const completedChapters: DashboardPlaybackDigestChapter[] = [];
+    const partialChapters: DashboardPlaybackDigestChapter[] = [];
+    for (const chapter of progress.chapters) {
+      const state = chapter.watchedStates[displayName];
+      const chapterValue = {
+        chapterIndex: chapter.chapterIndex ?? null,
+        title: chapter.title,
+        progressPercent: chapter.partialPositions[displayName] ?? null
+      } satisfies DashboardPlaybackDigestChapter;
+      if (state === "watched" || state === "repeated") completedChapters.push({ ...chapterValue, progressPercent: 100 });
+      else if (state === "partial") partialChapters.push(chapterValue);
+    }
+    partialChapters.sort((a, b) => (b.chapterIndex ?? -1) - (a.chapterIndex ?? -1));
+    return { completedChapters, currentChapter: partialChapters[0] ?? null };
+  }
+
+  private buildPlaybackDigestSession(
+    items: DashboardActivityItem[],
+    startMs: number,
+    endMs: number,
+    sessionKey: string,
+    userId: number | null
+  ): DashboardPlaybackDigestSession {
+    const sorted = [...items].sort((a, b) => b.watchedAt.localeCompare(a.watchedAt) || b.id - a.id);
+    const primary = sorted[0];
+    const displayNames = [...new Set(sorted.flatMap((item) => item.displayNames?.length ? item.displayNames : [item.displayName]))].filter(Boolean);
+    const relationship = sorted.some((item) => item.evidence?.relationship === "together")
+      ? "together"
+      : sorted.some((item) => item.evidence?.relationship === "likely_together")
+        ? "likely_together"
+        : "watched_by";
+    const displayName = userId == null ? displayNames.join(" + ") : (sorted.find((item) => item.userId === userId)?.displayName ?? primary.displayName);
+    const chapterSummary = primary.category === "audiobook" && userId != null
+      ? this.buildAudiobookDigestChapterSummary(sorted, userId, displayName)
+      : { completedChapters: [], currentChapter: null };
+    return {
+      sessionKey,
+      userId,
+      displayName,
+      startAt: new Date(startMs).toISOString(),
+      endAt: new Date(endMs).toISOString(),
+      itemCount: sorted.length,
+      relationship,
+      completedChapters: chapterSummary.completedChapters,
+      currentChapter: chapterSummary.currentChapter,
+      episodeKeys: primary.category === "tv" || primary.category === "classic_tv" || primary.category === "anime"
+        ? [...new Set(sorted.map((item) => item.ratingKey))]
+        : undefined
+    };
+  }
+
+  private buildRecentPlaybackDigests(items: DashboardActivityItem[], limit: number): DashboardPlaybackDigest[] {
+    type DigestAccumulator = DashboardPlaybackDigest & { rawItems: DashboardActivityItem[] };
+    const digests = new Map<string, DigestAccumulator>();
+    for (const group of this.buildRecentPlaybackSessionGroups(items)) {
+      const primary = [...group.items].sort((a, b) => b.watchedAt.localeCompare(a.watchedAt) || b.id - a.id)[0];
+      const localDate = this.householdLocalDate(new Date(group.startMs).toISOString());
+      const userBuckets = primary.category === "audiobook"
+        ? [...new Map(group.items.map((item) => [item.userId, group.items.filter((candidate) => candidate.userId === item.userId)])).entries()]
+        : [[null, group.items] as const];
+      for (const [userId, bucket] of userBuckets) {
+        const bucketItems = bucket as DashboardActivityItem[];
+        if (!bucketItems.length) continue;
+        const bucketPrimary = [...bucketItems].sort((a, b) => b.watchedAt.localeCompare(a.watchedAt) || b.id - a.id)[0];
+        const identity = this.playbackDigestCanonicalKey(bucketPrimary);
+        const digestKey = `${identity}:${userId ?? "household"}:${localDate}`;
+        let digest = digests.get(digestKey);
+        if (!digest) {
+          const detailKey = bucketPrimary.detailKey;
+          digest = {
+            digestKey,
+            category: bucketPrimary.category,
+            title: resolveDashboardDisplayTitle(bucketPrimary),
+            subtitle: bucketPrimary.category === "movie" ? null : (bucketPrimary.showTitle ?? null),
+            localDate,
+            latestWatchedAt: bucketPrimary.watchedAt,
+            posterUrl: bucketPrimary.posterUrl,
+            artworkUrl: bucketPrimary.artworkUrl,
+            artworkRevision: bucketPrimary.artworkRevision,
+            displayNames: [],
+            sessionCount: 0,
+            replayCount: 0,
+            observedMinutes: 0,
+            sessions: [],
+            episodes: bucketPrimary.category === "tv" || bucketPrimary.category === "classic_tv" || bucketPrimary.category === "anime" ? [] : undefined,
+            detailKey,
+            rawItems: []
+          };
+          digests.set(digestKey, digest);
+        }
+        const session = this.buildPlaybackDigestSession(bucketItems, group.startMs, group.endMs, `${digestKey}:${group.startMs}`, userId == null ? null : Number(userId));
+        digest.sessions.push(session);
+        digest.rawItems.push(...bucketItems);
+        digest.sessionCount = digest.sessions.length;
+        digest.latestWatchedAt = digest.latestWatchedAt > bucketPrimary.watchedAt ? digest.latestWatchedAt : bucketPrimary.watchedAt;
+        digest.displayNames = [...new Set([...digest.displayNames, ...bucketItems.flatMap((item) => item.displayNames?.length ? item.displayNames : [item.displayName])])].filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+        digest.observedMinutes += Math.round(bucketItems.reduce((total, item) => total + normalizeDurationSeconds(item.duration), 0) / 60);
+        if (digest.episodes) {
+          const episodeMap = new Map(digest.episodes.map((episode) => [episode.ratingKey, episode]));
+          for (const item of bucketItems) {
+            if (episodeMap.has(item.ratingKey)) continue;
+            const artwork = buildDashboardArtworkDescriptor(this.db, item.ratingKey);
+            episodeMap.set(item.ratingKey, {
+              ratingKey: item.ratingKey,
+              title: item.title,
+              seasonNumber: item.seasonNumber ?? null,
+              episodeNumber: item.episodeNumber ?? null,
+              watchedAt: item.watchedAt,
+              displayNames: [...new Set(item.displayNames?.length ? item.displayNames : [item.displayName])].filter(Boolean),
+              posterUrl: artwork.posterUrl,
+              artworkUrl: artwork.artworkUrl,
+              artworkRevision: artwork.artworkRevision
+            });
+          }
+          digest.episodes = [...episodeMap.values()].sort((a, b) => new Date(a.watchedAt).getTime() - new Date(b.watchedAt).getTime() || (a.episodeNumber ?? 0) - (b.episodeNumber ?? 0));
+        }
+      }
+    }
+    return [...digests.values()]
+      .map(({ rawItems, ...digest }) => ({ ...digest, replayCount: this.aggregateReplaySemantics(rawItems).total.replayCount }))
+      .sort((a, b) => b.latestWatchedAt.localeCompare(a.latestWatchedAt) || a.title.localeCompare(b.title))
+      .slice(0, limit);
   }
 
   private buildRecentPlaybackCards(items: DashboardActivityItem[], limit: number): DashboardActivityItem[] {

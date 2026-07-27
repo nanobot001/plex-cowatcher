@@ -340,13 +340,63 @@ export interface DashboardActivityItem {
   sessionStartAt?: string; sessionEndAt?: string;
   duration?: number; viewOffset?: number; percentComplete?: number; completed: boolean;
   artworkUrl: string; posterUrl: string; artworkRevision: string;
-  grandparentRatingKey?: string; parentRatingKey?: string; audiobookId?: number; audiobookTitle?: string;
+  grandparentRatingKey?: string; parentRatingKey?: string; audiobookId?: number; audiobookTitle?: string; audiobookAuthors?: string[];
   parentTitle?: string; grandparentTitle?: string;
   seasonNumber?: number; episodeNumber?: number;
   displayTitle?: string;
   displayNames?: string[];
   confirmedUserIds?: number[];
   evidence: Record<string, unknown>;
+}
+
+export interface DashboardPlaybackDigestChapter {
+  chapterIndex: number | null;
+  title: string;
+  progressPercent?: number | null;
+}
+
+export interface DashboardPlaybackDigestSession {
+  sessionKey: string;
+  userId: number | null;
+  displayName: string;
+  startAt: string;
+  endAt: string;
+  itemCount: number;
+  relationship: "watched_by" | "together" | "likely_together";
+  completedChapters: DashboardPlaybackDigestChapter[];
+  currentChapter?: DashboardPlaybackDigestChapter | null;
+  episodeKeys?: string[];
+}
+
+export interface DashboardPlaybackDigestEpisode {
+  ratingKey: string;
+  title: string;
+  seasonNumber: number | null;
+  episodeNumber: number | null;
+  watchedAt: string;
+  displayNames: string[];
+  posterUrl: string;
+  artworkUrl: string;
+  artworkRevision: string;
+}
+
+export interface DashboardPlaybackDigest {
+  digestKey: string;
+  category: DashboardCategory;
+  title: string;
+  subtitle: string | null;
+  localDate: string;
+  latestWatchedAt: string;
+  posterUrl: string;
+  artworkUrl: string;
+  artworkRevision: string;
+  displayNames: string[];
+  sessionCount: number;
+  replayCount: number;
+  observedMinutes: number;
+  sessions: DashboardPlaybackDigestSession[];
+  episodes?: DashboardPlaybackDigestEpisode[];
+  detailKey?: string;
 }
 
 export interface DashboardMediaItem extends DashboardActivityItem {
@@ -448,6 +498,9 @@ export interface ProgressEpisodeNode {
   title: string;
   episodeNumber: number | null;
   duration: number;
+  posterUrl?: string;
+  artworkUrl?: string;
+  artworkRevision?: string;
   watchedStates: Record<string, ProgressNodeState>;
   watcherEvidence: ProgressWatcherEvidence[];
 }

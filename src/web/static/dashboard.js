@@ -172,6 +172,139 @@ const sessionTimeLabel = item => {
   const end = item.sessionEndAt || item.watchedAt;
   return start && end && start !== end ? `${fmtDate(start)} – ${fmtDate(end)}` : fmtDate(end || start);
 };
+const digestDayLabel = value => {
+  if (!value) return "Recent activity";
+  const parsed = new Date(`${value}T12:00:00`);
+  return Number.isNaN(parsed.getTime()) ? value : new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(parsed);
+};
+const legacyDigestSessionLabel = session => {
+  const start = session.startAt || session.endAt;
+  const end = session.endAt || session.startAt;
+  return start && end && start !== end ? `${fmtDate(start)} â€“ ${fmtDate(end)}` : fmtDate(end || start);
+};
+const digestSessionViewerLabel = session => {
+  const name = session.displayName || "Household";
+  if (session.relationship === "together") return `Together ${name.replace(/ \\+ /g, ", ")}`;
+  if (session.relationship === "likely_together") return `Likely together ${name.replace(/ \\+ /g, ", ")}`;
+  return `Watched by ${name}`;
+};
+const legacyDigestEpisodeLabel = episode => {
+  const season = episode.seasonNumber == null ? "?" : episode.seasonNumber;
+  const number = episode.episodeNumber == null ? "?" : episode.episodeNumber;
+  return `S${season}E${number} â€“ ${episode.title}`;
+};
+const digestSessionLabel = session => {
+  const start = session.startAt || session.endAt;
+  const end = session.endAt || session.startAt;
+  const shortTime = value => value ? new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(value)) : "";
+  const startTime = shortTime(start);
+  const endTime = shortTime(end);
+  return start && end && start !== end ? `${startTime} - ${endTime}` : endTime || startTime;
+};
+const digestEpisodeLabel = episode => {
+  const season = episode.seasonNumber == null ? "?" : episode.seasonNumber;
+  const number = episode.episodeNumber == null ? "?" : episode.episodeNumber;
+  return `S${season}E${number} - ${episode.title}`;
+};
+const compactChapterIndexes = chapters => {
+  const indexes = [...new Set(chapters
+    .map(chapter => Number(chapter.chapterIndex))
+    .filter(index => Number.isInteger(index) && index > 0))].sort((a, b) => a - b);
+  if (!indexes.length) return `${chapters.length} chapter${chapters.length === 1 ? "" : "s"}`;
+  const ranges = [];
+  let start = indexes[0];
+  let end = indexes[0];
+  for (const index of indexes.slice(1)) {
+    if (index === end + 1) {
+      end = index;
+      continue;
+    }
+    ranges.push(start === end ? `${start}` : `${start}-${end}`);
+    start = index;
+    end = index;
+  }
+  ranges.push(start === end ? `${start}` : `${start}-${end}`);
+  return `Ch. ${ranges.join(", ")}`;
+};
+const digestSessionSummaryLabel = (digest, session, index) => digest.category === "audiobook"
+  ? `Session ${Number(index) + 1}`
+  : digestSessionViewerLabel(session);
+const digestEpisodeStrip = digest => {
+  const episodes = Array.isArray(digest.episodes) ? digest.episodes : [];
+  if (!episodes.length) return "";
+  return `<div class="digest-episode-strip" aria-label="Episodes in this digest">${episodes.slice(0, 6).map(episode => `
+    <img class="digest-episode-thumb" src="${esc(episode.posterUrl || "/static/icon.svg")}" alt="${esc(digestEpisodeLabel(episode))}" loading="lazy" onerror="this.src='/static/icon.svg';this.classList.add('artwork-fallback')">
+  `).join("")}${episodes.length > 6 ? `<span class="digest-episode-more">+${episodes.length - 6}</span>` : ""}</div>`;
+};
+const digestSessionBody = (digest, session) => {
+  const sections = [];
+  if (Array.isArray(session.completedChapters) && session.completedChapters.length) {
+    sections.push(`<div class="digest-session-section"><span class="digest-session-label">Completed</span><span>${esc(compactChapterIndexes(session.completedChapters))}</span></div>`);
+  }
+  if (session.currentChapter) {
+    const percent = session.currentChapter.progressPercent == null ? "partial" : `${session.currentChapter.progressPercent}%`;
+    const chapterIndex = Number.isInteger(Number(session.currentChapter.chapterIndex)) ? `Ch. ${session.currentChapter.chapterIndex}` : "Current chapter";
+    const percentValue = Number(session.currentChapter.progressPercent);
+    const hasPercent = Number.isFinite(percentValue);
+    const boundedPercent = hasPercent ? Math.max(0, Math.min(100, percentValue)) : 0;
+    const progressBar = hasPercent
+      ? `<span class="digest-progress-track" role="progressbar" aria-label="${esc(`${chapterIndex} progress`)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${boundedPercent}"><i style="width:${boundedPercent}%"></i></span>`
+      : "";
+    sections.push(`<div class="digest-session-section"><span class="digest-session-label">In progress</span><span class="digest-progress-summary"><span>${esc(chapterIndex)} - ${esc(percent)}</span>${progressBar}</span></div>`);
+  }
+  if (digest.category === "audiobook" && !sections.length) {
+    sections.push(`<div class="digest-session-section"><span class="digest-session-label">Chapter evidence</span><span class="muted">Verified chapter completion unavailable for this session.</span></div>`);
+  }
+  const episodes = Array.isArray(digest.episodes) && Array.isArray(session.episodeKeys)
+    ? digest.episodes.filter(episode => session.episodeKeys.includes(episode.ratingKey))
+    : [];
+  if (episodes.length) {
+    sections.push(`<div class="digest-session-section"><span class="digest-session-label">Episodes</span><span>${episodes.map(digestEpisodeLabel).map(esc).join(", ")}</span></div>`);
+  }
+  return sections.length ? `<div class="digest-session-body">${sections.join("")}</div>` : "";
+};
+const legacyPlaybackDigestCard = digest => {
+  const sessionCount = Number(digest.sessionCount || 0);
+  const replayText = Number(digest.replayCount || 0) > 0 ? ` Â· ${digest.replayCount} replay${Number(digest.replayCount) === 1 ? "" : "s"}` : "";
+  const listenerText = (digest.displayNames || []).join(", ");
+  const sessions = Array.isArray(digest.sessions) ? digest.sessions : [];
+  const sessionRows = sessions.map(session => `
+    <details class="digest-session" data-testid="digest-session">
+      <summary data-digest-toggle><span>${esc(digestSessionViewerLabel(session))}</span><span>${esc(digestSessionLabel(session))}</span></summary>
+      ${digestSessionBody(digest, session)}
+    </details>
+  `).join("");
+  return `<article class="cw-card cw-digest-card" data-cat="${esc(digest.category)}" data-testid="recent-playback-card" data-digest-card="true" tabindex="0" data-select-key="${esc(digest.detailKey || digest.digestKey)}" data-item="${encodeURIComponent(JSON.stringify(digest))}">
+    ${libraryArt(digest)}
+    ${digestEpisodeStrip(digest)}
+    <p>${esc(digest.title || "Recent playback")}</p>
+    ${digest.subtitle ? `<span class="cw-meta digest-subtitle">${esc(digest.subtitle)}</span>` : ""}
+    <span class="cw-meta">${esc(digestDayLabel(digest.localDate))} Â· ${esc(sessionCount)} session${sessionCount === 1 ? "" : "s"}${replayText}</span>
+    ${listenerText ? `<span class="cw-meta digest-listeners">${esc(listenerText)}</span>` : ""}
+    ${sessionRows ? `<div class="digest-session-list" aria-label="Playback sessions">${sessionRows}</div>` : ""}
+  </article>`;
+};
+const playbackDigestCard = digest => {
+  const sessionCount = Number(digest.sessionCount || 0);
+  const replayText = Number(digest.replayCount || 0) > 0 ? ` - ${digest.replayCount} replay${Number(digest.replayCount) === 1 ? "" : "s"}` : "";
+  const listenerText = (digest.displayNames || []).join(", ");
+  const sessions = Array.isArray(digest.sessions) ? digest.sessions : [];
+  const sessionRows = sessions.map((session, index) => `
+    <details class="digest-session" data-testid="digest-session">
+      <summary data-digest-toggle><span>${esc(digestSessionSummaryLabel(digest, session, index))}</span><span>${esc(digestSessionLabel(session))}</span></summary>
+      ${digestSessionBody(digest, session)}
+    </details>
+  `).join("");
+  return `<article class="cw-card cw-digest-card" data-cat="${esc(digest.category)}" data-testid="recent-playback-card" data-digest-card="true" tabindex="0" data-select-key="${esc(digest.detailKey || digest.digestKey)}" data-item="${encodeURIComponent(JSON.stringify(digest))}">
+    ${libraryArt(digest)}
+    ${digestEpisodeStrip(digest)}
+    <p>${esc(digest.title || "Recent playback")}</p>
+    ${digest.subtitle ? `<span class="cw-meta digest-subtitle">${esc(digest.subtitle)}</span>` : ""}
+    <span class="cw-meta">${esc(digestDayLabel(digest.localDate))} - ${esc(sessionCount)} session${sessionCount === 1 ? "" : "s"}${replayText}</span>
+    ${listenerText ? `<span class="cw-meta digest-listeners">${esc(listenerText)}</span>` : ""}
+    ${sessionRows ? `<div class="digest-session-list" aria-label="Playback sessions">${sessionRows}</div>` : ""}
+  </article>`;
+};
 const activityRow=x=>'<article class="activity-row" data-cat="'+esc(x.category)+'" tabindex="0" data-select-key="'+esc(x.groupKey || x.ratingKey)+'" data-item="'+encodeURIComponent(JSON.stringify(x))+'">'+art(x)+'<div class="activity-copy"><div class="activity-heading"><strong>'+mediaTitle(x)+'</strong><span>'+esc(x.categoryLabel)+'</span></div>'+(x.category==="audiobook"&&x.showTitle?'<p>By '+esc(x.showTitle)+'</p>':x.showTitle&&x.showTitle!==x.displayTitle?'<p>'+esc(x.title)+'</p>':'')+'<p>'+esc(x.displayName)+' &middot; '+fmtDate(x.watchedAt)+' &middot; '+fmtDuration(x.duration)+'</p>'+evidence(x)+'</div><div class="progress-ring">'+esc(x.percentComplete??"--")+'%</div></article>';
 const empty=label=>'<div class="panel-state"><h3>No '+esc(label)+' here yet</h3><p>Try broadening the filters. Missing evidence stays unknown.</p></div>';
 const encodeRoute=route=>encodeURIComponent(JSON.stringify(route));
@@ -1018,6 +1151,7 @@ function renderSeriesHierarchy(workspace, state, presenterName, heading) {
           <summary class="detail-tree-season-header"><span>${esc(season.seasonName)}</span><span class="detail-hierarchy-count">${esc(season.episodes.length)} episodes</span></summary>
           <div class="detail-tree-season-episodes">
             ${season.episodes.map(episode => `<div class="detail-tree-episode-row" data-testid="detail-hierarchy-node" data-episode-key="${esc(episode.ratingKey)}">
+              ${episode.posterUrl ? `<img class="detail-tree-episode-art" src="${esc(episode.posterUrl)}" alt="${esc(`Episode ${episode.episodeNumber ?? "?"}: ${episode.title}`)}" loading="lazy" onerror="this.src='/static/icon.svg';this.classList.add('artwork-fallback')">` : ""}
               ${detailWatcherLanes(episode, workspace, `Episode ${episode.episodeNumber ?? "?"}: ${episode.title}`)}
             </div>`).join("")}
           </div>
@@ -1546,17 +1680,20 @@ async function renderOverview() {
     ? `<div class="health-mini-grid">${readinessEntries.map(([k, v]) => `<article class="health-mini-card status-${esc(v.status)}"><strong>${esc(k)}</strong><p>${esc(v.message)}</p></article>`).join("")}</div>`
     : '<div class="panel-state"><p>Watch health is unavailable.</p></div>';
 
+  const recentPlaybackDigests = Array.isArray(d.recentPlaybackDigests) ? d.recentPlaybackDigests : [];
   const recentPlaybackItems = groupRecentCards(Array.isArray(d.recentPlayback) ? d.recentPlayback : Array.isArray(d.activity?.items) ? d.activity.items.slice(0, 24) : []);
-  const cwHtml = recentPlaybackItems.length
-    ? `<div class="cw-carousel cw-carousel-overview">${recentPlaybackItems.map(cw => `
-        <article class="cw-card" data-cat="${esc(cw.category)}" data-testid="recent-playback-card" tabindex="0" data-select-key="${esc(cw.groupKey || cw.ratingKey)}" data-item="${encodeURIComponent(JSON.stringify(cw))}">
-          ${libraryArt(cw)}
-          <div class="cw-bar"><i style="width:${esc(cw.percentComplete ?? 0)}%"></i></div>
-          <p>${esc(cw.displayTitle || cw.title || '')}</p>
-          <span class="cw-meta">${sessionTimeLabel(cw)}</span>
-        </article>
-      `).join("")}</div>`
-    : '<div class="panel-state compact"><p>No recent playback to show right now.</p></div>';
+  const cwHtml = recentPlaybackDigests.length
+    ? `<div class="cw-carousel cw-carousel-overview">${recentPlaybackDigests.map(playbackDigestCard).join("")}</div>`
+    : recentPlaybackItems.length
+      ? `<div class="cw-carousel cw-carousel-overview">${recentPlaybackItems.map(cw => `
+          <article class="cw-card" data-cat="${esc(cw.category)}" data-testid="recent-playback-card" tabindex="0" data-select-key="${esc(cw.groupKey || cw.ratingKey)}" data-item="${encodeURIComponent(JSON.stringify(cw))}">
+            ${libraryArt(cw)}
+            <div class="cw-bar"><i style="width:${esc(cw.percentComplete ?? 0)}%"></i></div>
+            <p>${esc(cw.displayTitle || cw.title || '')}</p>
+            <span class="cw-meta">${sessionTimeLabel(cw)}</span>
+          </article>
+        `).join("")}</div>`
+      : '<div class="panel-state compact"><p>No recent playback to show right now.</p></div>';
   const completedItems = groupRecentCards(d.recentlyCompleted || []);
   const completedHtml = completedItems.length
     ? `<div class="overview-completed-list">${completedItems.map(item => `
@@ -2671,6 +2808,10 @@ content.addEventListener("click",async e=>{
     openDetail(JSON.parse(decodeURIComponent(progressCard.dataset.item)), progressCard);
     return;
   }
+  if (e.target.closest("summary[data-digest-toggle]")) {
+    e.stopPropagation();
+    return;
+  }
   const item=e.target.closest("[data-item]");
   if(item)return openDetail(JSON.parse(decodeURIComponent(item.dataset.item)), item);
   const routeButton=e.target.closest("[data-route]");
@@ -3023,7 +3164,11 @@ dialog.addEventListener("close",()=>{
       history.replaceState({}, "", targetHash);
     }
     const card = closedKey ? document.querySelector(`[data-select-key="${closedKey}"]`) : null;
-    const focusTarget = detailReturnFocus?.isConnected ? detailReturnFocus : card || document.querySelector("#view-title");
+    const focusTarget = detailReturnFocus?.isConnected
+      ? detailReturnFocus
+      : detailReturnFocus
+        ? card || document.querySelector("#view-title")
+        : document.querySelector("#view-title");
     if (focusTarget instanceof HTMLElement) focusTarget.focus({preventScroll:true});
     detailReturnFocus=null;
   }

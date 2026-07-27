@@ -6,6 +6,14 @@ When implementing a block, update project docs only when the work creates or cha
 
 For numbered block work, use the global `implement-block` skill. Do not create project-specific local skills unless a repeated workflow becomes too specialized for this file and the project docs.
 
+## Scope Discipline
+
+- Default to the smallest plausible fix. Browser comments and follow-up corrections are incremental work unless the user explicitly requests a new block or broader implementation.
+- Before editing, state the intended files, behavior, exclusions, and verification plan.
+- For small fixes, avoid schema, ingestion, persistence, architecture, service restarts, and full-suite gates unless the change requires them. Prefer targeted tests, syntax checks, and a focused build check.
+- If a small-fix diff exceeds roughly three files or 150 lines, or the fix requires an architectural change, pause and ask before expanding scope.
+- `$implement-block` and explicit numbered-block implementation requests follow the selected block's full acceptance criteria and the mandatory gates below.
+
 ## Mandatory Block Verification
 
 - Before marking any numbered block implemented, run `npm run verify:block`; individual build or test commands do not substitute for this gate.
