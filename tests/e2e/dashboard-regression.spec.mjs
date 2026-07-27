@@ -48,10 +48,12 @@ test("participant evidence stays consistent from recent card to detail", async (
 
   const card = page.getByTestId("recent-playback-card").filter({ hasText: "Regression Show" }).first();
   await expect(card).toBeVisible();
-  await expect(card.getByTestId("viewer-badge")).toHaveAttribute("title", "Together Justin, Tony");
-  await expect(card.getByTestId("viewer-badge")).toHaveAttribute("aria-label", "Together Justin, Tony");
+  await expect(card.getByTestId("viewer-badge")).toHaveAttribute("title", "Watched by Ace, Justin, Tony");
+  await expect(card.getByTestId("viewer-badge")).toHaveAttribute("aria-label", "Watched by Ace, Justin, Tony");
   await expect(card.getByTestId("watched-by")).toHaveCount(0);
   await expectBadgeRowsDoNotOverlap(card.getByTestId("viewer-badge"));
+  await expect(card.getByTestId("digest-session").first().locator("summary")).toContainText("Justin");
+  await expect(card.getByTestId("digest-session").first().locator("summary")).toContainText("Tony");
 
   const cardNames = await watchedByNames(card);
   await card.click();
@@ -72,7 +74,8 @@ test("overview recent cards represent sessions and keep one participant expressi
   const sessionCards = page.getByTestId("recent-playback-card").filter({ hasText: "Session Regression" });
   await expect(sessionCards).toHaveCount(1);
   const sessionCard = sessionCards.first();
-  await expect(sessionCard.locator(".cw-meta")).toContainText("–");
+  await expect(sessionCard.getByTestId("digest-session")).toHaveCount(1);
+  await expect(sessionCard.getByTestId("digest-session").locator("summary")).toContainText("Watched by Tony");
   await expect(sessionCard.getByTestId("viewer-badge")).toHaveAttribute("aria-label", "Watched by Tony");
   await expect(sessionCard.getByTestId("watched-by")).toHaveCount(0);
   await expect(page.getByTestId("recent-playback-card").filter({ hasText: "Session Other Item" })).toHaveCount(1);
@@ -86,8 +89,50 @@ test("overview merges audiobook sessions when Plex changes the item key", async 
 
   const rekeyedCards = page.getByTestId("recent-playback-card").filter({ has: page.getByText("Fixture Audiobook", { exact: true }) });
   await expect(rekeyedCards).toHaveCount(1);
-  await expect(rekeyedCards.locator(".cw-meta")).toContainText("–");
+  await expect(rekeyedCards.getByTestId("digest-session")).toHaveCount(1);
   await expect(rekeyedCards).toContainText("Fixture Audiobook");
+  expect(pageErrors).toEqual([]);
+});
+
+test("overview digests collapse session evidence and expose episode artwork", async ({ page }) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.goto("/");
+
+  const showCard = page.getByTestId("recent-playback-card").filter({ hasText: "Regression Show" }).first();
+  await expect(showCard).toHaveAttribute("data-digest-card", "true");
+  await expect(showCard.locator(".digest-episode-thumb").first()).toHaveAttribute("src", /\/api\/artwork\//);
+  const session = showCard.getByTestId("digest-session").first();
+  await expect(session).not.toHaveAttribute("open", "");
+  await session.locator("summary").click();
+  await expect(session).toHaveAttribute("open", "");
+  await expect(session.locator(".digest-session-body")).toContainText("Episodes");
+
+  await showCard.click();
+  const dialog = page.locator("#detail-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByTestId("detail-hierarchy-node").first().locator(".detail-tree-episode-art")).toHaveAttribute("src", /\/api\/artwork\//);
+  expect(pageErrors).toEqual([]);
+});
+
+test("audiobook digest sessions use compact chapter-index summaries", async ({ page }) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.goto("/#overview?category=audiobook");
+
+  const card = page.getByTestId("recent-playback-card").filter({ hasText: "Verified Fixture Audiobook" }).first();
+  await expect(card).toBeVisible();
+  const session = card.getByTestId("digest-session").first();
+  await session.locator("summary").click();
+  await expect(session.locator("summary")).toContainText("Session 1");
+  await expect(session.locator("summary")).not.toContainText("Tony");
+  const body = session.locator(".digest-session-body");
+  await expect(body).toContainText("Completed");
+  await expect(body).not.toContainText("Verified Chapter");
+  await expect(card.locator(".digest-progress-track").first()).toHaveAttribute("role", "progressbar");
+  await expect(card.locator(".digest-progress-track").first()).toHaveAttribute("aria-valuenow", /\d+/);
+  await expect(session.locator("summary")).not.toContainText("Watched by");
+  await expect(session.locator("summary")).not.toContainText("â");
   expect(pageErrors).toEqual([]);
 });
 

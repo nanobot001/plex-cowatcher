@@ -2786,6 +2786,84 @@ test("dashboard overview merges audiobook sessions across Plex rating-key churn"
   });
 });
 
+test("overview playback digests use category-aware daily grouping and episode artwork", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const users = Object.fromEntries(db.prepare("SELECT id, plex_username FROM users").all().map((user) => [user.plex_username, user.id]));
+    const refresh = "2026-07-25T00:00:00.000Z";
+    db.prepare(`INSERT INTO audiobook_books
+      (id, folder_key, title, chapter_count, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES (21, 'digest-book', 'Digest Book', 0, 'fixture', 'pending', ?, ?)`).run(refresh, refresh);
+    db.prepare(`INSERT INTO content_catalog
+      (rating_key, media_type, title, library_title, audiobook_id, source_provenance, refreshed_at)
+      VALUES ('digest-track', 'track', 'Digest Track', 'Audiobooks', 21, 'fixture', ?)`).run(refresh);
+    db.prepare(`INSERT INTO content_catalog
+      (rating_key, media_type, title, library_title, leaf_count, source_provenance, refreshed_at)
+      VALUES ('digest-show', 'show', 'Digest Show', 'TV Shows', 2, 'fixture', ?)`).run(refresh);
+    for (const [ratingKey, title, episodeNumber] of [["digest-ep-1", "Episode One", 1], ["digest-ep-2", "Episode Two", 2]]) {
+      db.prepare(`INSERT INTO content_catalog
+        (rating_key, media_type, title, library_title, grandparent_rating_key, grandparent_title, parent_title, parent_rating_key, source_provenance, refreshed_at)
+        VALUES (?, 'episode', ?, 'TV Shows', 'digest-show', 'Digest Show', 'Season 1', 'digest-season-1', 'fixture', ?)`).run(ratingKey, title, refresh);
+    }
+    const insert = db.prepare(`INSERT INTO playback_observations
+      (user_id, rating_key, grandparent_rating_key, parent_rating_key, media_type, library_name, title, show_title, watched_at, percent_complete, duration, completed, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    insert.run(users.Tony, "digest-track", null, null, "track", "Audiobooks", "Digest Track", "Digest Author", "2026-07-25T10:00:00.000Z", 20, 600000, 0, refresh, refresh);
+    insert.run(users.Tony, "digest-track", null, null, "track", "Audiobooks", "Digest Track", "Digest Author", "2026-07-25T10:30:00.000Z", 25, 600000, 0, refresh, refresh);
+    insert.run(users.Viewer, "digest-track", null, null, "track", "Audiobooks", "Digest Track", "Digest Author", "2026-07-25T10:20:00.000Z", 15, 600000, 0, refresh, refresh);
+    insert.run(users.Tony, "digest-track", null, null, "track", "Audiobooks", "Digest Track", "Digest Author", "2026-07-26T10:00:00.000Z", 30, 600000, 0, refresh, refresh);
+    insert.run(users.Tony, "digest-ep-1", "digest-show", "digest-season-1", "episode", "TV Shows", "Episode One", "Digest Show", "2026-07-25T12:00:00.000Z", 100, 1800000, 1, refresh, refresh);
+    insert.run(users.Tony, "digest-ep-2", "digest-show", "digest-season-1", "episode", "TV Shows", "Episode Two", "Digest Show", "2026-07-25T13:00:00.000Z", 50, 1800000, 0, refresh, refresh);
+
+    const overview = new DashboardService(db, { timeZone: "UTC" }).getOverview({});
+    const audiobookDigests = overview.recentPlaybackDigests.filter((digest) => digest.category === "audiobook");
+    assert.equal(audiobookDigests.length, 3);
+    assert.equal(audiobookDigests.filter((digest) => digest.localDate === "2026-07-25").length, 2);
+    assert.equal(audiobookDigests.find((digest) => digest.displayNames.includes("Tony") && digest.localDate === "2026-07-25").sessionCount, 1);
+
+    const showDigest = overview.recentPlaybackDigests.find((digest) => digest.category === "tv");
+    assert.ok(showDigest);
+    assert.equal(showDigest.localDate, "2026-07-25");
+    assert.equal(showDigest.episodes.length, 2);
+    assert.match(showDigest.episodes[0].posterUrl, /^\/api\/artwork\/digest-ep-/);
+  });
+});
+
+test("audiobook digest sessions expose verified completed and current chapters", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const tony = db.prepare("SELECT id FROM users WHERE plex_username = 'Tony'").get();
+    const now = "2026-07-25T00:00:00.000Z";
+    db.prepare(`INSERT INTO audiobook_books
+      (id, folder_key, title, chapter_count, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES (22, 'verified-digest-book', 'Verified Digest Book', 2, 'fixture', 'enriched', ?, ?)`).run(now, now);
+    db.prepare(`INSERT INTO audiobook_chapter_sources
+      (audiobook_id, source_type, source_status, confidence, refreshed_at)
+      VALUES (22, 'audiobook_tool', 'active', 0.98, ?)`).run(now);
+    for (const [index, title, startOffset, endOffset] of [[1, "Digest Chapter 1", 0, 60000], [2, "Digest Chapter 2", 60000, 120000]]) {
+      db.prepare(`INSERT INTO audiobook_chapters
+        (audiobook_id, chapter_index, title, start_offset_ms, end_offset_ms, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(22, index, title, startOffset, endOffset, now, now);
+    }
+    db.prepare(`INSERT INTO content_catalog
+      (rating_key, media_type, title, library_title, audiobook_id, source_provenance, refreshed_at)
+      VALUES ('verified-digest-track', 'track', 'Verified Digest Track', 'Audiobooks', 22, 'fixture', ?)`).run(now);
+    const insert = db.prepare(`INSERT INTO playback_observations
+      (user_id, rating_key, media_type, library_name, title, watched_at, percent_complete, duration, completed, created_at, updated_at)
+      VALUES (?, 'verified-digest-track', 'track', 'Audiobooks', 'Verified Digest Track', ?, ?, 120000, ?, ?, ?)`);
+    insert.run(tony.id, "2026-07-25T10:00:00.000Z", 75, 0, now, now);
+    insert.run(tony.id, "2026-07-25T13:30:00.000Z", 100, 1, now, now);
+
+    const overview = new DashboardService(db, { timeZone: "UTC" }).getOverview({});
+    const digest = overview.recentPlaybackDigests.find((item) => item.category === "audiobook");
+    assert.ok(digest);
+    assert.equal(digest.sessions.length, 2);
+    assert.deepEqual(digest.sessions[0].completedChapters.map((chapter) => chapter.title), ["Digest Chapter 1"]);
+    assert.equal(digest.sessions[0].currentChapter.title, "Digest Chapter 2");
+    assert.deepEqual(digest.sessions[1].completedChapters.map((chapter) => chapter.title), ["Digest Chapter 1", "Digest Chapter 2"]);
+  });
+});
+
 test("dashboard preferences survive identity resyncs and drive dashboard visibility", () => {
   withTestDb((db) => {
     seedUsers(db);
@@ -3196,6 +3274,15 @@ test("dashboard audiobook titles prefer the book title and artwork routes return
       VALUES (?, 'audiobook', ?, ?, ?, ?)
     `).run("book-track-3", "Brandon Sanderson", thirdBook.id, "plex", nowIso);
     db.prepare(`
+      INSERT INTO audiobook_books (folder_key, title, authors_json, narrators_json, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("book-folder-author-title", "Brandon Sanderson", JSON.stringify([]), JSON.stringify([]), "folder_path", "pending", nowIso, nowIso);
+    const authorTitleBook = db.prepare("SELECT id FROM audiobook_books WHERE folder_key = 'book-folder-author-title'").get();
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, parent_title, grandparent_title, audiobook_id, source_provenance, refreshed_at)
+      VALUES (?, 'audiobook', ?, ?, ?, ?, ?, ?)
+    `).run("book-track-author-title", "Brandon Sanderson", "Brandon Sanderson", "Brandon Sanderson", authorTitleBook.id, "plex", nowIso);
+    db.prepare(`
       INSERT INTO playback_observations
         (user_id,rating_key,plex_guid,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -3215,21 +3302,29 @@ test("dashboard audiobook titles prefer the book title and artwork routes return
         (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(user.id, "book-track-3", "audiobook", "Audiobooks", "Cosmere Warbreaker (Alyssa Bresnahan) (2015)", "Brandon Sanderson", new Date(now.getTime() + 2000).toISOString(), 3, 1200000, 0, new Date(now.getTime() + 2000).toISOString(), new Date(now.getTime() + 2000).toISOString());
+    db.prepare(`
+      INSERT INTO playback_observations
+        (user_id,rating_key,media_type,library_name,title,show_title,watched_at,percent_complete,duration,completed,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(user.id, "book-track-author-title", "audiobook", "Audiobooks", "The Way of Kings (2010)", "Brandon Sanderson", new Date(now.getTime() + 3000).toISOString(), 8, 1200000, 0, new Date(now.getTime() + 3000).toISOString(), new Date(now.getTime() + 3000).toISOString());
 
     const service = new DashboardService(db);
     const overview = service.getOverview({});
     const firstItem = overview.activity.items.find((item) => item.ratingKey === "book-track-1");
     const secondItem = overview.activity.items.find((item) => item.ratingKey === "book-track-2");
     const thirdItem = overview.activity.items.find((item) => item.ratingKey === "book-track-3");
+    const authorTitleItem = overview.activity.items.find((item) => item.ratingKey === "book-track-author-title");
     const secondContinue = overview.continueWatching.find((item) => item.ratingKey === "book-track-2");
     assert.ok(firstItem);
     assert.ok(secondItem);
     assert.ok(thirdItem);
+    assert.ok(authorTitleItem);
     assert.ok(secondContinue);
     assert.equal(overview.summaryStrip.find((item) => item.category === "audiobook").minutes > 0, true);
     assert.equal(firstItem.displayTitle, "The Final Empire");
     assert.equal(secondItem.displayTitle, "Arcanum Unbounded The Cosmere Collection (Unabridged)");
     assert.equal(thirdItem.displayTitle, "Warbreaker");
+    assert.equal(authorTitleItem.displayTitle, "The Way of Kings");
     assert.equal(secondContinue.displayTitle, "Arcanum Unbounded The Cosmere Collection (Unabridged)");
     const historicalActivity = service.getActivity({ audiobookId: book.id, limit: 20, offset: 0 });
     const historicalItem = historicalActivity.items.find((item) => item.ratingKey === "legacy-book-track");
