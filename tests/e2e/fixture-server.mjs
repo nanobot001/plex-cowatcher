@@ -78,6 +78,20 @@ db.prepare(`INSERT INTO playback_observations
   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
   userIds.Tony, "verified-audio-file", "track", "Audiobooks", "Verified Single File", "Verified Fixture Audiobook", verifiedAudiobookWatchedAt, "fixture", 50, "fixture", 90000, 180000, 0, verifiedAudiobookWatchedAt, verifiedAudiobookWatchedAt
 );
+const staleAudiobookObservations = [
+  ["2025-01-15T08:00:00.000Z", 10, 1000],
+  ["2025-01-15T09:40:00.000Z", 20, 2000],
+  ["2025-01-15T10:00:00.000Z", 20, 5],
+  ["2025-01-15T10:20:00.000Z", 20, 3000]
+];
+for (const [watchedAt, percent, playDuration] of staleAudiobookObservations) {
+  db.prepare(`INSERT INTO playback_observations
+    (user_id,rating_key,media_type,library_name,title,show_title,watched_at,watched_at_provenance,percent_complete,percent_complete_provenance,view_offset,duration,completed,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    userIds.Tony, "stale-progress-audio", "track", "Audiobooks", "Stale Progress Track", "Stale Progress Fixture Audiobook",
+    watchedAt, "fixture", percent, "source", null, playDuration, 0, watchedAt, watchedAt
+  );
+}
 const reviewSourceAt = isoMinutesAgo(210);
 const reviewTargetAt = isoMinutesAgo(205);
 insertObservation.run(userIds.Tony, "review-movie", null, null, "movie", "Movies", "Review Movie", null, null, null, reviewSourceAt, "fixture", 100, "fixture", 7_200_000, 1, reviewSourceAt, reviewSourceAt);
@@ -94,6 +108,9 @@ db.prepare(`INSERT INTO audiobook_books
 db.prepare(`INSERT INTO audiobook_books
   (id,folder_key,title,series_title,chapter_count,source_provenance,enrichment_status,current_media_revision,created_at,updated_at)
   VALUES (22,'verified-multi-fixture-audiobook','Verified Multi-File Audiobook','Fixture Series',3,'fixture','enriched','multi-current-media',?,?)`).run(isoMinutesAgo(5), isoMinutesAgo(5));
+db.prepare(`INSERT INTO audiobook_books
+  (id,folder_key,title,series_title,chapter_count,source_provenance,enrichment_status,created_at,updated_at)
+  VALUES (23,'stale-progress-fixture-audiobook','Stale Progress Fixture Audiobook','Fixture Series',4,'fixture','enriched',?,?)`).run(isoMinutesAgo(5), isoMinutesAgo(5));
 // Book 20 deliberately carries a verified cache for an older media revision. Progress must ignore it.
 db.prepare("UPDATE audiobook_books SET current_media_revision = 'fixture-current-media' WHERE id = 20").run();
 db.prepare(`INSERT INTO audiobook_chapter_sources
@@ -127,6 +144,19 @@ for (const [chapterIndex, title, startOffset, endOffset] of [
   db.prepare(`INSERT INTO audiobook_chapters
     (audiobook_id,chapter_index,title,start_offset_ms,end_offset_ms,created_at,updated_at)
     VALUES (?,?,?,?,?,?,?)`).run(21, chapterIndex, title, startOffset, endOffset, isoMinutesAgo(5), isoMinutesAgo(5));
+}
+db.prepare(`INSERT INTO audiobook_chapter_sources
+  (audiobook_id,source_type,source_status,confidence,refreshed_at)
+  VALUES (23,'audiobook_tool','active',0.96,?)`).run(isoMinutesAgo(5));
+for (const [chapterIndex, title, startOffset, endOffset] of [
+  [1, "Stale Chapter 1", 0, 2500000],
+  [2, "Stale Chapter 2", 2500000, 5000000],
+  [3, "Stale Chapter 3", 5000000, 7500000],
+  [4, "Stale Chapter 4", 7500000, 10000000]
+]) {
+  db.prepare(`INSERT INTO audiobook_chapters
+    (audiobook_id,chapter_index,title,start_offset_ms,end_offset_ms,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?)`).run(23, chapterIndex, title, startOffset, endOffset, isoMinutesAgo(5), isoMinutesAgo(5));
 }
 const multiMediaRevision = db.prepare(`
   INSERT INTO audiobook_media_revisions
@@ -195,6 +225,9 @@ db.prepare(`INSERT INTO content_catalog
 db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,audiobook_id,source_provenance,refreshed_at)
   VALUES ('verified-audio-file','track','Verified Single File',180000,'5','Audiobooks','[]',21,'fixture',?)`).run(isoMinutesAgo(5));
+db.prepare(`INSERT INTO content_catalog
+  (rating_key,media_type,title,duration,library_id,library_title,genres_json,audiobook_id,source_provenance,refreshed_at)
+  VALUES ('stale-progress-audio','track','Stale Progress Track',10000000,'5','Audiobooks','[]',23,'fixture',?)`).run(isoMinutesAgo(5));
 for (const [ratingKey, title, duration] of [
   ["multi-audio-file-1", "Part 1", 180000],
   ["multi-audio-file-2", "Part 2", 120000]

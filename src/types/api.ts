@@ -192,6 +192,10 @@ export interface DashboardDetailWorkspaceResponse {
     unit: ProgressUnit;
     source: ProgressSource;
     sourceVerified: boolean;
+    quality?: AudiobookProgressQuality;
+    evidenceSource?: AudiobookProgressEvidenceSource;
+    qualityReason?: AudiobookProgressQualityReason;
+    currentChapterIndex?: number | null;
     completedItems: number;
     currentPercent: number | null;
     totalItems: number | null;
@@ -226,8 +230,28 @@ export type DashboardDetailWorkspaceHierarchyResult =
 
 export type ProgressUnit = "episode" | "movie" | "track" | "chapter" | "book" | "unknown";
 export type ProgressSource = "plex" | "audiobook_tool" | "unknown";
+export type AudiobookProgressQuality =
+  | "verified_position"
+  | "verified_completion"
+  | "approximate_position"
+  | "stale_progress"
+  | "unavailable";
+export type AudiobookProgressEvidenceSource =
+  | "view_offset"
+  | "play_duration"
+  | "percent_complete"
+  | "completion"
+  | "none";
+export type AudiobookProgressQualityReason =
+  | "VIEW_OFFSET_VALID"
+  | "COMPLETION_EVIDENCE"
+  | "PLAY_DURATION_CORROBORATED"
+  | "PERCENT_STALE_AGAINST_PLAY_DURATION"
+  | "PERCENT_ONLY"
+  | "POSITION_FIELDS_INVALID"
+  | "POSITION_UNAVAILABLE";
 export type ProgressNodeState = "watched" | "partial" | "repeated" | "unknown" | "source_uncertain";
-export type ProgressNodeStateSource = "verified_offset" | "book_completion" | "track_file" | "source_uncertain" | "none";
+export type ProgressNodeStateSource = "verified_offset" | "approximate_position" | "book_completion" | "track_file" | "source_uncertain" | "none";
 export type ReplayReason = "different_viewing_day" | "same_day_completed_sessions" | "same_day_offset_reset";
 
 export interface ProgressWatcherEvidence {
@@ -365,6 +389,9 @@ export interface DashboardPlaybackDigestSession {
   relationship: "watched_by" | "together" | "likely_together";
   completedChapters: DashboardPlaybackDigestChapter[];
   currentChapter?: DashboardPlaybackDigestChapter | null;
+  progressQuality?: AudiobookProgressQuality;
+  progressEvidenceSource?: AudiobookProgressEvidenceSource;
+  progressQualityReason?: AudiobookProgressQualityReason;
   episodeKeys?: string[];
 }
 
@@ -452,6 +479,9 @@ export interface DashboardProgressGroup {
   progressUnitLabel?: string;
   progressSource?: ProgressSource;
   progressSourceVerified?: boolean;
+  progressQuality?: AudiobookProgressQuality;
+  progressEvidenceSource?: AudiobookProgressEvidenceSource;
+  progressQualityReason?: AudiobookProgressQualityReason;
   hasVerifiedChapters?: boolean;
   currentChapterIndex?: number | null;
   currentProgressPercent?: number | null;
@@ -540,6 +570,9 @@ export interface ProgressHierarchyExpansion {
   progressUnitLabel?: string;
   progressSource?: ProgressSource;
   progressSourceVerified?: boolean;
+  progressQuality?: AudiobookProgressQuality;
+  progressEvidenceSource?: AudiobookProgressEvidenceSource;
+  progressQualityReason?: AudiobookProgressQualityReason;
   hasVerifiedChapters?: boolean;
   currentChapterIndex?: number | null;
   currentProgressPercent?: number | null;

@@ -136,7 +136,9 @@ export function normalizeTautulliHistoryRow(row: Record<string, unknown>): Tautu
     percentComplete: optionalNumber(row.percent_complete),
     percentCompleteProvenance: hasPercentComplete ? "source" : "unknown",
     viewOffset: optionalNumber(row.view_offset),
-    duration: optionalNumber(row.duration),
+    // Tautulli renamed grouped-history `duration` to `play_duration`; the
+    // legacy alias remains accepted so the raw source value is preserved.
+    duration: optionalNumber(row.play_duration ?? row.duration),
     completed: optionalBoolean(row.completed ?? row.watched_status)
   };
 }

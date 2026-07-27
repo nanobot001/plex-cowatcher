@@ -77,10 +77,11 @@ Corrective sequence:
    4. `block-3-2n-6d-4-audiobook-resume-modal.md` - present attributed current position, stopping-point excerpt, compact chapter map, up-next, and optional full-list views.
 31. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
 32. `block-3-2n-6f-overview-playback-digest-cards.md` - implemented Overview QOL follow-up; preserves the existing session-level projection and raw evidence.
+33. `block-3-2n-6g-audiobook-progress-evidence-repair-and-retroactive-rebuild.md` - implemented audiobook-only corrective block; validates progress evidence, handles cumulative-duration resets with a high-water mark, and rebuilds derived progress without rewriting raw observations.
 
 Do not implement a later corrective block until the previous block's exit gate is recorded as passing. A later block must not conceal, waive, or silently absorb a failed earlier acceptance criterion.
 
-The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n code is implemented through the enabled 3-2n-5d-3 recurring proof worker, 3-2n-5E is implemented and deterministically verified with live multi-file rollout still gated, and 6E-1/6E-2/6E-2A/6E-2B/6E-2C1/6E-2C2/6E-2C3/6E-2D/6E-3/6E-3A/6E-3B/6E-3C/6F are implemented and verified. 6D-1 through 6D-4 and 3-2o remain planned. The pre-implementation reviews are `docs/process/block-3-2n-6e-design-review.md` and `docs/process/block-3-2n-6d-design-review.md`.
+The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n code is implemented through the enabled 3-2n-5d-3 recurring proof worker, 3-2n-5E is implemented and deterministically verified with live multi-file rollout still gated, and 6E-1/6E-2/6E-2A/6E-2B/6E-2C1/6E-2C2/6E-2C3/6E-2D/6E-3/6E-3A/6E-3B/6E-3C/6F/6G are implemented and verified. 6D-1 through 6D-4 and 3-2o remain planned. The pre-implementation reviews are `docs/process/block-3-2n-6e-design-review.md` and `docs/process/block-3-2n-6d-design-review.md`.
 
 ## Umbrella Specifications
 
