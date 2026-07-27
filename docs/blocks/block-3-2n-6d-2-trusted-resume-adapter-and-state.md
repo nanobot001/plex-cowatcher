@@ -26,7 +26,7 @@ Give CoWatcher a private, bounded adapter and an independently testable resume-c
 
 ## Out Of Scope
 
-- Tautulli `stopped_at` ingestion, candidate publication, reconciliation scans, recurring timers, PM2 rollout, CLI operations, health integration, or a real Whisper canary.
+- Exact stop/activity position capture or provenance, which Block 3-2n-6I owns; candidate publication, reconciliation scans, recurring timers, PM2 rollout, CLI operations, health integration, or a real Whisper canary remain owned by 6D-3.
 - Dashboard/API fields or rendering.
 - Paraphrased summaries, LLMs, cloud APIs, transcript archives/search, multi-file mapping, or media mutation.
 

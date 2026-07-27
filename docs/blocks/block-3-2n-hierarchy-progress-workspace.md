@@ -2,7 +2,7 @@
 
 > Status: Planned.
 > Result: Split into implementation sub-blocks.
-> Notes: Use this as the product and drift guardrail for Blocks 3-2n-1 through 3-2n-6; do not implement it directly.
+> Notes: Use this as the product and drift guardrail for the 3-2n progress sequence, including the corrective 6H-6J audiobook projection work; do not implement it directly.
 
 ## Goal
 
@@ -22,6 +22,11 @@ Implement the outcome through these ordered sub-blocks:
 6. `completed/block-3-2n-5a-audiobook-chapter-import-cache.md`
 7. `completed/block-3-2n-5b-true-audiobook-chapter-progress.md`
 8. `completed/block-3-2n-6-progress-evidence-map-polish.md`
+9. `block-3-2n-6h-canonical-audiobook-progress-timeline-and-rewind-semantics.md`
+10. `block-3-2n-6i-exact-audiobook-position-evidence-capture.md`
+11. `block-3-2n-6j-project-wide-audiobook-progress-projection-adoption.md`
+    1. `block-3-2n-6j-a-service-and-api-progress-projection-adoption.md`
+    2. `block-3-2n-6j-b-browser-progress-presentation-and-regression.md`
 
 ## Dependencies And Entry Gate
 
@@ -68,6 +73,9 @@ Implement the outcome through these ordered sub-blocks:
 - 3-2n-5a imports and caches verified chapter boundaries from the separate tool-friendly `audiobook` project or compatible structured fixtures.
 - 3-2n-5b maps playback evidence onto cached verified chapter boundaries while preserving honest track/file or book-level fallbacks.
 - 3-2n-6 polishes the expanded Progress UI into compact lazy evidence maps with accessible dots and readable typography.
+- 3-2n-6H defines one rewind-safe current/furthest/session/chapter evaluator without changing capture or presentation.
+- 3-2n-6I captures exact future position evidence through the narrowest proven source capability.
+- 3-2n-6J is an umbrella only. 6J-A migrates service/API consumers and preserves compatibility/raw/write boundaries; 6J-B adopts that contract in the browser and locks responsive cross-surface parity.
 
 ## Likely Files Or Areas Across The Sequence
 
@@ -82,7 +90,7 @@ Implement the outcome through these ordered sub-blocks:
 
 - The child blocks together deliver the original 3-2n goal without moving 3-2o earlier in the sequence.
 - Each child block is independently verifiable with `npm run verify:block`.
-- The final child block proves Progress first paint, payload bounds, DOM bounds, lazy expansion isolation, readable evidence maps, and drill-through examples for TV, Classic TV, Anime, Audiobook, and Movie.
+- The final corrective child proves project-wide audiobook progress parity, rewind behavior, raw-evidence preservation, payload/DOM bounds, and non-audiobook compatibility across the current dashboard entry surfaces.
 
 ## Verification And Exit Gate
 

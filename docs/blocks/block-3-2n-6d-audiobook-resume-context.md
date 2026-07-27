@@ -2,6 +2,7 @@
 
 > Status: Planned.
 > Result: Not implemented.
+> Dependency: Blocks 3-2n-6H, 3-2n-6I, 3-2n-6J-A, and 3-2n-6J-B must establish canonical rewind-safe progress, exact future position evidence, and project-wide presentation parity first.
 > Notes: Umbrella only; do not implement directly. The work is split across a bounded cross-repository transcription contract, a CoWatcher adapter/state block, a background worker/rollout block, and an audiobook modal block.
 
 ## Child Block Sequence
@@ -20,6 +21,7 @@ Let a listener reopen an audiobook and immediately see whose position is shown, 
 ## Locked Product And Architecture Decisions
 
 - CoWatcher owns playback evidence, stop-candidate coalescing, durable jobs, sanitized result persistence, rollout controls, and the modal.
+- Block 3-2n-6I owns exact stop/activity position capture and provenance. 6D consumes eligible exact stop evidence; it does not define another notifier, webhook, or activity-sampling contract.
 - The separate `audiobook` project owns media clipping and `faster-whisper` inference through a new additive, read-only, tool-agnostic JSON command.
 - CoWatcher invokes that command through a dedicated trusted adapter. It must not import Python or `faster-whisper` into the Node service.
 - A “stable stop” in this phase means an ended audiobook Tautulli history observation with explicit source `stopped_at` and a valid direct millisecond stopping offset that remains the newest eligible observation for the same listener and audiobook through a configured quiet period. It is not a claim that CoWatcher observed a live pause event.
@@ -47,6 +49,7 @@ Let a listener reopen an audiobook and immediately see whose position is shown, 
 
 - Block 3-2n-5d-3 must finish its explicit recurring-worker rollout gate first because the corrective sequence remains ordered.
 - Block 3-2n-6E-3 must establish the universal detail workspace and shared Audiobook presenter before 6D implementation begins; 6D-4 must extend that presenter rather than target a Progress-only modal.
+- Blocks 3-2n-6H, 3-2n-6I, 3-2n-6J-A, and 3-2n-6J-B must establish canonical rewind-safe progress, exact future position evidence, and project-wide presentation parity. 6D-3 consumes the exact stop evidence from 6I, and 6D-4 presents the browser-ready canonical snapshot completed by 6J-B.
 - Existing immutable audiobook media revisions and private manifest items from Blocks 5D-1 through 5D-3.
 - Existing verified chapter mapping and current-position behavior from Blocks 3-2n-5B and 3-2n-6C.
 - A usable local Python 3.12+, ffmpeg, `faster-whisper`, and preinstalled model runtime in the separate `audiobook` project; 6D-1 must verify rather than assume this dependency.

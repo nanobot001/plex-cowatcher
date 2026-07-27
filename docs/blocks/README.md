@@ -4,9 +4,9 @@ Blocks are numbered, bounded AI-buildable tickets for code, logic, docs, folder 
 
 ## Active Phase
 
-The project is currently in the Phase 3 refinement set and has completed the 3-6-2C canonical movie identity correction, 3-6-3 Tautulli ingestion foundation, 3-6-4 aggregate supplemental recovery, and the live 3-6-4A dated Plex play-history correction. The immediate next block is:
+The project is currently in the Phase 3 refinement set and has completed the 3-6-2C canonical movie identity correction, 3-6-3 Tautulli ingestion foundation, 3-6-4 aggregate supplemental recovery, the live 3-6-4A dated Plex play-history correction, and the 3-2n-6G audiobook progress repair. The selected next block is:
 
-- **3-6-5: Archive Query, Export, And Backup.** Three profiles still lack an exact Plex local-account mapping and remain a separate unknown-coverage follow-up; do not infer unwatched status.
+- **3-2n-6H: Canonical Audiobook Progress Timeline And Rewind Semantics.** Implement only the shared evaluator and its service canaries. Keep 6I exact capture, 6J-A/6J-B adoption, 6D resume context, and the separate planned 3-6-5 archive work out of the 6H branch.
 
 Phase 3 builds on the completed playback-intelligence foundation with domain-specific refinement, richer operator ergonomics, and reporting.
 Blocks 3-2a through 3-2e form one sequential dashboard implementation path:
@@ -70,18 +70,23 @@ Corrective sequence:
    8. `completed/block-3-2n-6e-3a-replay-semantics-and-session-provenance.md` - implemented and verified; separates raw observations, reconstructed sessions, household-local viewing days, and evidence-backed replays across Progress and shared detail.
    9. `completed/block-3-2n-6e-3b-on-demand-plex-metadata-and-artwork-refresh.md` - implemented and verified; adds confirmed title-scoped Plex metadata/artwork refresh from the shared detail workspace with stable revisions, privacy-safe errors, and regression coverage.
    10. `block-3-2n-6e-3c-plex-historical-movie-backfill.md` - implemented and verified; supplements post-2022 Tautulli history with exact-GUID, explicitly labeled pre-2022 Plex movie evidence, durable raw snapshots, and idempotent CLI apply.
-30. `block-3-2n-6d-audiobook-resume-context.md` - planned umbrella; do not implement directly. Turn source-backed audiobook history stops into private bounded transcript context and a useful resume modal after 6E establishes the shared Audiobook presenter.
+30. `block-3-2n-6f-overview-playback-digest-cards.md` - implemented Overview QOL follow-up; preserves the existing session-level projection and raw evidence.
+31. `block-3-2n-6g-audiobook-progress-evidence-repair-and-retroactive-rebuild.md` - implemented audiobook-only corrective block; validates progress evidence, handles cumulative-duration resets with a high-water mark, and rebuilds derived progress without rewriting raw observations.
+32. `block-3-2n-6h-canonical-audiobook-progress-timeline-and-rewind-semantics.md` - planned domain block; separates current position, furthest trusted position, session movement, rewind/revisit behavior, and chapter states in one deterministic evaluator.
+33. `block-3-2n-6i-exact-audiobook-position-evidence-capture.md` - planned ingestion block; audits and captures exact future audiobook positions additively through the narrowest proven source capability.
+34. `block-3-2n-6j-project-wide-audiobook-progress-projection-adoption.md` - planned umbrella; do not implement directly. Complete service/API adoption before browser presentation.
+   1. `block-3-2n-6j-a-service-and-api-progress-projection-adoption.md` - planned service/API child; inventories consumers, exposes typed canonical projections, and preserves compatibility, raw exports, and write isolation.
+   2. `block-3-2n-6j-b-browser-progress-presentation-and-regression.md` - planned browser child; adopts the stable contract across every visible surface and locks responsive cross-surface regression.
+35. `block-3-2n-6d-audiobook-resume-context.md` - planned umbrella; do not implement directly. Reuse the exact position evidence from 6I to turn source-backed audiobook stops into private bounded transcript context and a useful resume modal.
    1. `block-3-2n-6d-1-bounded-resume-transcription-contract.md` - add and verify the separate `audiobook` project's bounded read-only transcription command.
    2. `block-3-2n-6d-2-trusted-resume-adapter-and-state.md` - add CoWatcher's bounded trusted adapter and revision-safe durable job/result state without automatic execution.
-   3. `block-3-2n-6d-3-stable-stop-worker-and-rollout.md` - connect source stop evidence to a disabled one-job worker, safe operations, and explicit resource canary.
+   3. `block-3-2n-6d-3-stable-stop-worker-and-rollout.md` - consume 6I exact stop evidence through a disabled one-job worker, safe operations, and explicit resource canary; do not create a competing capture path.
    4. `block-3-2n-6d-4-audiobook-resume-modal.md` - present attributed current position, stopping-point excerpt, compact chapter map, up-next, and optional full-list views.
-31. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
-32. `block-3-2n-6f-overview-playback-digest-cards.md` - implemented Overview QOL follow-up; preserves the existing session-level projection and raw evidence.
-33. `block-3-2n-6g-audiobook-progress-evidence-repair-and-retroactive-rebuild.md` - implemented audiobook-only corrective block; validates progress evidence, handles cumulative-duration resets with a high-water mark, and rebuilds derived progress without rewriting raw observations.
+36. `block-3-2o-dashboard-accessibility-and-regression-gate.md`
 
 Do not implement a later corrective block until the previous block's exit gate is recorded as passing. A later block must not conceal, waive, or silently absorb a failed earlier acceptance criterion.
 
-The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n code is implemented through the enabled 3-2n-5d-3 recurring proof worker, 3-2n-5E is implemented and deterministically verified with live multi-file rollout still gated, and 6E-1/6E-2/6E-2A/6E-2B/6E-2C1/6E-2C2/6E-2C3/6E-2D/6E-3/6E-3A/6E-3B/6E-3C/6F/6G are implemented and verified. 6D-1 through 6D-4 and 3-2o remain planned. The pre-implementation reviews are `docs/process/block-3-2n-6e-design-review.md` and `docs/process/block-3-2n-6d-design-review.md`.
+The full 3-2m sequence is implemented and verified: household profiles, person pairings/operations, browser adjudication, Discord review, deduplicated confirmed co-watch attribution, browser-local People ordering, and accessible heatmap interaction. Block 3-2n code is implemented through the enabled 3-2n-5d-3 recurring proof worker, 3-2n-5E is implemented and deterministically verified with live multi-file rollout still gated, and 6E-1/6E-2/6E-2A/6E-2B/6E-2C1/6E-2C2/6E-2C3/6E-2D/6E-3/6E-3A/6E-3B/6E-3C/6F/6G are implemented and verified. Implement the planned audiobook correction in order as 6H, 6I, 6J-A, then 6J-B; keep each in its own block/branch and do not implement the 6J umbrella directly. The 6D children follow and must reuse 6I capture rather than duplicate it. Block 3-2o remains planned. The pre-implementation reviews are `docs/process/block-3-2n-6e-design-review.md` and `docs/process/block-3-2n-6d-design-review.md`.
 
 ## Umbrella Specifications
 
