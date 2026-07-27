@@ -716,6 +716,24 @@ test("Tautulli history rows normalize episode fields", () => {
   assert.equal(row.duration, 1000);
 });
 
+test("Tautulli history rows prefer canonical play_duration without altering its value", () => {
+  const row = normalizeTautulliHistoryRow({
+    user: "Tony",
+    rating_key: "audio-1",
+    media_type: "track",
+    section_name: "Audiobooks",
+    title: "Evidence Book",
+    percent_complete: "17",
+    play_duration: "31142",
+    duration: "999",
+    view_offset: ""
+  });
+
+  assert.equal(row.percentComplete, 17);
+  assert.equal(row.duration, 31142);
+  assert.equal(row.viewOffset, undefined);
+});
+
 test("dedupe builds stable keys", () => {
   assert.equal(watchEventKey({ sourceUserId: 1, ratingKey: "abc", watchedAt: "2026-05-30T20:00:00Z" }), "1:abc:2026-05-30T20:00:00Z");
 });
@@ -2849,10 +2867,10 @@ test("audiobook digest sessions expose verified completed and current chapters",
       (rating_key, media_type, title, library_title, audiobook_id, source_provenance, refreshed_at)
       VALUES ('verified-digest-track', 'track', 'Verified Digest Track', 'Audiobooks', 22, 'fixture', ?)`).run(now);
     const insert = db.prepare(`INSERT INTO playback_observations
-      (user_id, rating_key, media_type, library_name, title, watched_at, percent_complete, duration, completed, created_at, updated_at)
-      VALUES (?, 'verified-digest-track', 'track', 'Audiobooks', 'Verified Digest Track', ?, ?, 120000, ?, ?, ?)`);
-    insert.run(tony.id, "2026-07-25T10:00:00.000Z", 75, 0, now, now);
-    insert.run(tony.id, "2026-07-25T13:30:00.000Z", 100, 1, now, now);
+      (user_id, rating_key, media_type, library_name, title, watched_at, percent_complete, view_offset, duration, completed, created_at, updated_at)
+      VALUES (?, 'verified-digest-track', 'track', 'Audiobooks', 'Verified Digest Track', ?, ?, ?, 120000, ?, ?, ?)`);
+    insert.run(tony.id, "2026-07-25T10:00:00.000Z", 75, 90000, 0, now, now);
+    insert.run(tony.id, "2026-07-25T13:30:00.000Z", 100, null, 1, now, now);
 
     const overview = new DashboardService(db, { timeZone: "UTC" }).getOverview({});
     const digest = overview.recentPlaybackDigests.find((item) => item.category === "audiobook");
@@ -3906,7 +3924,7 @@ test("dashboard detail workspace resolves raw and progress selectors to canonica
     assert.equal(verifiedAudiobook.data.progressSummary.sourceVerified, true);
     assert.equal(verifiedAudiobook.data.progressSummary.completedItems, 2);
     assert.equal(verifiedAudiobook.data.progressSummary.totalItems, 3);
-    assert.equal(verifiedAudiobook.data.progressSummary.currentPercent, 50);
+    assert.equal(verifiedAudiobook.data.progressSummary.currentPercent, 83);
     const verifiedHierarchy = service.getDetailWorkspaceHierarchy("audiobook:11");
     assert.equal(verifiedHierarchy.ok, true);
     assert.equal(verifiedHierarchy.data.hierarchy.chapters.length, 3);
@@ -4769,7 +4787,7 @@ test("verified audiobook chapter progress maps offsets, book completion, repeats
         (user_id, rating_key, media_type, library_name, title, watched_at, watched_at_provenance, percent_complete, percent_complete_provenance, view_offset, duration, completed, created_at, updated_at)
       VALUES (?, 'single-file-book', 'track', 'Audiobooks', 'Single File Book', ?, 'fixture', ?, 'fixture', ?, ?, ?, ?, ?)
     `);
-    insertObservation.run(1, '2026-07-06T10:45:00Z', 50, null, 60000, 0, '2026-07-06T10:45:00Z', '2026-07-06T10:45:00Z');
+    insertObservation.run(1, '2026-07-06T10:45:00Z', 50, 90000, 60000, 0, '2026-07-06T10:45:00Z', '2026-07-06T10:45:00Z');
     insertObservation.run(1, '2026-07-06T10:30:00Z', 15, 30000, 180000, 0, '2026-07-06T10:30:00Z', '2026-07-06T10:30:00Z');
     insertObservation.run(1, '2026-07-06T10:15:00Z', 45, null, 60000, 0, '2026-07-06T10:15:00Z', '2026-07-06T10:15:00Z');
     insertObservation.run(2, '2026-07-06T11:00:00Z', null, null, 180000, 1, '2026-07-06T11:00:00Z', '2026-07-06T11:00:00Z');
@@ -4812,7 +4830,7 @@ test("verified audiobook chapter progress maps offsets, book completion, repeats
     assert.equal(chapter1.chapterIndex, 1);
     assert.equal(chapter1.watchedStates["Tony Alias"], "watched");
     assert.equal(chapter1.stateSources["Tony Alias"], "verified_offset");
-    assert.equal(chapter1.watcherEvidence.find(row => row.displayName === "Tony Alias").observationCount, 3);
+    assert.equal(chapter1.watcherEvidence.find(row => row.displayName === "Tony Alias").observationCount, 2);
     assert.equal(chapter1.watcherEvidence.find(row => row.displayName === "Tony Alias").sessionCount, 1);
     assert.equal(chapter1.watcherEvidence.find(row => row.displayName === "Tony Alias").replayCount, 0);
     assert.equal(chapter2.watchedStates["Tony Alias"], "partial");
@@ -4823,7 +4841,7 @@ test("verified audiobook chapter progress maps offsets, book completion, repeats
     assert.equal(chapter1.watchedStates["Justin"], "source_uncertain");
     assert.equal(chapter1.stateSources["Justin"], "source_uncertain");
 
-    insertObservation.run(1, '2026-07-07T10:45:00Z', 50, null, 60000, 0, '2026-07-07T10:45:00Z', '2026-07-07T10:45:00Z');
+    insertObservation.run(1, '2026-07-07T10:45:00Z', 50, 90000, 60000, 0, '2026-07-07T10:45:00Z', '2026-07-07T10:45:00Z');
     const replayExpansion = dashboard.getProgressExpansion("audiobook:Audiobooks:30");
     const replayChapter = replayExpansion.hierarchy.chapters[0];
     const replayEvidence = replayChapter.watcherEvidence.find(row => row.displayName === "Tony Alias");
@@ -4832,6 +4850,146 @@ test("verified audiobook chapter progress maps offsets, book completion, repeats
     assert.equal(replayEvidence.viewingDayCount, 2);
     assert.equal(replayEvidence.replayCount, 1);
     assert.equal(replayEvidence.replayReason, "different_viewing_day");
+  });
+});
+
+test("audiobook progress repairs stale percentages from corroborated grouped listening evidence without rewriting observations", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, enabled, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, '2026-07-25T00:00:00Z', '2026-07-25T00:00:00Z')
+    `).run();
+
+    for (const [id, folderKey, title] of [
+      [40, "stale-progress-book", "Evidence Repair Book"],
+      [41, "verified-position-book", "Verified Position Book"]
+    ]) {
+      db.prepare(`
+        INSERT INTO audiobook_books
+          (id, folder_key, title, chapter_count, source_provenance, enrichment_status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'fixture', 'enriched', '2026-07-25T00:00:00Z', '2026-07-25T00:00:00Z')
+      `).run(id, folderKey, title, id === 40 ? 4 : 3);
+      db.prepare(`
+        INSERT INTO audiobook_chapter_sources
+          (audiobook_id, source_type, source_status, confidence, refreshed_at)
+        VALUES (?, 'audiobook_tool', 'active', 0.98, '2026-07-25T00:00:00Z')
+      `).run(id);
+    }
+
+    for (const [index, start, end] of [
+      [1, 0, 2_500_000],
+      [2, 2_500_000, 5_000_000],
+      [3, 5_000_000, 7_500_000],
+      [4, 7_500_000, 10_000_000]
+    ]) {
+      db.prepare(`
+        INSERT INTO audiobook_chapters
+          (audiobook_id, chapter_index, title, start_offset_ms, end_offset_ms, created_at, updated_at)
+        VALUES (40, ?, ?, ?, ?, '2026-07-25T00:00:00Z', '2026-07-25T00:00:00Z')
+      `).run(index, `Repair Chapter ${index}`, start, end);
+    }
+    for (const [index, start, end] of [
+      [1, 0, 60_000],
+      [2, 60_000, 120_000],
+      [3, 120_000, 180_000]
+    ]) {
+      db.prepare(`
+        INSERT INTO audiobook_chapters
+          (audiobook_id, chapter_index, title, start_offset_ms, end_offset_ms, created_at, updated_at)
+        VALUES (41, ?, ?, ?, ?, '2026-07-25T00:00:00Z', '2026-07-25T00:00:00Z')
+      `).run(index, `Verified Chapter ${index}`, start, end);
+    }
+
+    db.prepare(`
+      INSERT INTO content_catalog
+        (rating_key, media_type, title, duration, library_title, audiobook_id, source_provenance, refreshed_at)
+      VALUES
+        ('repair-audio', 'track', 'Evidence Repair Book', 10000000, 'Audiobooks', 40, 'fixture', '2026-07-25T00:00:00Z'),
+        ('verified-position-audio', 'track', 'Verified Position Book', 180000, 'Audiobooks', 41, 'fixture', '2026-07-25T00:00:00Z')
+    `).run();
+
+    const insertRepairObservation = db.prepare(`
+      INSERT INTO playback_observations
+        (user_id, rating_key, media_type, library_name, title, watched_at, watched_at_provenance,
+         percent_complete, percent_complete_provenance, view_offset, duration, completed, created_at, updated_at)
+      VALUES (1, 'repair-audio', 'track', 'Audiobooks', 'Evidence Repair Book', ?, 'fixture',
+        ?, 'source', NULL, ?, 0, ?, ?)
+    `);
+    insertRepairObservation.run('2026-07-25T23:00:00Z', 10, 1000, '2026-07-25T23:00:00Z', '2026-07-25T23:00:00Z');
+    insertRepairObservation.run('2026-07-26T10:00:00Z', 20, 2000, '2026-07-26T10:00:00Z', '2026-07-26T10:00:00Z');
+    insertRepairObservation.run('2026-07-26T10:30:00Z', 20, 5, '2026-07-26T10:30:00Z', '2026-07-26T10:30:00Z');
+    insertRepairObservation.run('2026-07-26T11:00:00Z', 20, 3000, '2026-07-26T11:00:00Z', '2026-07-26T11:00:00Z');
+    db.prepare(`
+      INSERT INTO playback_observations
+        (user_id, rating_key, media_type, library_name, title, watched_at, watched_at_provenance,
+         percent_complete, percent_complete_provenance, view_offset, duration, completed, created_at, updated_at)
+      VALUES (1, 'verified-position-audio', 'track', 'Audiobooks', 'Verified Position Book',
+        '2026-07-26T12:00:00Z', 'fixture', 20, 'source', 150000, 60, 0,
+        '2026-07-26T12:00:00Z', '2026-07-26T12:00:00Z')
+    `).run();
+
+    const rawBefore = db.prepare(`
+      SELECT rating_key, watched_at, percent_complete, percent_complete_provenance, view_offset, duration
+      FROM playback_observations
+      ORDER BY rating_key, watched_at
+    `).all();
+
+    const { DashboardService } = await import("../dist/service/dashboardService.js");
+    const dashboard = new DashboardService(db, { timeZone: "UTC" });
+    const progress = dashboard.getProgress({ user: "Tony" });
+    const repaired = progress.recentlyActive.items.find((item) => item.title === "Evidence Repair Book");
+    assert.ok(repaired);
+    assert.equal(repaired.currentChapterIndex, 2);
+    assert.equal(repaired.currentProgressPercent, 30);
+    assert.equal(repaired.progressQuality, "stale_progress");
+    assert.equal(repaired.progressEvidenceSource, "play_duration");
+    assert.equal(repaired.progressQualityReason, "PERCENT_STALE_AGAINST_PLAY_DURATION");
+    assert.equal(repaired.progressSourceVerified, false);
+    assert.equal(repaired.distinctCompleted, 0);
+    assert.equal(repaired.observedMinutes, 50);
+
+    const positive = progress.recentlyActive.items.find((item) => item.title === "Verified Position Book");
+    assert.ok(positive);
+    assert.equal(positive.currentChapterIndex, 3);
+    assert.equal(positive.currentProgressPercent, 83);
+    assert.equal(positive.progressQuality, "verified_position");
+    assert.equal(positive.progressEvidenceSource, "view_offset");
+    assert.equal(positive.progressSourceVerified, true);
+    assert.equal(positive.distinctCompleted, 2);
+
+    const expansion = dashboard.getProgressExpansion("audiobook:Audiobooks:40");
+    assert.ok(expansion);
+    assert.equal(expansion.progressQuality, "stale_progress");
+    assert.equal(expansion.currentChapterIndex, 2);
+    assert.equal(expansion.currentProgressPercent, 30);
+    assert.equal(expansion.progressSourceVerified, false);
+
+    const detail = dashboard.getDetailWorkspace("audiobook:40");
+    assert.equal(detail.ok, true);
+    assert.equal(detail.data.progressSummary.quality, "stale_progress");
+    assert.equal(detail.data.progressSummary.currentChapterIndex, 2);
+    assert.equal(detail.data.progressSummary.currentPercent, 30);
+    assert.equal(detail.data.progressSummary.sourceVerified, false);
+    assert.equal(detail.data.playbackSummary.observedMinutes, 50);
+
+    const overview = dashboard.getOverview({
+      category: "audiobook",
+      dateFrom: "2026-07-26T00:00:00.000Z",
+      dateTo: "2026-07-26T23:59:59.999Z"
+    });
+    const digest = overview.recentPlaybackDigests.find((item) => item.title === "Evidence Repair Book");
+    assert.ok(digest);
+    assert.equal(digest.observedMinutes, 33);
+    assert.equal(digest.sessions[0].progressQuality, "stale_progress");
+    assert.equal(digest.sessions[0].currentChapter.chapterIndex, 2);
+    assert.equal(digest.sessions[0].completedChapters.length, 0);
+
+    const rawAfter = db.prepare(`
+      SELECT rating_key, watched_at, percent_complete, percent_complete_provenance, view_offset, duration
+      FROM playback_observations
+      ORDER BY rating_key, watched_at
+    `).all();
+    assert.deepEqual(rawAfter, rawBefore);
   });
 });
 

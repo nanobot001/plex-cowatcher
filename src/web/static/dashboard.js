@@ -236,6 +236,14 @@ const digestEpisodeStrip = digest => {
     <img class="digest-episode-thumb" src="${esc(episode.posterUrl || "/static/icon.svg")}" alt="${esc(digestEpisodeLabel(episode))}" loading="lazy" onerror="this.src='/static/icon.svg';this.classList.add('artwork-fallback')">
   `).join("")}${episodes.length > 6 ? `<span class="digest-episode-more">+${episodes.length - 6}</span>` : ""}</div>`;
 };
+const audiobookProgressQualityCopy = progress => {
+  const quality = progress?.progressQuality || progress?.quality;
+  if (quality === "verified_position") return "Verified position";
+  if (quality === "verified_completion") return "Verified completion";
+  if (quality === "stale_progress") return "Approximate position - source percentage appears stale";
+  if (quality === "approximate_position") return "Approximate position";
+  return "Position unavailable";
+};
 const digestSessionBody = (digest, session) => {
   const sections = [];
   if (Array.isArray(session.completedChapters) && session.completedChapters.length) {
@@ -254,6 +262,9 @@ const digestSessionBody = (digest, session) => {
   }
   if (digest.category === "audiobook" && !sections.length) {
     sections.push(`<div class="digest-session-section"><span class="digest-session-label">Chapter evidence</span><span class="muted">Verified chapter completion unavailable for this session.</span></div>`);
+  }
+  if (digest.category === "audiobook") {
+    sections.push(`<div class="digest-session-section" data-testid="digest-progress-quality"><span class="digest-session-label">Progress quality</span><span class="muted">${esc(audiobookProgressQualityCopy(session))}</span></div>`);
   }
   const episodes = Array.isArray(digest.episodes) && Array.isArray(session.episodeKeys)
     ? digest.episodes.filter(episode => session.episodeKeys.includes(episode.ratingKey))
@@ -350,7 +361,7 @@ const routeQuery=()=>{
     if(state.progress.recentlyActiveOffset)p.set("recentlyActiveOffset",String(state.progress.recentlyActiveOffset));
     if(state.progress.continueOffset)p.set("continueOffset",String(state.progress.continueOffset));
     if(state.progress.recentlyCompletedOffset)p.set("recentlyCompletedOffset",String(state.progress.recentlyCompletedOffset));
-    if(state.progress.selected&&!state.detail.key)p.set("progressDetail",state.progress.selected);
+    if(state.progress.selected&&!state.detail.key)p.set("detail",state.progress.selected);
   }
   if(state.explorer.selected){
     if(state.detail.key){
@@ -1041,8 +1052,18 @@ function renderDetailWorkspaceFailure(title, message) {
 }
 
 function detailSourceLabel(progress) {
-  if (progress.source === "audiobook_tool" && progress.sourceVerified) return "Verified audiobook chapters";
-  if (progress.source === "audiobook_tool") return "Audiobook chapter source (unverified)";
+  if (progress.source === "audiobook_tool") {
+    if (progress.quality === "verified_position" || progress.quality === "verified_completion") {
+      return "Verified audiobook chapters and position";
+    }
+    if (progress.quality === "stale_progress") {
+      return "Verified chapters - approximate position; source percentage appears stale";
+    }
+    if (progress.quality === "approximate_position") {
+      return "Verified chapters - approximate position";
+    }
+    return "Verified chapters - position unavailable";
+  }
   if (progress.source === "plex") return progress.sourceVerified ? "Verified Plex evidence" : "Plex track/file evidence";
   return "Source unknown";
 }
@@ -1050,6 +1071,15 @@ function detailSourceLabel(progress) {
 function detailProgressLabel(progress) {
   const unit = progress.unit && progress.unit !== "unknown" ? progress.unit : "item";
   const plural = progress.totalItems === 1 ? unit : `${unit}s`;
+  const approximateChapter = unit === "chapter"
+    && (progress.quality === "approximate_position" || progress.quality === "stale_progress")
+    && Number.isInteger(Number(progress.currentChapterIndex))
+    && Number(progress.currentChapterIndex) > 0;
+  if (approximateChapter) {
+    const total = progress.totalItems == null ? "" : ` of ${progress.totalItems}`;
+    const percent = progress.currentPercent == null ? "" : ` · ${progress.currentPercent}%`;
+    return `Approx. chapter ${progress.currentChapterIndex}${total}${percent}`;
+  }
   const count = progress.totalItems == null
     ? `${progress.completedItems} completed ${plural}; total unknown`
     : `${progress.completedItems} of ${progress.totalItems} ${plural}`;
@@ -2410,7 +2440,16 @@ async function renderProgress() {
 }
 
 function progressSourceCopy(x) {
-  if (x.progressSource === "audiobook_tool" && x.progressSourceVerified) return "Verified audiobook chapters";
+  if (x.progressSource === "audiobook_tool") {
+    if (x.progressQuality === "verified_position" || x.progressQuality === "verified_completion") {
+      return "Verified audiobook chapters and position";
+    }
+    if (x.progressQuality === "stale_progress") {
+      return "Verified chapters - approximate position; source percentage appears stale";
+    }
+    if (x.progressQuality === "approximate_position") return "Verified chapters - approximate position";
+    return "Verified chapters - position unavailable";
+  }
   if (x.progressUnit === "track") return "Plex track/file evidence";
   if (x.progressUnit === "book") return "Book-level evidence";
   return "Progress source unknown";
@@ -2429,6 +2468,17 @@ function progressSummaryCopy(x) {
       && x.progressUnit === "chapter"
       && Number.isInteger(Number(x.currentChapterIndex))
       && Number(x.currentChapterIndex) > 0;
+    const approximateCurrentPosition = hasCurrentAudiobookPosition
+      && (x.progressQuality === "approximate_position" || x.progressQuality === "stale_progress");
+    if (approximateCurrentPosition) {
+      const percent = x.currentProgressPercent == null
+        ? null
+        : Math.max(0, Math.min(100, Number(x.currentProgressPercent)));
+      return {
+        text: `Approx. chapter ${Number(x.currentChapterIndex)} of ${total}${percent == null ? "" : ` · ${percent}%`}`,
+        percent
+      };
+    }
     const completed = hasCurrentAudiobookPosition
       ? Math.max(0, Math.min(total, Number(x.currentChapterIndex)))
       : Math.max(0, Math.min(total, Number(x.distinctCompleted || 0)));

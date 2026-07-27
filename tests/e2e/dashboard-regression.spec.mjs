@@ -643,6 +643,38 @@ test("verified Audiobook detail summary matches the expanded chapter hierarchy",
   await expect(dialog.getByTestId("detail-workspace-progress")).not.toContainText("chapters");
 });
 
+test("stale Audiobook percentages remain approximate and agree across Overview, Progress, and detail", async ({ page }) => {
+  const staleWindow = "category=audiobook&dateFrom=2025-01-15T00%3A00%3A00.000Z&dateTo=2025-01-15T23%3A59%3A59.999Z";
+  const overviewResponse = await page.request.get(`/api/dashboard/overview?${staleWindow}`);
+  const overview = await overviewResponse.json();
+  expect(overviewResponse.ok(), JSON.stringify(overview)).toBeTruthy();
+  const digest = overview.data.recentPlaybackDigests.find(item => item.title === "Stale Progress Fixture Audiobook");
+  expect(digest).toBeTruthy();
+  expect(digest.sessions[0].progressQuality).toBe("stale_progress");
+  expect(digest.sessions[0].progressEvidenceSource).toBe("play_duration");
+  expect(digest.sessions[0].completedChapters).toHaveLength(0);
+  expect(digest.sessions[0].currentChapter.chapterIndex).toBe(2);
+
+  await page.goto(`/#progress?${staleWindow}`);
+  const card = page.getByTestId("progress-card")
+    .filter({ has: page.getByRole("heading", { name: "Stale Progress Fixture Audiobook", exact: true }) })
+    .first();
+  await expect(card).toBeVisible();
+  await expect(card.getByTestId("progress-summary")).toContainText("Approx. chapter 2 of 4");
+  await expect(card.getByTestId("progress-summary")).toContainText("30%");
+  await expect(card.getByTestId("progress-source")).toContainText("approximate position");
+  await expect(card.getByTestId("progress-source")).toContainText("source percentage appears stale");
+
+  await card.click();
+  const dialog = page.locator("#detail-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByTestId("detail-workspace-progress")).toContainText("Approx. chapter 2 of 4");
+  await expect(dialog.getByTestId("detail-workspace-progress")).toContainText("30%");
+  await expect(dialog.getByTestId("detail-workspace-source")).toContainText("approximate position");
+  await expect(dialog.getByTestId("detail-workspace-source")).toContainText("source percentage appears stale");
+  await expectNoVisualOverflow(page);
+});
+
 test("verified multi-file Audiobook detail maps file-local progress onto the global chapter timeline", async ({ page }) => {
   const seedResponse = await page.request.post("/__test/seed-multi-file-audiobook");
   expect(seedResponse.ok()).toBeTruthy();
