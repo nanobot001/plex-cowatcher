@@ -1,9 +1,11 @@
 # Block 3-2n-6H: Canonical Audiobook Progress Timeline And Rewind Semantics
 
-> Status: Planned.
-> Result: Not implemented.
+> Status: Implemented on 2026-08-15.
+> Result: Implemented with limitations.
+> Verification: `npm run verify:block` - passed (148 deterministic tests, 69 browser tests passed with 1 intentional skip, tool contracts passed).
+> Notes: Added the pure typed canonical evaluator, revision-safe replay, rewind/furthest/session/chapter projections, 6G compatibility adapter, and dashboard adoption for verified audiobook reads. Exact capture remains 6I; browser presentation remains 6J-B.
 > Dependency: Block 3-2n-6G established validated position evidence and explicit quality states.
-> Notes: First block in the project-wide audiobook-progress sequence. This block owns deterministic domain semantics only; it does not add a new capture path or migrate dashboard presentation.
+> Scope note: First block in the project-wide audiobook-progress sequence. This block owns deterministic domain semantics only; it does not add a new capture path or add a listening bar.
 
 ## Goal
 
