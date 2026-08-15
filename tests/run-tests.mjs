@@ -37,6 +37,7 @@ import {
   buildGlobalAudiobookTimeline,
   mapMultiFilePlaybackOffset
 } from "../dist/service/audiobookMultiFileService.js";
+import { evaluateAudiobookProgressTimeline } from "../dist/service/audiobookProgressEvidence.js";
 import { AudiobookProofAdapter } from "../dist/service/audiobookProofAdapter.js";
 import {
   AudiobookProofRuntime,
@@ -113,6 +114,119 @@ test("replay semantics do not fabricate replays from partial or ambiguous gaps",
   ]);
   assert.equal(oneSession.sessionCount, 1);
   assert.equal(oneSession.replayCount, 0);
+});
+
+test("6H canonical evaluator separates current position, furthest attainment, rewind, and historical sessions", () => {
+  const observations = [
+    { id: 1, userId: 7, ratingKey: "way-of-kings", watchedAt: "2026-08-01T10:00:00Z", sessionId: "morning", duration: 120, viewOffset: 1_050_000, completed: false },
+    { id: 2, userId: 7, ratingKey: "way-of-kings", watchedAt: "2026-08-01T10:20:00Z", sessionId: "morning", duration: 180, viewOffset: 1_170_000, completed: false },
+    { id: 3, userId: 7, ratingKey: "way-of-kings", watchedAt: "2026-08-01T11:00:00Z", sessionId: "afternoon", duration: 90, viewOffset: 870_000, completed: false },
+    { id: 4, userId: 7, ratingKey: "way-of-kings", watchedAt: "2026-08-01T11:20:00Z", sessionId: "afternoon", duration: 60, viewOffset: 930_000, completed: false }
+  ];
+  const rawBefore = structuredClone(observations);
+  const chapters = Array.from({ length: 20 }, (_, index) => ({
+    chapterIndex: index + 1,
+    title: `Chapter ${index + 1}`,
+    startOffsetMs: index * 60_000,
+    endOffsetMs: (index + 1) * 60_000
+  }));
+
+  const snapshot = evaluateAudiobookProgressTimeline({
+    listenerId: 7,
+    observations,
+    bookDurationMs: 1_200_000,
+    chapters
+  });
+
+  assert.equal(snapshot.currentPosition.offsetMs, 930_000);
+  assert.equal(snapshot.currentPosition.chapterIndex, 16);
+  assert.equal(snapshot.furthestPosition.offsetMs, 1_170_000);
+  assert.equal(snapshot.furthestPosition.chapterIndex, 20);
+  assert.equal(snapshot.latestMovement, "forward");
+  assert.equal(snapshot.latestDirection, "forward");
+  assert.equal(snapshot.rewindDetected, true);
+  assert.equal(snapshot.revisitDetected, true);
+  assert.equal(snapshot.listeningTimeMs, 450_000);
+  assert.equal(snapshot.sessions.length, 2);
+  assert.equal(snapshot.sessions[0].endPositionMs, 1_170_000);
+  assert.equal(snapshot.sessions[1].endPositionMs, 930_000);
+  assert.equal(snapshot.chapters.find((chapter) => chapter.chapterIndex === 16).state, "revisiting");
+  assert.equal(snapshot.chapters.find((chapter) => chapter.chapterIndex === 18).state, "passed");
+  assert.deepEqual(observations, rawBefore);
+});
+
+test("6H canonical evaluator preserves stale/reset uncertainty, revision safety, duplicates, and ordering diagnostics", () => {
+  const observations = [
+    { id: 2, userId: 7, ratingKey: "book", watchedAt: "2026-08-02T10:10:00Z", duration: 30, viewOffset: 200_000, completed: false, mediaRevision: "media-1", chapterRevision: "chapters-1" },
+    { id: 1, userId: 7, ratingKey: "book", watchedAt: "2026-08-02T10:00:00Z", duration: 30, viewOffset: 100_000, completed: false, mediaRevision: "media-1", chapterRevision: "chapters-1" },
+    { id: 3, userId: 7, ratingKey: "book", watchedAt: "2026-08-02T10:20:00Z", duration: null, viewOffset: null, percentComplete: 10, completed: false, mediaRevision: "media-1", chapterRevision: "chapters-1" },
+    { id: 4, userId: 7, ratingKey: "book", watchedAt: "2026-08-02T10:10:00Z", duration: 30, viewOffset: 200_000, completed: false, mediaRevision: "media-1", chapterRevision: "chapters-1" },
+    { id: 5, userId: 7, ratingKey: "book", watchedAt: "2026-08-02T10:30:00Z", duration: 30, viewOffset: 300_000, completed: false, mediaRevision: "media-2", chapterRevision: "chapters-1" }
+  ];
+  const rawBefore = structuredClone(observations);
+  const snapshot = evaluateAudiobookProgressTimeline({
+    listenerId: 7,
+    observations,
+    bookDurationMs: 400_000,
+    chapters: [
+      { chapterIndex: 1, title: "One", startOffsetMs: 0, endOffsetMs: 100_000 },
+      { chapterIndex: 2, title: "Two", startOffsetMs: 100_000, endOffsetMs: 200_000 },
+      { chapterIndex: 3, title: "Three", startOffsetMs: 200_000, endOffsetMs: 300_000 },
+      { chapterIndex: 4, title: "Four", startOffsetMs: 300_000, endOffsetMs: 400_000 }
+    ],
+    mediaRevision: "media-1",
+    chapterRevision: "chapters-1"
+  });
+
+  assert.equal(snapshot.currentPosition.offsetMs, 200_000);
+  assert.equal(snapshot.furthestPosition.offsetMs, 200_000);
+  assert.equal(snapshot.latestMovement, "stale");
+  assert.equal(snapshot.latestDirection, "unknown");
+  assert.equal(snapshot.diagnostics.find((diagnostic) => diagnostic.id === 1).outOfOrder, true);
+  assert.equal(snapshot.diagnostics.find((diagnostic) => diagnostic.id === 3).status, "stale_reset");
+  assert.equal(snapshot.diagnostics.find((diagnostic) => diagnostic.id === 4).status, "duplicate");
+  assert.equal(snapshot.diagnostics.find((diagnostic) => diagnostic.id === 5).status, "revision_mismatch");
+  assert.deepEqual(observations, rawBefore);
+});
+
+test("6H canonical evaluator keeps approximate chapter inference separate from verified passage and maps supported multi-file offsets", () => {
+  const approximate = evaluateAudiobookProgressTimeline({
+    listenerId: 7,
+    observations: [{ id: 1, userId: 7, ratingKey: "book", watchedAt: "2026-08-03T10:00:00Z", duration: 300, percentComplete: 75, completed: false }],
+    bookDurationMs: 400_000,
+    chapters: [
+      { chapterIndex: 1, title: "One", startOffsetMs: 0, endOffsetMs: 100_000 },
+      { chapterIndex: 2, title: "Two", startOffsetMs: 100_000, endOffsetMs: 200_000 },
+      { chapterIndex: 3, title: "Three", startOffsetMs: 200_000, endOffsetMs: 300_000 },
+      { chapterIndex: 4, title: "Four", startOffsetMs: 300_000, endOffsetMs: 400_000 }
+    ]
+  });
+  assert.equal(approximate.currentPosition.offsetMs, 300_000);
+  assert.equal(approximate.chapters.find((chapter) => chapter.chapterIndex === 2).state, "probably_passed");
+  assert.equal(approximate.chapters.find((chapter) => chapter.chapterIndex === 4).state, "in_progress");
+
+  const chapters = [
+    { chapterIndex: 1, title: "Part One", startOffsetMs: 0, endOffsetMs: 100_000 },
+    { chapterIndex: 2, title: "Part Two", startOffsetMs: 100_000, endOffsetMs: 200_000 }
+  ];
+  const singleFile = evaluateAudiobookProgressTimeline({
+    listenerId: 7,
+    observations: [{ id: 1, userId: 7, ratingKey: "single", watchedAt: "2026-08-03T11:00:00Z", duration: 100, viewOffset: 150_000, completed: false }],
+    bookDurationMs: 200_000,
+    chapters
+  });
+  const multiFile = evaluateAudiobookProgressTimeline({
+    listenerId: 7,
+    observations: [{ id: 1, userId: 7, ratingKey: "part-2", watchedAt: "2026-08-03T11:00:00Z", duration: 100_000, viewOffset: 50_000, completed: false }],
+    bookDurationMs: 200_000,
+    chapters,
+    manifestItems: [
+      { order: 1, stableIdentity: "part-1", ratingKey: "part-1", durationMs: 100_000 },
+      { order: 2, stableIdentity: "part-2", ratingKey: "part-2", durationMs: 100_000 }
+    ]
+  });
+  assert.equal(singleFile.currentPosition.offsetMs, multiFile.currentPosition.offsetMs);
+  assert.deepEqual(singleFile.chapters.map((chapter) => chapter.state), multiFile.chapters.map((chapter) => chapter.state));
 });
 
 test("historical Plex last-view evidence does not fabricate a replay", () => {

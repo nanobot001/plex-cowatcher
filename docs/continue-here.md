@@ -1,5 +1,16 @@
 # Continue Here
 
+## 2026-08-15 — 3-2n-6H Canonical Audiobook Progress Implemented
+
+Current state:
+- **3-2n-6H** is implemented on `codex/3-2n-6h-canonical-audiobook-progress-timeline`.
+- The pure evaluator now separates current position from furthest trusted attainment, preserves validated session listening time, identifies trusted rewinds/revisits, distinguishes chapter states, rejects incompatible revisions, and records duplicate/out-of-order/stale/reset diagnostics without mutating raw observations.
+- Verified audiobook dashboard reads consume the canonical snapshot through the existing 6G compatibility shape. No ingestion, capture, persistence, worker, dependency, UI/bar, PM2, or live-data changes were made.
+- Verification passed: `npm run verify:block` with 148 deterministic tests, 69 browser regressions plus one intentional skip, dashboard syntax, and tool contracts. No live-dashboard gate was run because deployed behavior was not restarted or changed.
+
+Next step:
+- Review/publication of the 6H branch is separate. After that, proceed to **3-2n-6I** for exact future position capture; do not add the listening bar or broader API/browser migration to 6H.
+
 ## 2026-07-27 — Project-Wide Audiobook Progress Sequence Planned
 
 Current state:

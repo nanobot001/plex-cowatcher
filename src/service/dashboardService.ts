@@ -9,7 +9,13 @@ import { ArchivePlexViewRecoveryService } from "./archivePlexViewRecoveryService
 import { getCanonicalMovieRatingKey, getMovieIdentityGuid, getMovieIdentityKeys, warmMovieIdentityCache } from "./plexMovieIdentityService.js";
 import { appConfig } from "../utils/config.js";
 import type { MultiFileTimelineItem } from "./audiobookMultiFileService.js";
-import { resolveAudiobookPositionEvidence, type AudiobookPositionEvidence } from "./audiobookProgressEvidence.js";
+import {
+  adaptAudiobookProgressSnapshotToLegacyPosition,
+  evaluateAudiobookProgressTimeline,
+  resolveAudiobookPositionEvidence,
+  type AudiobookCanonicalProgressSnapshot,
+  type AudiobookPositionEvidence
+} from "./audiobookProgressEvidence.js";
 
 const HOUSEHOLD_CATEGORIES = ["movie", "tv", "classic_tv", "anime", "audiobook"] as const;
 const SUMMARY_SAMPLE_LIMIT = 500;
@@ -76,6 +82,8 @@ type CachedAudiobookSource = {
   source_status: string;
   confidence: number;
   refreshed_at: string;
+  media_revision?: string | null;
+  chapter_revision?: string | null;
 };
 
 type AudiobookChapterProgressSnapshot = {
@@ -3245,7 +3253,8 @@ export class DashboardService {
 
   private getActiveAudiobookChapterSource(audiobookId: number): CachedAudiobookSource | null {
     const source = this.db.prepare(`
-      SELECT source.source_type, source.source_status, source.confidence, source.refreshed_at
+      SELECT source.source_type, source.source_status, source.confidence, source.refreshed_at,
+             revision.media_revision, revision.chapter_digest AS chapter_revision
       FROM audiobook_books book
       JOIN audiobook_chapter_sources source ON source.audiobook_id = book.id
       LEFT JOIN audiobook_chapter_revisions revision ON revision.id = book.active_chapter_revision_id
@@ -3306,7 +3315,6 @@ export class DashboardService {
     manifestItems: MultiFileTimelineItem[]
   ): AudiobookChapterProgressSnapshot {
     const bookDurationMs = Math.max(...cachedChapters.map((chapter) => chapter.end_offset_ms));
-    const currentPosition = this.resolveCurrentAudiobookPosition(plays, cachedChapters, bookDurationMs, manifestItems);
     const completedChapters = new Set<number>();
     const touchedChapters = new Set<number>();
     const replaySemantics = emptyReplaySemantics();
@@ -3314,17 +3322,48 @@ export class DashboardService {
     const evidenceByPerson = new Map<string, {
       plays: DashboardActivityItem[];
       positions: Map<number, AudiobookPositionEvidence>;
+      snapshot: AudiobookCanonicalProgressSnapshot;
     }>();
     for (const person of people) {
       const userPlays = plays.filter((play) => {
         const names = play.displayNames?.length ? play.displayNames : [play.displayName];
         return names.includes(person.displayName);
       });
+      const snapshot = evaluateAudiobookProgressTimeline({
+        listenerId: person.userId ?? null,
+        observations: userPlays.map((play) => ({
+          ...play,
+          mediaRevision: source.media_revision ?? null,
+          chapterRevision: source.chapter_revision ?? null
+        })),
+        bookDurationMs,
+        chapters: cachedChapters.map((chapter) => ({
+          chapterIndex: chapter.chapter_index,
+          title: chapter.title,
+          startOffsetMs: chapter.start_offset_ms,
+          endOffsetMs: chapter.end_offset_ms
+        })),
+        mediaRevision: source.media_revision ?? null,
+        chapterRevision: source.chapter_revision ?? null,
+        manifestItems
+      });
       evidenceByPerson.set(person.displayName, {
         plays: userPlays,
-        positions: resolveAudiobookPositionEvidence(userPlays, bookDurationMs, manifestItems)
+        positions: resolveAudiobookPositionEvidence(userPlays, bookDurationMs, manifestItems),
+        snapshot
       });
     }
+
+    const currentSnapshotEntry = [...evidenceByPerson.values()]
+      .filter((entry) => entry.snapshot.currentPosition != null)
+      .sort((left, right) =>
+        left.plays.reduce((latest, play) => play.watchedAt > latest ? play.watchedAt : latest, "")
+          .localeCompare(right.plays.reduce((latest, play) => play.watchedAt > latest ? play.watchedAt : latest, ""))
+      )
+      .at(-1);
+    const currentPosition = currentSnapshotEntry
+      ? adaptAudiobookProgressSnapshotToLegacyPosition(currentSnapshotEntry.snapshot)
+      : null;
 
     const chapters = cachedChapters.map((chapter) => {
       const watchedStates: Record<string, ProgressNodeState> = {};
@@ -3336,6 +3375,9 @@ export class DashboardService {
         const personEvidence = evidenceByPerson.get(person.displayName);
         const userPlays = personEvidence?.plays ?? [];
         const positions = personEvidence?.positions ?? new Map<number, AudiobookPositionEvidence>();
+        const canonicalChapter = personEvidence?.snapshot.chapters.find((candidate) =>
+          candidate.chapterIndex === chapter.chapter_index
+        );
 
         const mappedStates: ProgressNodeState[] = [];
         const mappedSources: ProgressNodeStateSource[] = [];
@@ -3380,25 +3422,42 @@ export class DashboardService {
         const personReplaySemantics = evaluateReplaySemantics(mappedReplayObservations);
         let state: ProgressNodeState = "unknown";
         let stateSource: ProgressNodeStateSource = "none";
-        const hasWatchedEvidence = mappedStates.includes("watched") || mappedStates.includes("repeated");
-        if (hasWatchedEvidence && personReplaySemantics.replayCount > 0) {
-          state = "repeated";
-          stateSource = mappedSources.includes("book_completion") ? "book_completion" : "verified_offset";
-        } else if (hasWatchedEvidence) {
+        const canonicalState = canonicalChapter?.state;
+        if (canonicalState === "explicitly_completed") {
           state = "watched";
-          stateSource = mappedSources[mappedStates.indexOf("watched")] ?? "verified_offset";
-        } else if (mappedStates.includes("partial")) {
+          stateSource = "book_completion";
+        } else if (canonicalState === "passed" || canonicalState === "revisiting") {
+          state = personReplaySemantics.replayCount > 0 ? "repeated" : "watched";
+          stateSource = "verified_offset";
+        } else if (canonicalState === "in_progress") {
           state = "partial";
-          stateSource = mappedSources[mappedStates.indexOf("partial")] ?? "source_uncertain";
+          stateSource = canonicalChapter?.evidence.quality === "verified_position" ? "verified_offset" : "approximate_position";
+        } else if (canonicalState === "probably_passed") {
+          state = "partial";
+          stateSource = "approximate_position";
         } else if (sawUncertainEvidence) {
           state = "source_uncertain";
           stateSource = "source_uncertain";
+        } else {
+          const hasWatchedEvidence = mappedStates.includes("watched") || mappedStates.includes("repeated");
+          if (hasWatchedEvidence && personReplaySemantics.replayCount > 0) {
+            state = "repeated";
+            stateSource = mappedSources.includes("book_completion") ? "book_completion" : "verified_offset";
+          } else if (hasWatchedEvidence) {
+            state = "watched";
+            stateSource = mappedSources[mappedStates.indexOf("watched")] ?? "verified_offset";
+          } else if (mappedStates.includes("partial")) {
+            state = "partial";
+            stateSource = mappedSources[mappedStates.indexOf("partial")] ?? "source_uncertain";
+          }
         }
 
         watchedStates[person.displayName] = state;
         stateSources[person.displayName] = stateSource;
-        if (state === "partial" && mappedPartials.length > 0) {
-          partialPositions[person.displayName] = Math.max(...mappedPartials);
+        if (state === "partial") {
+          const canonicalPercent = canonicalChapter?.progressPercent ?? null;
+          if (canonicalPercent != null) partialPositions[person.displayName] = canonicalPercent;
+          else if (mappedPartials.length > 0) partialPositions[person.displayName] = Math.max(...mappedPartials);
         }
         watcherEvidence.push(this.progressWatcherEvidence(person.displayName, state, mappedPlays, stateSource, partialPositions[person.displayName], person.userId ?? null, personReplaySemantics));
         addReplaySemantics(replaySemantics, personReplaySemantics);
@@ -3449,51 +3508,11 @@ export class DashboardService {
       chapters,
       distinctItems: touchedChapters.size,
       distinctCompleted: completedChapters.size,
-      currentChapterIndex: currentPosition?.chapterIndex ?? null,
+      currentChapterIndex: currentSnapshotEntry?.snapshot.currentPosition?.chapterIndex ?? null,
       currentProgressPercent: currentPosition?.progressPercent ?? null,
       replaySemantics,
       peopleStats
     };
-  }
-
-  private resolveCurrentAudiobookPosition(
-    plays: DashboardActivityItem[],
-    cachedChapters: CachedAudiobookChapter[],
-    bookDurationMs: number,
-    manifestItems: MultiFileTimelineItem[]
-  ): {
-    chapterIndex: number | null;
-    progressPercent: number | null;
-    quality: AudiobookProgressQuality;
-    source: AudiobookProgressEvidenceSource;
-    reason: AudiobookProgressQualityReason;
-  } | null {
-    const positions = resolveAudiobookPositionEvidence(plays, bookDurationMs, manifestItems);
-    const orderedPlays = [...plays].sort((a, b) => b.watchedAt.localeCompare(a.watchedAt) || b.id - a.id);
-    for (const play of orderedPlays) {
-      const position = positions.get(play.id);
-      if (position?.status === "position" && position.offsetMs != null) {
-        const chapter = cachedChapters.find((candidate) => position.offsetMs! < candidate.end_offset_ms) ?? cachedChapters[cachedChapters.length - 1];
-        if (!chapter) continue;
-        return {
-          chapterIndex: chapter.chapter_index,
-          progressPercent: position.progressPercent,
-          quality: position.quality,
-          source: position.source,
-          reason: position.reason
-        };
-      }
-      if (position?.status === "uncertain") {
-        return {
-          chapterIndex: null,
-          progressPercent: position.progressPercent,
-          quality: position.quality,
-          source: position.source,
-          reason: position.reason
-        };
-      }
-    }
-    return null;
   }
 
   private buildTrackFileAudiobookProgress(

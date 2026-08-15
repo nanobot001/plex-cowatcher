@@ -249,7 +249,12 @@ export type AudiobookProgressQualityReason =
   | "PERCENT_STALE_AGAINST_PLAY_DURATION"
   | "PERCENT_ONLY"
   | "POSITION_FIELDS_INVALID"
-  | "POSITION_UNAVAILABLE";
+  | "POSITION_UNAVAILABLE"
+  | "OBSERVATION_AFTER_AS_OF"
+  | "REVISION_MISMATCH"
+  | "DUPLICATE_OBSERVATION"
+  | "STALE_OR_RESET_EVIDENCE"
+  | "NO_TRUSTED_CHAPTER_EVIDENCE";
 export type ProgressNodeState = "watched" | "partial" | "repeated" | "unknown" | "source_uncertain";
 export type ProgressNodeStateSource = "verified_offset" | "approximate_position" | "book_completion" | "track_file" | "source_uncertain" | "none";
 export type ReplayReason = "different_viewing_day" | "same_day_completed_sessions" | "same_day_offset_reset";
