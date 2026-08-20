@@ -1,7 +1,9 @@
 # Block 3-2n-6I: Exact Audiobook Position Evidence Capture
 
-> Status: Planned.
-> Result: Not implemented.
+> Status: Implemented and live-enabled on 2026-08-20.
+> Result: Implemented. The exact capture path, persistence, evaluator adoption, health/audit contracts, and backed-up live notifier rollout passed.
+> Verification: `npm run verify:block` - passed (152 deterministic tests, 69 browser tests passed with 1 intentional skip, dashboard syntax and tool contracts passed); `npm run verify:live-dashboard` - passed after the production restart and canaries.
+> Notes: Dedicated Tautulli notifier 6 is enabled for playback stop only, restricted to the Audiobooks library and track media. One live exact stop was accepted, duplicate replay remained idempotent, and malformed missing-offset input remained non-mutating.
 > Dependency: Block 3-2n-6H defines the canonical progress snapshot and rewind semantics that captured evidence must feed.
 > Notes: Second block in the project-wide audiobook-progress sequence. Capture must remain additive, provenance-preserving, disabled or inert until configured, and reusable by the later 3-2n-6D resume-context sequence.
 
@@ -111,3 +113,17 @@ The implementation may select a different order only if the preflight evidence p
 - Structured tool/privacy contract checks when health or operations output changes
 - One backed-up, explicit live audiobook canary
 - Restart only `plex-cowatch-service` if deployment changes, then run `npm run verify:live-dashboard`
+
+## Completion Note
+
+Implemented the narrow preflight-selected capability: a dedicated secret-gated Tautulli stop-webhook route using direct millisecond `view_offset` and `duration_ms` evidence. Migration 27 adds one indexed, append-only, revision-aware evidence table with deterministic source-event deduplication. Validated events resolve one unique local listener and audiobook item, retain source/session identity privately, reject malformed units and stale/conflicting identities, and leave `playback_observations` unchanged.
+
+Captured events feed the 6H canonical evaluator as explicit `tautulli_exact_stop` observations. Current position can move backward while furthest attainment remains intact; duplicate and out-of-order deliveries remain deterministic. Verified audiobook dashboard reads consume the canonical result without querying Tautulli or creating activity rows. Shared display aliases aggregate capture evidence from their underlying local user rows.
+
+Capture remains disabled by default through `AUDIOBOOK_POSITION_CAPTURE_ENABLED=false`. Health and audit projections are bounded and privacy-safe. The notifier template, source audit, rollout, canary, and reversal procedures are documented in `docs/production/audiobook-position-capture.md`. No polling worker, dependency, non-audiobook ingestion change, dashboard bar/presentation work, Plex mutation, Tautulli mutation, or historical offset fabrication was added.
+
+The read-only configured-source preflight proved the active-session exact-offset capability and proved that finalized history loses the exact offset/session identity. After explicit operator approval, production SQLite was backed up to `data/backups/pre-audiobook-position-capture-2026-08-20T17-24-48-941.sqlite`; the backup and final database both passed `PRAGMA quick_check`.
+
+The disabled deployment applied migration 27 with zero evidence rows. A dedicated Tautulli webhook notifier was created as ID 6 without changing existing notifier 5. Before enabling its stop trigger, a structurally valid event missing `view_offset` returned `AUDIOBOOK_POSITION_UNITS_INVALID`, retained zero evidence rows, left 7,715 playback observations unchanged, and emitted a bounded rejection audit event. The notifier was then enabled only for `on_stop` with `library_name is Audiobooks` and `media_type is track`.
+
+The positive canary captured one exact stop tied to the expected listener, audiobook, source session, item, duration, and current media revision. Its offset followed the active-session baseline and projected as verified chapter 50 at 59%. The capture itself left the 7,716 post-play-start playback observations unchanged. Replaying the same event returned `duplicate`, retained one evidence row, and emitted only allowlisted audit metadata. Tautulli reported notifier success, CoWatcher health remained healthy, the service remained online under PM2, and `npm run verify:live-dashboard` passed. Recurring exact stop capture is enabled.

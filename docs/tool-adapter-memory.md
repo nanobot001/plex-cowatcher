@@ -19,7 +19,7 @@ Single-process Node.js service with:
 
 ## Source Of Truth
 
-SQLite is the durable source of truth for watch events, playback observations, content metadata cache, audiobook book rows, app settings, and audit history. Plex and Tautulli are read adapters; they are not treated as the local state ledger.
+SQLite is the durable source of truth for watch events, playback observations, content metadata cache, audiobook book rows, additive exact-position evidence, app settings, and audit history. Plex and Tautulli are source adapters; they are not treated as the local state ledger.
 
 ## Existing Pieces Reused
 
@@ -60,6 +60,7 @@ Implemented or partially implemented tools include:
 - `playback_observations`: normalized playback evidence per user and rating key
 - `content_catalog`: cached Plex metadata per track, including private `file_path` and `audiobook_id`
 - `audiobook_books`: canonical audiobook grouping and enrichment state
+- `audiobook_position_evidence`: private, additive, revision-aware exact audiobook stop evidence with source-event deduplication
 - `app_settings`: non-secret toggles and resumable cursors such as `prompt_for_audiobooks` and `audiobook_backfill_cursor_*`
 - `audit_log`: structured domain events and write-action evidence
 
@@ -77,6 +78,7 @@ Do not store raw tokens, API keys, session cookies, OAuth credentials, or privat
 - Preserve dry-run defaults for write/admin tools.
 - Never expose `content_catalog.file_path` or `audiobook_books.folder_path_hint` through public-read surfaces.
 - Keep audiobook observation linkage through `content_catalog.audiobook_id`; do not denormalize `audiobook_id` onto `playback_observations`.
+- Keep exact position capture disabled by default. Treat its localhost secret-gated route as trusted machine ingress, not as a public tool, and never expose source identities or raw notifier payloads through health or audit reads.
 - Preserve PM2 as the normal long-running runtime model.
 
 ## Known Limitations

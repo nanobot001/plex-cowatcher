@@ -14,8 +14,10 @@ import {
   evaluateAudiobookProgressTimeline,
   resolveAudiobookPositionEvidence,
   type AudiobookCanonicalProgressSnapshot,
-  type AudiobookPositionEvidence
+  type AudiobookPositionEvidence,
+  type AudiobookProgressObservation
 } from "./audiobookProgressEvidence.js";
+import { getCapturedAudiobookProgressObservations } from "./audiobookPositionCaptureService.js";
 
 const HOUSEHOLD_CATEGORIES = ["movie", "tv", "classic_tv", "anime", "audiobook"] as const;
 const SUMMARY_SAMPLE_LIMIT = 500;
@@ -3329,13 +3331,25 @@ export class DashboardService {
         const names = play.displayNames?.length ? play.displayNames : [play.displayName];
         return names.includes(person.displayName);
       });
-      const snapshot = evaluateAudiobookProgressTimeline({
-        listenerId: person.userId ?? null,
-        observations: userPlays.map((play) => ({
+      const captureUserIds = [...new Set(people
+        .filter((candidate) => candidate.displayName === person.displayName && candidate.userId != null)
+        .map((candidate) => Number(candidate.userId)))];
+      const progressObservations: AudiobookProgressObservation[] = [
+        ...userPlays.map((play) => ({
           ...play,
           mediaRevision: source.media_revision ?? null,
           chapterRevision: source.chapter_revision ?? null
         })),
+        ...captureUserIds.flatMap((userId) => getCapturedAudiobookProgressObservations(
+          this.db,
+          audiobook.id,
+          userId,
+          source.chapter_revision ?? null
+        ))
+      ];
+      const snapshot = evaluateAudiobookProgressTimeline({
+        listenerId: person.userId ?? null,
+        observations: progressObservations,
         bookDurationMs,
         chapters: cachedChapters.map((chapter) => ({
           chapterIndex: chapter.chapter_index,
@@ -3349,17 +3363,14 @@ export class DashboardService {
       });
       evidenceByPerson.set(person.displayName, {
         plays: userPlays,
-        positions: resolveAudiobookPositionEvidence(userPlays, bookDurationMs, manifestItems),
+        positions: resolveAudiobookPositionEvidence(progressObservations, bookDurationMs, manifestItems),
         snapshot
       });
     }
 
     const currentSnapshotEntry = [...evidenceByPerson.values()]
       .filter((entry) => entry.snapshot.currentPosition != null)
-      .sort((left, right) =>
-        left.plays.reduce((latest, play) => play.watchedAt > latest ? play.watchedAt : latest, "")
-          .localeCompare(right.plays.reduce((latest, play) => play.watchedAt > latest ? play.watchedAt : latest, ""))
-      )
+      .sort((left, right) => left.snapshot.evaluatedAt.localeCompare(right.snapshot.evaluatedAt))
       .at(-1);
     const currentPosition = currentSnapshotEntry
       ? adaptAudiobookProgressSnapshotToLegacyPosition(currentSnapshotEntry.snapshot)

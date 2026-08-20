@@ -45,6 +45,7 @@ Here is how the project's implemented commands and API routes map to the standar
 - Write-capable tools must preserve dry-run behavior unless the caller explicitly opts into apply mode and any required confirmations.
 - `project.audiobook_scan` preserves legacy `scanned`, `added`, `enriched`, and `errors` fields while adding track/book/pending/conflict/outbox counts. Outputs never include private paths or raw provider errors.
 - `project.audiobook_proof` is CLI-only. Canary, requeue, and reevaluate are dry-run by default and require both `--apply` and `--confirm`; reevaluate requires `--audiobook-id` or `--job-id` and only requeues a capability-ready current revision. Exact one-file-per-chapter evidence, including a consistent stored Audnexus-agent `-1` edition sentinel, can return `READY_FOR_FILE_BOUNDARY_CHAPTER_PROOF`; general analyzer-ready layouts retain `READY_FOR_MULTI_FILE_PROOF`, while incomplete identity, sequence, count, duration, or title evidence remains unresolved under a specific `MULTI_FILE_*` code. Outputs contain only job IDs, counts, states, timing, and allowlisted codes.
+- `POST /webhooks/tautulli/audiobook-position` is a localhost trusted-ingress route, not a published `project.*` tool. It is disabled by default, secret-gated when enabled, accepts only validated audiobook stop evidence, and writes additive revision-aware position rows. Repeated delivery is idempotent. Its response and audit output exclude the secret, raw payload, source account identity, title, path, and upstream URL.
 
 ## Output Contract
 

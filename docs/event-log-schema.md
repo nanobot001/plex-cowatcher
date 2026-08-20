@@ -109,6 +109,13 @@ Discovery events must not contain file paths, authenticated URLs, tokens, raw Pl
 - `audiobook_proof_requeued` records the selected existing job ID and whether the confirmed request applied or was skipped.
 - `audiobook_proof_reevaluated` records only the selected job/audiobook IDs, the safe capability reason, and whether the job was requeued or remained unresolved. The eligible file-boundary reason is `READY_FOR_FILE_BOUNDARY_CHAPTER_PROOF`; mismatch reasons remain allowlisted `MULTI_FILE_*` codes. It never includes paths, titles, or analyzer output.
 
+### Audiobook position capture events
+
+- `audiobook_position_captured` records only the source type, capture reason, whether the delivery was new or duplicate, whether it arrived out of order, and whether a current media revision was linked.
+- `audiobook_position_capture_rejected` records only an allowlisted validation, identity, unit, authorization-independent, or revision error code.
+
+Position-capture events never contain the webhook secret, raw payload, source account or session key, rating key/GUID, listener name, title, offset, path, token, or upstream URL. Exact source identity and offset remain in the private additive evidence table, not the public audit projection.
+
 ### `plex_historical_backfill_started` and `plex_historical_backfill_completed`
 
 These events record the bounded historical movie recovery run ID, cutoff, mode, and aggregate outcome counts. They never include Plex tokens, private paths, raw adapter errors, or full media payloads.

@@ -33,6 +33,8 @@ export interface AudiobookProgressObservation extends AudiobookPositionObservati
   sessionEndAt?: string | null;
   mediaRevision?: string | null;
   chapterRevision?: string | null;
+  positionEvidenceKind?: "tautulli_exact_stop" | null;
+  sourceEventId?: string | null;
 }
 
 export type AudiobookPositionEvidence = {
@@ -224,6 +226,25 @@ function normalizeMultiFileViewOffset(
   return mapped.status === "mapped" ? mapped.globalOffsetMs : null;
 }
 
+function normalizeCapturedExactOffset(
+  play: AudiobookProgressObservation,
+  bookDurationMs: number,
+  manifestItems: MultiFileTimelineItem[]
+): number | null {
+  const raw = Number(play.viewOffset);
+  if (!Number.isFinite(raw) || raw < 0) return null;
+  if (manifestItems.length > 1) {
+    const mapped = mapMultiFilePlaybackOffset({
+      ratingKey: play.ratingKey,
+      plexGuid: play.plexGuid ?? undefined,
+      viewOffset: raw
+    }, manifestItems);
+    return mapped.status === "mapped" ? mapped.globalOffsetMs : null;
+  }
+  if (bookDurationMs <= 0 || raw > bookDurationMs * POSITION_DURATION_TOLERANCE) return null;
+  return Math.min(raw, bookDurationMs);
+}
+
 function verifiedEvidence(
   offsetMs: number,
   bookDurationMs: number,
@@ -249,7 +270,7 @@ function verifiedEvidence(
  * uncertain and never reduce the established position.
  */
 export function resolveAudiobookPositionEvidence(
-  plays: AudiobookPositionObservation[],
+  plays: AudiobookProgressObservation[],
   bookDurationMs: number,
   manifestItems: MultiFileTimelineItem[] = []
 ): Map<number, AudiobookPositionEvidence> {
@@ -259,6 +280,28 @@ export function resolveAudiobookPositionEvidence(
   );
 
   for (const play of ordered) {
+    if (play.positionEvidenceKind === "tautulli_exact_stop") {
+      const capturedOffset = normalizeCapturedExactOffset(play, bookDurationMs, manifestItems);
+      if (capturedOffset != null) {
+        resolved.set(play.id, verifiedEvidence(
+          capturedOffset,
+          bookDurationMs,
+          "view_offset",
+          "verified_position",
+          "VIEW_OFFSET_VALID"
+        ));
+      } else {
+        resolved.set(play.id, {
+          status: "unavailable",
+          offsetMs: null,
+          progressPercent: null,
+          quality: "unavailable",
+          source: "none",
+          reason: "POSITION_FIELDS_INVALID"
+        });
+      }
+      continue;
+    }
     const viewOffset = manifestItems.length > 1
       ? normalizeMultiFileViewOffset(play, manifestItems)
       : normalizeSingleFileViewOffset(play.viewOffset, bookDurationMs);
@@ -571,7 +614,9 @@ export function evaluateAudiobookProgressTimeline(
       observation.duration ?? null,
       observation.viewOffset ?? null,
       observation.percentComplete ?? null,
-      observation.completed
+      observation.completed,
+      observation.positionEvidenceKind ?? null,
+      observation.sourceEventId ?? null
     ]);
     if (seenIds.has(observation.id) || seenFingerprints.has(fingerprint)) {
       diagnostic.status = "duplicate";

@@ -225,6 +225,20 @@ db.prepare(`INSERT INTO content_catalog
 db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,audiobook_id,source_provenance,refreshed_at)
   VALUES ('verified-audio-file','track','Verified Single File',180000,'5','Audiobooks','[]',21,'fixture',?)`).run(isoMinutesAgo(5));
+db.prepare(`INSERT INTO audiobook_position_evidence
+  (source_type,source_event_key,source_user_key,source_session_key,user_id,audiobook_id,rating_key,
+   observed_at,session_started_at,session_stopped_at,view_offset_ms,duration_ms,capture_reason,payload_digest,created_at)
+  VALUES ('tautulli_stop','fixture-exact-stop','fixture-tautulli-user','fixture-session',?,?,?,?,?,?,?,?,'playback_stop','fixture-payload',?)`).run(
+  userIds.Tony,
+  21,
+  "verified-audio-file",
+  isoMinutesAgo(10),
+  isoMinutesAgo(40),
+  isoMinutesAgo(10),
+  150000,
+  180000,
+  isoMinutesAgo(10)
+);
 db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,audiobook_id,source_provenance,refreshed_at)
   VALUES ('stale-progress-audio','track','Stale Progress Track',10000000,'5','Audiobooks','[]',23,'fixture',?)`).run(isoMinutesAgo(5));

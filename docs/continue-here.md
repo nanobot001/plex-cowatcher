@@ -1,5 +1,18 @@
 # Continue Here
 
+## 2026-08-20 — 3-2n-6I Exact Audiobook Position Capture Implemented And Live
+
+Current state:
+- **3-2n-6I** is implemented and live on `codex/3-2n-6i-exact-audiobook-position-capture` with one secret-gated localhost Tautulli stop-webhook ingress and additive migration 27 evidence storage.
+- Direct millisecond offsets now feed the 6H canonical evaluator without rewriting `playback_observations`. Listener/item/revision validation, dedupe, out-of-order delivery, rewind/furthest semantics, shared dashboard alias handling, privacy-safe health, and structured audit rejection are covered.
+- The configured-source preflight proved Tautulli v2.17.1 active/stop notification capability and proved finalized history is not an exact-offset source. Dedicated notifier 6 is enabled only for Audiobooks track stop events; existing notifier 5 remained unchanged.
+- The validated production backup is `data/backups/pre-audiobook-position-capture-2026-08-20T17-24-48-941.sqlite`. The negative missing-offset canary wrote no evidence; the positive stop canary wrote one exact revision-linked row and projected verified chapter 50 at 59%; duplicate replay retained one row. Capture health is healthy and recurring capture is enabled.
+- `npm run verify:block` passed with 152 deterministic tests, 69 browser regressions plus one intentional skip, dashboard syntax, and tool contracts. The final database quick-check and `npm run verify:live-dashboard` also passed; PM2 reports `plex-cowatch-service` online.
+- The unrelated pre-existing Discord runtime edits remain safely stashed as `preserve Discord runtime edits before 6I`; do not drop that stash when publishing or changing branches.
+
+Next step:
+- Review and publish the 6I branch separately, then proceed to **3-2n-6J-A** for service/API projection adoption. The listening bar and visible browser migration remain **3-2n-6J-B**, not 6I.
+
 ## 2026-08-15 — 3-2n-6H Canonical Audiobook Progress Implemented
 
 Current state:
