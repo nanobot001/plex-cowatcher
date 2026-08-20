@@ -459,6 +459,171 @@ test("6I captured exact stop evidence feeds verified audiobook hierarchy without
   });
 });
 
+test("6J-A service and API consumers share current, furthest, and session-as-of audiobook projections", async () => {
+  await withTestDb(async (db) => {
+    const userId = seedPositionCaptureFixture(db);
+    const insertObservation = db.prepare(`
+      INSERT INTO playback_observations
+        (user_id, rating_key, media_type, library_name, title, watched_at,
+         session_start_at, session_end_at, watched_at_provenance,
+         percent_complete, percent_complete_provenance, view_offset, duration,
+         completed, created_at, updated_at)
+      VALUES (?, 'capture-track', 'audiobook', 'Audiobooks', 'Capture Book', ?, ?, ?,
+        'source', ?, 'source', ?, ?, ?, ?, ?)
+    `);
+    insertObservation.run(
+      userId,
+      "2026-08-20T10:00:00.000Z",
+      "2026-08-20T09:59:00.000Z",
+      "2026-08-20T10:00:00.000Z",
+      25,
+      45000,
+      60,
+      0,
+      "2026-08-20T10:00:00.000Z",
+      "2026-08-20T10:00:00.000Z"
+    );
+    insertObservation.run(
+      userId,
+      "2026-08-20T14:30:00.000Z",
+      "2026-08-20T14:29:00.000Z",
+      "2026-08-20T14:30:00.000Z",
+      50,
+      null,
+      60,
+      0,
+      "2026-08-20T14:30:00.000Z",
+      "2026-08-20T14:30:00.000Z"
+    );
+    db.prepare(`
+      INSERT INTO audiobook_books
+        (id, folder_key, title, source_provenance, enrichment_status, identity_status,
+         current_media_revision, created_at, updated_at)
+      VALUES (91, 'sort-book', 'Raw Percent Decoy', 'fixture', 'enriched', 'identified',
+        'sort-revision-1', '2026-08-20T00:00:00Z', '2026-08-20T00:00:00Z')
+    `).run();
+    const sortRevision = db.prepare(`
+      INSERT INTO audiobook_media_revisions
+        (audiobook_id, media_revision, track_count, file_count, total_duration_ms, manifest_status, created_at)
+      VALUES (91, 'sort-revision-1', 1, 1, 180000, 'ready', '2026-08-20T00:00:00Z')
+    `).run();
+    db.prepare(`
+      INSERT INTO audiobook_media_revision_items
+        (revision_id, item_order, stable_identity, rating_key, guid, duration_ms, path_hash)
+      VALUES (?, 0, 'guid:sort-track', 'sort-track', 'plex://track/sort', 180000, 'sort-hash')
+    `).run(Number(sortRevision.lastInsertRowid));
+    db.prepare(`
+      INSERT INTO content_catalog
+        (rating_key, guid, media_type, title, duration, library_title, audiobook_id, source_provenance, refreshed_at)
+      VALUES ('sort-track', 'plex://track/sort', 'track', 'Raw Percent Decoy', 180000,
+        'Audiobooks', 91, 'fixture', '2026-08-20T00:00:00Z')
+    `).run();
+    db.prepare(`
+      INSERT INTO playback_observations
+        (user_id, rating_key, media_type, library_name, title, watched_at,
+         watched_at_provenance, percent_complete, percent_complete_provenance,
+         view_offset, duration, completed, created_at, updated_at)
+      VALUES (?, 'sort-track', 'audiobook', 'Audiobooks', 'Raw Percent Decoy',
+        '2026-08-20T14:10:00.000Z', 'source', 99, 'source', 36000, 60, 0,
+        '2026-08-20T14:10:00.000Z', '2026-08-20T14:10:00.000Z')
+    `).run(userId);
+    const capture = new AudiobookPositionCaptureService(db, { enabled: true, secret: "fixture-position-secret" });
+    assert.equal(capture.capture(positionPayload({ view_offset: 150000 })).ok, true);
+    assert.equal(capture.capture(positionPayload({
+      session_key: "capture-session-2",
+      observed_at_unix: 1787236200,
+      started_at: 1787236140,
+      view_offset: 90000
+    })).ok, true);
+    assert.deepEqual(capture.capture(positionPayload({
+      session_key: "capture-session-between",
+      observed_at_unix: 1787235900,
+      started_at: 1787235840,
+      view_offset: 160000
+    })), { ok: true, status: "accepted", outOfOrder: true });
+
+    const rawBefore = db.prepare("SELECT * FROM playback_observations ORDER BY id").all();
+    const captureBefore = db.prepare("SELECT * FROM audiobook_position_evidence ORDER BY id").all();
+    const auditCountBefore = Number(db.prepare("SELECT COUNT(*) AS count FROM audit_log").get().count);
+    const { createApp } = await import("../dist/server/app.js");
+    const app = createApp(db, new MockPlexAdapter(), { skipStartupUserSync: true });
+    const server = await new Promise((resolve) => {
+      const instance = app.listen(0, "127.0.0.1", () => resolve(instance));
+    });
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const read = async (path) => {
+        const response = await fetch(base + path);
+        const body = await response.json();
+        assert.equal(response.status, 200, JSON.stringify(body));
+        assert.equal(body.ok, true, JSON.stringify(body));
+        return body.data;
+      };
+      const progress = await read("/api/dashboard/progress?category=audiobook&limit=10");
+      const progressGroup = progress.recentlyActive.items.find((item) => item.groupKey === "audiobook:Audiobooks:90");
+      assert.ok(progressGroup);
+      const detail = await read("/api/dashboard/detail-workspace/" + encodeURIComponent("audiobook:90"));
+      const hierarchy = await read("/api/dashboard/detail-workspace/" + encodeURIComponent("audiobook:90") + "/hierarchy");
+      const media = await read("/api/dashboard/media?category=audiobook&sort=progress&limit=10");
+      const mediaItem = media.items.find((item) => item.audiobookId === 90);
+      assert.equal(media.items[0].audiobookId, 90);
+      const continuing = await read("/api/dashboard/continue-consuming?category=audiobook&limit=10");
+      const continueItem = continuing.items.find((item) => item.audiobookId === 90);
+      const currentProjection = progressGroup.audiobookProgress.listeners[0];
+      const parity = (projection) => ({
+        current: projection.current,
+        furthest: projection.furthest,
+        movement: projection.movement,
+        rewindDetected: projection.rewindDetected,
+        revisitDetected: projection.revisitDetected,
+        mediaRevision: projection.mediaRevision,
+        chapterRevision: projection.chapterRevision
+      });
+      assert.deepEqual(parity(detail.audiobookProgress.listeners[0]), parity(currentProjection));
+      assert.deepEqual(parity(hierarchy.audiobookProgress.listeners[0]), parity(currentProjection));
+      assert.deepEqual(parity(mediaItem.audiobookProgress.listeners[0]), parity(currentProjection));
+      assert.deepEqual(parity(continueItem.audiobookProgress.listeners[0]), parity(currentProjection));
+      assert.equal(currentProjection.current.offsetMs, 90000);
+      assert.equal(currentProjection.current.progressPercent, 50);
+      assert.equal(currentProjection.furthest.offsetMs, 160000);
+      assert.equal(currentProjection.furthest.progressPercent, 89);
+      assert.equal(currentProjection.movement, "rewind");
+      assert.equal(currentProjection.rewindDetected, true);
+      assert.equal(currentProjection.revisitDetected, true);
+      assert.equal(currentProjection.bookCompleted, false);
+      assert.equal(progress.recentlyCompleted.items.some((item) => item.groupKey === progressGroup.groupKey), false);
+      assert.ok(progress.continue.items.some((item) => item.groupKey === progressGroup.groupKey));
+
+      const overview = await read("/api/dashboard/overview?category=audiobook");
+      const digest = overview.recentPlaybackDigests.find((item) => item.detailKey === "audiobook:90");
+      assert.ok(digest);
+      assert.equal(digest.sessions.length, 2);
+      const digestPercents = digest.sessions.map((session) => session.audiobookProgress.listeners[0].current.progressPercent);
+      assert.deepEqual(digestPercents, [25, 50]);
+      assert.equal(overview.completionFacts.audiobook.completedPlaybackObservations, 0);
+      assert.equal(overview.completionFacts.audiobook.completedAudiobookBooks, 0);
+
+      const timeline = await read("/api/dashboard/timeline?date=2026-08-20&audiobookId=90&limit=10");
+      const timelinePercents = timeline.sessions.map((session) => session.audiobookProgress.listeners[0].current.progressPercent);
+      assert.deepEqual(timelinePercents, [25, 50]);
+      assert.ok(timeline.items.every((item) => item.audiobookProgress.listeners[0].context === "session_as_of"));
+
+      const people = await read("/api/dashboard/people?period=all&category=audiobook");
+      const tony = people.people.find((person) => person.plex_username === "Tony");
+      assert.equal(tony.completionFacts.completedPlaybackObservations, 0);
+      assert.equal(tony.completionFacts.completedAudiobookBooks, 0);
+      assert.ok(tony.completionFacts.passedAudiobookChapters >= 1);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+    assert.deepEqual(db.prepare("SELECT * FROM playback_observations ORDER BY id").all(), rawBefore);
+    assert.deepEqual(db.prepare("SELECT * FROM audiobook_position_evidence ORDER BY id").all(), captureBefore);
+    assert.equal(Number(db.prepare("SELECT COUNT(*) AS count FROM audit_log").get().count), auditCountBefore);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sync_failures").get().count, 0);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM watch_events").get().count, 0);
+  });
+});
+
 test("historical Plex last-view evidence does not fabricate a replay", () => {
   const result = evaluateReplaySemantics([
     { observedAt: "2020-01-01T12:00:00Z", localDate: "2020-01-01", completed: true, progressPercent: 100, source: "historical_last_view" },
@@ -4565,8 +4730,9 @@ test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed promp
       const csvResponse=await fetch(base+"/api/dashboard/export.csv");
       assert.match(csvResponse.headers.get("content-type"),/text\/csv/);
       const csv=await csvResponse.text();
-      assert.match(csv,/watched_at,person,category/);
+      assert.equal(csv.split(/\r?\n/, 1)[0], "watched_at,person,category,library,title,progress,duration_minutes,status");
       assert.match(csv,/HTTP Movie/);
+      assert.doesNotMatch(csv,/currentPosition|furthestPosition|audiobookProgress/);
       assert.doesNotMatch(csv,/X-Plex-Token|file_path|folder_path_hint/);
       const denied=await fetch(base+`/api/dashboard/prompts/${event.lastInsertRowid}/dismiss`,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
       assert.equal(denied.status,400);

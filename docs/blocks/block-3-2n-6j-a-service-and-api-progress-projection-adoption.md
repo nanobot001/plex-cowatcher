@@ -1,9 +1,10 @@
 # Block 3-2n-6J-A: Service And API Progress Projection Adoption
 
-> Status: Planned.
-> Result: Not implemented.
+> Status: Implemented on 2026-08-20.
+> Result: Implemented.
 > Dependencies: Blocks 3-2n-6H and 3-2n-6I.
-> Notes: First child of 3-2n-6J. This block owns service/API adoption and compatibility only; it does not redesign or migrate browser presentation.
+> Verification: `npm run verify:block` passed with 153 service/integration tests, 69 browser regressions plus one intentional skip, dashboard syntax, and tool contracts.
+> Notes: The typed additive per-listener current, furthest, session, chapter, quality, provenance, and revision projection is adopted across service/API consumers. Raw exports and mutation boundaries remain unchanged; browser presentation remains 3-2n-6J-B.
 
 ## Goal
 

@@ -93,5 +93,6 @@ Block 3-2 adds localhost browser endpoints that reuse the shared state and servi
 - POST /api/dashboard/cowatch-reviews/:candidateId/ask-discord is a `write_action`. It is disabled when Discord review is unavailable, dry-run by default, explicitly operator-triggered, deduplicated per open candidate, and never invokes Plex synchronization.
 - Dashboard overview, media, people, progress, timeline, and detail responses include bounded timing metadata for local performance assertions. Timeline responses also separate paginated activity rows from chart sessions.
 - Dashboard media and continue-consuming responses expose bounded deterministic pagination over canonical consumed-title groups; the legacy continue-watching route remains an array for existing Overview consumers.
+- Audiobook dashboard responses add a typed per-listener canonical projection for current, furthest, session-as-of, chapter, quality, provenance, and revision context. Overview, Progress, detail, Media, Continue, Timeline, and People select an explicit projection; raw CSV fields and every mutation path remain outside this derived read model. See `docs/data/audiobook-progress-projection.md`.
 
 These browser routes do not create new published project.* tool names and therefore do not change the CLI/tool manifest contract.
