@@ -1066,6 +1066,70 @@ legend { font-size: 0.9rem; font-weight: 600; color: #06B6D4; padding: 0 12px; }
 .digest-progress-summary { display: grid; min-width: 0; grid-template-columns: auto minmax(54px, 1fr); align-items: center; gap: 7px; }
 .digest-progress-track { display: block; min-width: 0; height: 6px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,0.12); }
 .digest-progress-track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #06B6D4, #8B5CF6); }
+.audiobook-session-progress,
+.audiobook-session-listener {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+.audiobook-session-listener + .audiobook-session-listener { padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.06); }
+.audiobook-session-listener > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.audiobook-session-listener small { color: var(--text-muted); }
+
+.audiobook-progress {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+.audiobook-progress-listener {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid rgba(245,158,11,0.18);
+  border-radius: 10px;
+  background: rgba(245,158,11,0.055);
+}
+.audiobook-progress-listener + .audiobook-progress-listener { margin-top: 2px; }
+.audiobook-progress.compact .audiobook-progress-listener { padding: 8px; }
+.audiobook-progress-person { overflow: hidden; color: var(--accent-audiobook); font-size: 0.7rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.audiobook-progress-listener strong { min-width: 0; overflow-wrap: anywhere; font-size: 0.86rem; }
+.audiobook-progress-furthest,
+.audiobook-progress-quality,
+.audiobook-progress-unknown { color: var(--text-muted); font-size: 0.7rem; overflow-wrap: anywhere; }
+.audiobook-progress-furthest { color: #fcd34d; }
+.audiobook-progress-meter {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 7px;
+  overflow: visible;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.12);
+}
+.audiobook-progress-meter i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #06b6d4, var(--accent-audiobook)); }
+.audiobook-progress-meter b { position: absolute; top: -3px; width: 2px; height: 13px; border-radius: 2px; background: #fcd34d; transform: translateX(-1px); box-shadow: 0 0 0 2px rgba(17,24,39,0.8); }
+.audiobook-chapter-states { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 5px; }
+.audiobook-chapter-states i { width: 9px; height: 9px; flex: 0 0 auto; border: 1px solid rgba(255,255,255,0.38); border-radius: 50%; background: transparent; }
+.audiobook-chapter-states .state-passed,
+.audiobook-chapter-states .state-explicitly_completed { border-color: #6ee7b7; background: #6ee7b7; }
+.audiobook-chapter-states .state-in_progress { border-color: #fbbf24; background: #fbbf24; }
+.audiobook-chapter-states .state-revisiting { border: 2px solid #fbbf24; background: rgba(251,191,36,0.18); }
+.audiobook-chapter-states .state-probably_passed { border-style: dashed; border-color: #67e8f9; background: rgba(103,232,249,0.18); }
+.audiobook-chapter-states .state-unknown { border-style: dashed; opacity: 0.55; }
+.library-card .audiobook-progress { width: 100%; margin: 2px 0; }
+.library-card .audiobook-progress-quality,
+.library-card .audiobook-chapter-states { display: none; }
+.cw-card .audiobook-progress { width: 100%; }
+.activity-row .audiobook-session-progress { width: min(100%, 360px); margin-top: 8px; }
+.detail-summary-card .audiobook-progress { width: 100%; }
+.overview-audiobook-facts,
+.person-completion-facts { display: flex; min-width: 0; flex-wrap: wrap; gap: 8px; }
+.overview-audiobook-facts { margin-top: 12px; }
+.overview-audiobook-facts span,
+.person-completion-facts span { min-width: 0; padding: 7px 9px; border: 1px solid rgba(245,158,11,0.16); border-radius: 9px; background: rgba(245,158,11,0.05); color: var(--text-muted); font-size: 0.74rem; overflow-wrap: anywhere; }
+.person-completion-facts { margin: 10px 0; }
 
 /* Gantt Timeline */
 .timeline-gantt { overflow-x: auto; margin-top: 20px; padding-bottom: 20px; }
@@ -1344,7 +1408,7 @@ legend { font-size: 0.9rem; font-weight: 600; color: #06B6D4; padding: 0 12px; }
 .poster-card:hover { transform: translateY(-4px); }
 .poster-card:focus-visible { outline: 3px solid var(--accent-tv); outline-offset: 5px; border-radius: 12px; }
 .poster-card.selected .poster { outline: 3px solid #f59e0b; outline-offset: 3px; }
-.poster-card .poster { width: 100%; aspect-ratio: 2/3; object-fit: cover; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+.poster-card .poster { box-sizing: border-box; width: 100%; max-width: 100%; aspect-ratio: 2/3; object-fit: cover; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
 .poster-card .poster.artwork-fallback { object-fit: contain; padding: 18%; background: rgba(255,255,255,0.04); }
 .poster-card .poster-frame .media-badge { left: 10px; top: 10px; font-size: 0.62rem; }
 .poster-card span { font-size: 0.85rem; color: var(--text-muted); }
@@ -2236,6 +2300,11 @@ dialog[open] {
 
 /* Day-grouped Gantt charts */
 .day-gantt-card {
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148,163,184,0.42) transparent;
   background: var(--panel-bg);
   backdrop-filter: blur(20px);
   border: 1px solid var(--panel-border);
@@ -2386,6 +2455,11 @@ dialog[open] {
   .library-preview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .library-toolbar { align-items: stretch; flex-direction: column; }
   .library-toolbar select { width: 100%; }
+  .timeline-nav-header { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 12px; }
+  .timeline-nav-controls { width: 100%; min-width: 0; flex-wrap: wrap; }
+  .timeline-nav-header > div { min-width: 0; }
+  .timeline-date-picker { box-sizing: border-box; width: 100%; min-width: 0; }
+  .day-gantt-card { padding: 16px 12px; }
 }
 
 /* Dashboard rail restore: keep the view picker and household members in the left column. */
@@ -2932,6 +3006,12 @@ dialog[open] {
 .progress-evidence-dot.watched { background: #6ee7b7; border-color: #6ee7b7; }
 .progress-evidence-dot.partial { background: #fbbf24; border-color: #fbbf24; }
 .progress-evidence-dot.unknown { background: transparent; border-style: dashed; opacity: 0.5; }
+.watcher-lane-marker.audiobook-passed,
+.watcher-lane-marker.audiobook-explicitly_completed { color: #6ee7b7; }
+.watcher-lane-marker.audiobook-in_progress { color: #fbbf24; }
+.watcher-lane-marker.audiobook-revisiting { color: #fbbf24; border-color: rgba(251,191,36,0.65); background: rgba(251,191,36,0.12); }
+.watcher-lane-marker.audiobook-probably_passed { color: #67e8f9; border-style: dashed; }
+.watcher-lane-marker.audiobook-unknown { opacity: 0.62; }
 .progress-dots { display: inline-flex; align-items: center; gap: 4px; }
 .progress-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,0.18); border: 1px solid rgba(255,255,255,0.45); }
 .progress-dot.watched { background: #6ee7b7; border-color: #6ee7b7; }

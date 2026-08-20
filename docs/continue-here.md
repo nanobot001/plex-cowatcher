@@ -1,5 +1,17 @@
 # Continue Here
 
+## 2026-08-20 — 3-2n-6J-B Browser Progress Implemented And Live
+
+Current state:
+- **3-2n-6J-B** is implemented and live. The visible audiobook listening bar now uses the canonical per-listener current position across Overview, Progress/shared detail, Media Explorer/Continue Consuming, Timeline, and People instead of deriving browser meaning from raw percentages.
+- Rewinds show the lower current position as primary, retain furthest attainment as a secondary marker, and label the active chapter `Revisiting`. Timeline and digest rows retain session-as-of movement; exact, approximate/stale, unavailable, multi-user, and multi-file states remain distinct.
+- People and Overview now report completed playback observations, passed chapters, and completed audiobook books as separate facts. Non-audiobook behavior remains covered, Timeline Gantt width still represents session time, and the responsive contract is verified through 320px without page-level horizontal overflow.
+- `npm run verify:block` passed with 153 service/integration tests, 73 browser regressions plus one intentional narrow-project skip, dashboard syntax, and tool contracts. Only `plex-cowatch-service` was restarted, and `npm run verify:live-dashboard` passed against the deployed dashboard.
+- The unrelated pre-existing Discord runtime edits remain safely stashed as `preserve Discord runtime edits before 6I`; do not drop that stash when changing branches.
+
+Next step:
+- The **3-2n-6H through 3-2n-6J-B** audiobook progress sequence is complete. Select the next planned block independently; do not reopen this sequence unless new source evidence or a regression contradicts the canonical contract.
+
 ## 2026-08-20 — 3-2n-6J-A Service And API Projection Implemented
 
 Current state:

@@ -111,6 +111,9 @@ db.prepare(`INSERT INTO audiobook_books
 db.prepare(`INSERT INTO audiobook_books
   (id,folder_key,title,series_title,chapter_count,source_provenance,enrichment_status,created_at,updated_at)
   VALUES (23,'stale-progress-fixture-audiobook','Stale Progress Fixture Audiobook','Fixture Series',4,'fixture','enriched',?,?)`).run(isoMinutesAgo(5), isoMinutesAgo(5));
+db.prepare(`INSERT INTO audiobook_books
+  (id,folder_key,title,series_title,chapter_count,source_provenance,enrichment_status,current_media_revision,created_at,updated_at)
+  VALUES (24,'canonical-rewind-fixture-audiobook','Canonical Rewind Fixture Audiobook','Fixture Series',3,'fixture','enriched','rewind-current-media',?,?)`).run(isoMinutesAgo(5), isoMinutesAgo(5));
 // Book 20 deliberately carries a verified cache for an older media revision. Progress must ignore it.
 db.prepare("UPDATE audiobook_books SET current_media_revision = 'fixture-current-media' WHERE id = 20").run();
 db.prepare(`INSERT INTO audiobook_chapter_sources
@@ -157,6 +160,37 @@ for (const [chapterIndex, title, startOffset, endOffset] of [
   db.prepare(`INSERT INTO audiobook_chapters
     (audiobook_id,chapter_index,title,start_offset_ms,end_offset_ms,created_at,updated_at)
     VALUES (?,?,?,?,?,?,?)`).run(23, chapterIndex, title, startOffset, endOffset, isoMinutesAgo(5), isoMinutesAgo(5));
+}
+const rewindMediaRevision = db.prepare(`
+  INSERT INTO audiobook_media_revisions
+    (audiobook_id,media_revision,track_count,file_count,total_duration_ms,manifest_status,created_at)
+  VALUES (24,'rewind-current-media',1,1,180000,'ready',?)
+`).run(isoMinutesAgo(5));
+db.prepare(`
+  INSERT INTO audiobook_media_revision_items
+    (revision_id,item_order,stable_identity,rating_key,guid,duration_ms,private_file_path,path_hash)
+  VALUES (?,0,'guid:plex://track/canonical-rewind','canonical-rewind-audio','plex://track/canonical-rewind',180000,'F:\\fixture\\canonical-rewind.m4b','rewind-hash')
+`).run(Number(rewindMediaRevision.lastInsertRowid));
+const rewindChapterRevision = db.prepare(`
+  INSERT INTO audiobook_chapter_revisions
+    (audiobook_id,media_revision,source_type,source_status,confidence,chapter_digest,duration_ms,created_at,activated_at)
+  VALUES (24,'rewind-current-media','audiobook_tool','active',0.99,'fixture-rewind-digest',180000,?,?)
+`).run(isoMinutesAgo(5), isoMinutesAgo(5));
+db.prepare("UPDATE audiobook_books SET active_chapter_revision_id = ? WHERE id = 24").run(Number(rewindChapterRevision.lastInsertRowid));
+db.prepare(`INSERT INTO audiobook_chapter_sources
+  (audiobook_id,source_type,source_status,confidence,refreshed_at)
+  VALUES (24,'audiobook_tool','active',0.99,?)`).run(isoMinutesAgo(5));
+for (const [chapterIndex, title, startOffset, endOffset] of [
+  [1, "Rewind Chapter 1", 0, 60000],
+  [2, "Rewind Chapter 2", 60000, 120000],
+  [3, "Rewind Chapter 3", 120000, 180000]
+]) {
+  db.prepare(`INSERT INTO audiobook_chapter_revision_items
+    (chapter_revision_id,chapter_index,title,start_offset_ms,end_offset_ms)
+    VALUES (?,?,?,?,?)`).run(Number(rewindChapterRevision.lastInsertRowid), chapterIndex, title, startOffset, endOffset);
+  db.prepare(`INSERT INTO audiobook_chapters
+    (audiobook_id,chapter_index,title,start_offset_ms,end_offset_ms,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?)`).run(24, chapterIndex, title, startOffset, endOffset, isoMinutesAgo(5), isoMinutesAgo(5));
 }
 const multiMediaRevision = db.prepare(`
   INSERT INTO audiobook_media_revisions
@@ -242,6 +276,26 @@ db.prepare(`INSERT INTO audiobook_position_evidence
 db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,audiobook_id,source_provenance,refreshed_at)
   VALUES ('stale-progress-audio','track','Stale Progress Track',10000000,'5','Audiobooks','[]',23,'fixture',?)`).run(isoMinutesAgo(5));
+db.prepare(`INSERT INTO content_catalog
+  (rating_key,guid,media_type,title,duration,library_id,library_title,genres_json,audiobook_id,source_provenance,refreshed_at)
+  VALUES ('canonical-rewind-audio','plex://track/canonical-rewind','track','Canonical Rewind Track',180000,'5','Audiobooks','[]',24,'fixture',?)`).run(isoMinutesAgo(5));
+const rewindFirstAt = isoMinutesAgo(300);
+const rewindJustinAt = isoMinutesAgo(120);
+const rewindCurrentAt = isoMinutesAgo(60);
+const insertRewindObservation = db.prepare(`INSERT INTO playback_observations
+  (user_id,rating_key,media_type,library_name,title,show_title,watched_at,session_start_at,session_end_at,
+   watched_at_provenance,percent_complete,percent_complete_provenance,view_offset,duration,completed,created_at,updated_at)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+insertRewindObservation.run(userIds.Tony, "canonical-rewind-audio", "track", "Audiobooks", "Canonical Rewind Track", "Canonical Rewind Fixture Audiobook", rewindFirstAt, isoMinutesAgo(330), rewindFirstAt, "fixture", 83, "fixture", 150000, 180000, 0, rewindFirstAt, rewindFirstAt);
+insertRewindObservation.run(userIds.Justin, "canonical-rewind-audio", "track", "Audiobooks", "Canonical Rewind Track", "Canonical Rewind Fixture Audiobook", rewindJustinAt, isoMinutesAgo(135), rewindJustinAt, "fixture", 70, "fixture", 30000, 180000, 0, rewindJustinAt, rewindJustinAt);
+insertRewindObservation.run(userIds.Tony, "canonical-rewind-audio", "track", "Audiobooks", "Canonical Rewind Track", "Canonical Rewind Fixture Audiobook", rewindCurrentAt, isoMinutesAgo(75), rewindCurrentAt, "fixture", 99, "fixture", 90000, 180000, 0, rewindCurrentAt, rewindCurrentAt);
+const insertRewindEvidence = db.prepare(`INSERT INTO audiobook_position_evidence
+  (source_type,source_event_key,source_user_key,source_session_key,user_id,audiobook_id,rating_key,
+   observed_at,session_started_at,session_stopped_at,view_offset_ms,duration_ms,capture_reason,payload_digest,created_at)
+  VALUES ('tautulli_stop',?,?,?,?,24,'canonical-rewind-audio',?,?,?,?,180000,'playback_stop',?,?)`);
+insertRewindEvidence.run("rewind-tony-furthest", "fixture-tony", "rewind-tony-1", userIds.Tony, rewindFirstAt, isoMinutesAgo(330), rewindFirstAt, 150000, "rewind-tony-furthest-digest", rewindFirstAt);
+insertRewindEvidence.run("rewind-justin-current", "fixture-justin", "rewind-justin-1", userIds.Justin, rewindJustinAt, isoMinutesAgo(135), rewindJustinAt, 30000, "rewind-justin-digest", rewindJustinAt);
+insertRewindEvidence.run("rewind-tony-current", "fixture-tony", "rewind-tony-2", userIds.Tony, rewindCurrentAt, isoMinutesAgo(75), rewindCurrentAt, 90000, "rewind-tony-current-digest", rewindCurrentAt);
 for (const [ratingKey, title, duration] of [
   ["multi-audio-file-1", "Part 1", 180000],
   ["multi-audio-file-2", "Part 2", 120000]

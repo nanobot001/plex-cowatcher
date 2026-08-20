@@ -1,4 +1,5 @@
 import { test, expect } from "playwright/test";
+import fs from "node:fs";
 
 const watchedByNames = async (card) => {
   const label = await card.getByTestId("viewer-badge").getAttribute("aria-label");
@@ -9,9 +10,13 @@ const watchedByNames = async (card) => {
 const expectNoVisualOverflow = async (page) => {
   const dimensions = await page.evaluate(() => ({
     clientWidth: document.documentElement.clientWidth,
-    scrollWidth: document.documentElement.scrollWidth
+    scrollWidth: document.documentElement.scrollWidth,
+    offenders: [...document.querySelectorAll("body *")].map(node => {
+      const rect = node.getBoundingClientRect();
+      return { node: node.getAttribute("data-testid") || node.className || node.tagName, left: Math.round(rect.left), right: Math.round(rect.right), width: Math.round(rect.width) };
+    }).filter(rect => rect.right > document.documentElement.clientWidth + 1 || rect.left < -1).slice(0, 12)
   }));
-  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+  expect(dimensions.scrollWidth, JSON.stringify(dimensions.offenders)).toBeLessThanOrEqual(dimensions.clientWidth);
 };
 
 const expectBadgeRowsDoNotOverlap = async (badge) => {
@@ -115,7 +120,7 @@ test("overview digests collapse session evidence and expose episode artwork", as
   expect(pageErrors).toEqual([]);
 });
 
-test("audiobook digest sessions use compact chapter-index summaries", async ({ page }) => {
+test("audiobook digest sessions use canonical session-as-of progress", async ({ page }) => {
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.goto("/#overview?category=audiobook");
@@ -127,8 +132,10 @@ test("audiobook digest sessions use compact chapter-index summaries", async ({ p
   await expect(session.locator("summary")).toContainText("Session 1");
   await expect(session.locator("summary")).not.toContainText("Tony");
   const body = session.locator(".digest-session-body");
-  await expect(body).toContainText("Completed");
-  await expect(body).not.toContainText("Verified Chapter");
+  await expect(body.getByTestId("audiobook-session-progress")).toContainText("Tony");
+  await expect(body.getByTestId("audiobook-session-progress")).toContainText("Chapter 2 · 50%");
+  await expect(body).not.toContainText("Completed");
+  await expect(body).not.toContainText("Verified chapter completion unavailable");
   await expect(card.locator(".digest-progress-track").first()).toHaveAttribute("role", "progressbar");
   await expect(card.locator(".digest-progress-track").first()).toHaveAttribute("aria-valuenow", /\d+/);
   await expect(session.locator("summary")).not.toContainText("Watched by");
@@ -608,7 +615,7 @@ test("detail shell owns one scroller and stays content-first across required wid
   }
 });
 
-test("exact audiobook stop evidence drives the shared detail and chapter hierarchy", async ({ page }) => {
+test("exact audiobook stop evidence drives canonical shared detail and chapter states", async ({ page }) => {
   const hierarchyResponse = await page.request.get("/api/dashboard/detail-workspace/" + encodeURIComponent("audiobook:Audiobooks:21") + "/hierarchy");
   const hierarchyBody = await hierarchyResponse.json();
   expect(hierarchyResponse.ok(), JSON.stringify(hierarchyBody)).toBeTruthy();
@@ -630,12 +637,16 @@ test("exact audiobook stop evidence drives the shared detail and chapter hierarc
 
   const dialog = page.locator("#detail-dialog");
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByTestId("detail-workspace-progress")).toContainText("2 of 3 chapters · 83%");
-  await expect(dialog.getByTestId("detail-workspace-source")).toContainText("Verified audiobook chapters");
+  await expect(dialog.getByTestId("detail-workspace-progress").getByTestId("audiobook-current")).toHaveText("Chapter 3 · 83%");
+  await expect(dialog.getByTestId("detail-workspace-progress").getByTestId("audiobook-current-meter")).toHaveAttribute("aria-valuenow", "83");
+  await expect(dialog.getByTestId("detail-workspace-source")).toContainText("Verified exact position");
   await expect(dialog.getByTestId("detail-presenter-audiobook")).toBeVisible();
   await expect(dialog.getByTestId("detail-hierarchy-group").locator("summary")).toContainText("3 chapters");
   await expect(dialog.getByTestId("detail-workspace-hierarchy")).toContainText("Verified Chapter 1");
   await expect(dialog.getByTestId("detail-workspace-hierarchy")).toContainText("Verified Chapter 3");
+  await dialog.getByTestId("detail-hierarchy-group").locator("summary").click();
+  await expect(dialog.getByTestId("detail-hierarchy-node").filter({ hasText: "Verified Chapter 1" }).getByTestId("detail-watcher-grid").locator('[data-person-id="1"]')).toHaveAttribute("data-state", "passed");
+  await expect(dialog.getByTestId("detail-hierarchy-node").filter({ hasText: "Verified Chapter 3" }).getByTestId("detail-watcher-grid").locator('[data-person-id="1"]')).toHaveAttribute("data-state", "in_progress");
 
   const metrics = await dialog.evaluate(element => ({
     documentWidth: document.documentElement.scrollWidth,
@@ -651,8 +662,9 @@ test("exact audiobook stop evidence drives the shared detail and chapter hierarc
   const unverifiedCard = page.locator('[data-section="audiobook"]').getByTestId("library-card").filter({ hasText: "Fixture Audiobook" }).first();
   await expect(unverifiedCard).toBeVisible();
   await unverifiedCard.click();
-  await expect(dialog.getByTestId("detail-workspace-source")).toContainText("Plex track/file evidence");
-  await expect(dialog.getByTestId("detail-workspace-progress")).not.toContainText("chapters");
+  await expect(dialog.getByTestId("detail-workspace-source")).toContainText("Position unavailable");
+  await expect(dialog.getByTestId("detail-workspace-progress")).toContainText("Position unknown");
+  await expect(dialog.getByTestId("detail-workspace-progress").getByRole("progressbar")).toHaveCount(0);
 });
 
 test("stale Audiobook percentages remain approximate and agree across Overview, Progress, and detail", async ({ page }) => {
@@ -672,19 +684,121 @@ test("stale Audiobook percentages remain approximate and agree across Overview, 
     .filter({ has: page.getByRole("heading", { name: "Stale Progress Fixture Audiobook", exact: true }) })
     .first();
   await expect(card).toBeVisible();
-  await expect(card.getByTestId("progress-summary")).toContainText("Approx. chapter 2 of 4");
-  await expect(card.getByTestId("progress-summary")).toContainText("30%");
-  await expect(card.getByTestId("progress-source")).toContainText("approximate position");
+  await expect(card.getByTestId("audiobook-current")).toContainText("Approx. Chapter 2 · 30%");
+  await expect(card.getByTestId("audiobook-current-meter")).toHaveAttribute("aria-valuenow", "30");
+  await expect(card.getByTestId("progress-source")).toContainText("Approximate position");
   await expect(card.getByTestId("progress-source")).toContainText("source percentage appears stale");
 
   await card.click();
   const dialog = page.locator("#detail-dialog");
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByTestId("detail-workspace-progress")).toContainText("Approx. chapter 2 of 4");
-  await expect(dialog.getByTestId("detail-workspace-progress")).toContainText("30%");
-  await expect(dialog.getByTestId("detail-workspace-source")).toContainText("approximate position");
+  await expect(dialog.getByTestId("detail-workspace-progress").getByTestId("audiobook-current")).toContainText("Approx. Chapter 2 · 30%");
+  await expect(dialog.getByTestId("detail-workspace-source")).toContainText("Approximate position");
   await expect(dialog.getByTestId("detail-workspace-source")).toContainText("source percentage appears stale");
   await expectNoVisualOverflow(page);
+});
+
+test("canonical audiobook rewind stays current-first and per-listener across cards and detail", async ({ page }) => {
+  await page.goto("/#overview?category=audiobook");
+  const overviewCards = page.getByTestId("recent-playback-card").filter({ hasText: "Canonical Rewind Fixture Audiobook" });
+  const tonyDigest = overviewCards.filter({ hasText: "Tony" }).first();
+  await expect(tonyDigest).toBeVisible();
+  await expect(tonyDigest.getByTestId("digest-session")).toHaveCount(2);
+  const firstSession = tonyDigest.getByTestId("digest-session").nth(0);
+  const rewindSession = tonyDigest.getByTestId("digest-session").nth(1);
+  await firstSession.locator("summary").click();
+  await rewindSession.locator("summary").click();
+  await expect(firstSession.getByTestId("audiobook-session-progress")).toContainText("Chapter 3 · 83%");
+  await expect(rewindSession.getByTestId("audiobook-session-progress")).toContainText("Revisiting · Chapter 2 · 50%");
+  await expect(rewindSession).not.toContainText("99%");
+  await expect(page.getByTestId("overview-audiobook-completion-facts")).toContainText("completed playback observations");
+  await expect(page.getByTestId("overview-audiobook-completion-facts")).toContainText("completed books");
+
+  await page.goto("/#progress?category=audiobook");
+  const progressCard = page.getByTestId("progress-card").filter({ has: page.getByRole("heading", { name: "Canonical Rewind Fixture Audiobook", exact: true }) }).first();
+  await expect(progressCard).toBeVisible();
+  const progressListeners = progressCard.getByTestId("audiobook-listener-progress");
+  await expect(progressListeners).toHaveCount(2);
+  const tonyProgress = progressListeners.filter({ hasText: "Tony" });
+  const justinProgress = progressListeners.filter({ hasText: "Justin" });
+  await expect(tonyProgress.getByTestId("audiobook-current")).toHaveText("Revisiting · Chapter 2 · 50%");
+  await expect(tonyProgress.getByTestId("audiobook-furthest")).toHaveText("Furthest reached: Chapter 3 · 83%");
+  await expect(tonyProgress.getByTestId("audiobook-current-meter")).toHaveAttribute("aria-valuenow", "50");
+  await expect(tonyProgress.getByTestId("audiobook-current-meter")).toHaveAttribute("aria-label", /furthest reached chapter 3 · 83%/i);
+  await expect(justinProgress.getByTestId("audiobook-current")).toHaveText("Chapter 1 · 17%");
+  await expect(justinProgress.getByTestId("audiobook-furthest")).toHaveCount(0);
+  await expect(progressCard).not.toContainText("99%");
+  await expectNoVisualOverflow(page);
+
+  await progressCard.click();
+  const dialog = page.locator("#detail-dialog");
+  await expect(dialog).toBeVisible();
+  const detailTony = dialog.getByTestId("audiobook-listener-progress").filter({ hasText: "Tony" });
+  const detailJustin = dialog.getByTestId("audiobook-listener-progress").filter({ hasText: "Justin" });
+  await expect(detailTony.getByTestId("audiobook-current")).toHaveText("Revisiting · Chapter 2 · 50%");
+  await expect(detailTony.getByTestId("audiobook-furthest")).toHaveText("Furthest reached: Chapter 3 · 83%");
+  await expect(detailJustin.getByTestId("audiobook-current")).toHaveText("Chapter 1 · 17%");
+  await dialog.getByTestId("detail-hierarchy-group").locator("summary").click();
+  const chapterOne = dialog.getByTestId("detail-hierarchy-node").filter({ hasText: "Rewind Chapter 1" });
+  const chapterTwo = dialog.getByTestId("detail-hierarchy-node").filter({ hasText: "Rewind Chapter 2" });
+  await expect(chapterOne.locator('[data-person-id="2"]')).toHaveAttribute("data-state", "in_progress");
+  await expect(chapterTwo.locator('[data-person-id="1"]')).toHaveAttribute("data-state", "revisiting");
+  await expectNoVisualOverflow(page);
+  await dialog.locator(".dialog-close").click();
+
+  await page.goto("/#explorer?category=audiobook");
+  const explorerCards = page.getByTestId("library-card").filter({ hasText: "Canonical Rewind Fixture Audiobook" });
+  await expect(explorerCards.first()).toBeVisible();
+  const explorerTony = explorerCards.first().getByTestId("audiobook-listener-progress").filter({ hasText: "Tony" });
+  await expect(explorerTony.getByTestId("audiobook-current")).toHaveText("Revisiting · Chapter 2 · 50%");
+  await expect(explorerTony.getByTestId("audiobook-furthest")).toContainText("83%");
+  await expect(explorerCards.first()).not.toContainText("99%");
+  await page.goto("/#explorer?section=continue&category=audiobook");
+  const continueCard = page.getByTestId("library-card").filter({ hasText: "Canonical Rewind Fixture Audiobook" }).first();
+  await expect(continueCard).toBeVisible();
+  await expect(continueCard.getByTestId("audiobook-listener-progress").filter({ hasText: "Tony" }).getByTestId("audiobook-current")).toHaveText("Revisiting · Chapter 2 · 50%");
+  await expectNoVisualOverflow(page);
+
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.goto("/#progress?category=audiobook");
+  await expect(page.getByTestId("progress-card").filter({ hasText: "Canonical Rewind Fixture Audiobook" }).first()).toBeVisible();
+  await expectNoVisualOverflow(page);
+});
+
+test("timeline and People retain historical audiobook meaning without raw browser progress", async ({ page }) => {
+  const overviewResponse = await page.request.get("/api/dashboard/overview?category=audiobook");
+  const overviewBody = await overviewResponse.json();
+  const digest = overviewBody.data.recentPlaybackDigests.find(item => item.title === "Canonical Rewind Fixture Audiobook" && item.displayNames.includes("Tony"));
+  expect(digest).toBeTruthy();
+  await page.goto(`/#timeline?category=audiobook&timelineDate=${digest.localDate}`);
+  const timelineSessions = page.locator('[data-testid="audiobook-timeline-session"][aria-label*="Canonical Rewind Fixture Audiobook"]');
+  await expect(timelineSessions).toHaveCount(3);
+  const timelineLabels = await timelineSessions.evaluateAll(nodes => nodes.map(node => node.getAttribute("aria-label")));
+  expect(timelineLabels.some(label => label.includes("Tony: Chapter 3 · 83%"))).toBe(true);
+  expect(timelineLabels.some(label => label.includes("Tony: Revisiting · Chapter 2 · 50%"))).toBe(true);
+  expect(timelineLabels.some(label => label.includes("Justin: Chapter 1 · 17%"))).toBe(true);
+  expect(timelineLabels.join(" ")).not.toContain("99%");
+  const activityRows = page.locator('.activity-row[data-cat="audiobook"]').filter({ hasText: "Canonical Rewind Fixture Audiobook" });
+  await expect(activityRows).toHaveCount(3);
+  await expect(activityRows.nth(0).getByTestId("audiobook-session-progress")).toBeVisible();
+  await expect(activityRows.filter({ hasText: "Justin" }).getByTestId("audiobook-session-progress")).toContainText("Chapter 1 · 17%");
+  await expectNoVisualOverflow(page);
+
+  await page.goto("/#people?category=audiobook&period=all");
+  const tony = page.getByTestId("person-card").filter({ has: page.getByRole("heading", { name: "Tony", exact: true }) }).first();
+  const justin = page.getByTestId("person-card").filter({ has: page.getByRole("heading", { name: "Justin", exact: true }) }).first();
+  await expect(tony.getByTestId("person-audiobook-completion-facts")).toContainText("completed audiobook books");
+  await expect(tony.getByTestId("person-audiobook-completion-facts")).toContainText("passed chapters");
+  await expect(tony).toContainText("completed playback observations");
+  await expect(justin.getByTestId("person-audiobook-completion-facts")).toBeVisible();
+  await expect(tony.getByTestId("audiobook-session-progress").filter({ hasText: "Revisiting · Chapter 2 · 50%" }).first()).toBeVisible();
+  await expectNoVisualOverflow(page);
+
+  const browserSource = fs.readFileSync("src/web/static/dashboard.js", "utf8");
+  expect(browserSource).not.toContain("currentProgressPercent");
+  expect(browserSource).not.toContain("currentChapterIndex");
+  expect(browserSource).toContain('x.category === "audiobook" ? audiobookProgressMarkup');
+  expect(browserSource).toContain('x.category==="audiobook"?audiobookSessionMarkup');
 });
 
 test("verified multi-file Audiobook detail maps file-local progress onto the global chapter timeline", async ({ page }) => {
@@ -700,9 +814,8 @@ test("verified multi-file Audiobook detail maps file-local progress onto the glo
 
     const dialog = page.locator("#detail-dialog");
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByTestId("detail-workspace-progress")).toContainText("3 chapters");
-    await expect(dialog.getByTestId("detail-workspace-progress")).toContainText("80%");
-    await expect(dialog.getByTestId("detail-workspace-source")).toContainText("Verified audiobook chapters");
+    await expect(dialog.getByTestId("detail-workspace-progress").getByTestId("audiobook-current")).toContainText("Chapter 3 · 80%");
+    await expect(dialog.getByTestId("detail-workspace-source")).toContainText("Verified exact position");
     await expect(dialog.getByTestId("detail-workspace-hierarchy")).toContainText("Multi Chapter 1");
     await expect(dialog.getByTestId("detail-workspace-hierarchy")).toContainText("Multi Chapter 3");
     await expectNoVisualOverflow(page);
@@ -818,7 +931,7 @@ test("people separates included household identities and preserves profile navig
   await expect(active.getByTestId("person-card").filter({ hasText: "Ace" })).toBeVisible();
   await expect(active).not.toContainText("Secret");
   await expect(active).not.toContainText("Hidden Viewer");
-  await expect(active).toContainText("4.5h");
+  await expect(active.getByTestId("person-card").filter({ hasText: "Tony" }).first()).toContainText("4.7h");
   await expect(active).not.toContainText("270 min");
 
   const secondary = page.getByTestId("secondary-people");
@@ -1122,14 +1235,14 @@ test("Progress uses the shared detail workspace and preserves bounded lazy loadi
   await verifiedAudiobookCard.click();
   await expect(dialog).toBeVisible();
   await expect(dialog.getByTestId("detail-presenter-audiobook")).toBeVisible();
-  await expect(dialog.getByTestId("detail-workspace-progress")).toContainText("chapters");
-  await expect(dialog.getByTestId("detail-workspace-source")).toContainText("Verified audiobook chapters");
+  await expect(dialog.getByTestId("detail-workspace-progress").getByTestId("audiobook-current")).toHaveText("Chapter 3 · 83%");
+  await expect(dialog.getByTestId("detail-workspace-source")).toContainText("Verified exact position");
   await expect(dialog.getByTestId("detail-workspace-hierarchy")).toContainText("Verified Chapter 1");
   await dialog.locator(".dialog-close").click();
-  await expect(verifiedAudiobookCard.getByTestId("progress-summary")).toContainText("3 of 3 chapters · 83%");
-  const movieCard = cardFor("Fixture Movie");
-  await expect(movieCard).toBeVisible();
-  await movieCard.click();
+  await expect(verifiedAudiobookCard.getByTestId("audiobook-current")).toHaveText("Chapter 3 · 83%");
+  const movieRow = page.getByTestId("progress-completed-row").filter({ hasText: "Fixture Movie" }).first();
+  await expect(movieRow).toBeVisible();
+  await movieRow.click();
   await expect(dialog).toBeVisible();
   await expect(dialog.getByTestId("detail-workspace-category")).toHaveText("Movies");
   await expect(dialog.getByTestId("detail-hierarchy-group")).toHaveCount(0);

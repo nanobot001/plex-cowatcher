@@ -237,19 +237,128 @@ const digestEpisodeStrip = digest => {
   `).join("")}${episodes.length > 6 ? `<span class="digest-episode-more">+${episodes.length - 6}</span>` : ""}</div>`;
 };
 const audiobookProgressQualityCopy = progress => {
-  const quality = progress?.progressQuality || progress?.quality;
+  const quality = progress?.progressQuality || progress?.quality || progress?.evidence?.quality;
   if (quality === "verified_position") return "Verified position";
   if (quality === "verified_completion") return "Verified completion";
   if (quality === "stale_progress") return "Approximate position - source percentage appears stale";
   if (quality === "approximate_position") return "Approximate position";
   return "Position unavailable";
 };
+const audiobookProgressListeners = source => {
+  const projection = source?.audiobookProgress || source?.item?.audiobookProgress || source;
+  return Array.isArray(projection?.listeners) ? projection.listeners : [];
+};
+const audiobookProgressReasonCopy = reason => ({
+  VIEW_OFFSET_VALID: "exact position",
+  COMPLETION_EVIDENCE: "verified completion",
+  PLAY_DURATION_CORROBORATED: "corroborated listening time",
+  PERCENT_STALE_AGAINST_PLAY_DURATION: "source percentage appears stale",
+  PERCENT_ONLY: "source percentage only",
+  POSITION_FIELDS_INVALID: "invalid source position",
+  POSITION_UNAVAILABLE: "position unavailable",
+  OBSERVATION_AFTER_AS_OF: "later evidence excluded",
+  REVISION_MISMATCH: "media revision mismatch",
+  DUPLICATE_OBSERVATION: "duplicate evidence ignored",
+  STALE_OR_RESET_EVIDENCE: "stale or reset evidence",
+  NO_TRUSTED_CHAPTER_EVIDENCE: "chapter evidence unavailable"
+})[reason] || "position evidence unavailable";
+const audiobookPositionText = (position, unavailable = "Position unknown") => {
+  if (!position) return unavailable;
+  const parts = [];
+  if (Number.isInteger(Number(position.chapterIndex)) && Number(position.chapterIndex) > 0) parts.push(`Chapter ${Number(position.chapterIndex)}`);
+  if (position.progressPercent != null && Number.isFinite(Number(position.progressPercent))) parts.push(`${Number(position.progressPercent)}%`);
+  return parts.length ? parts.join(" · ") : unavailable;
+};
+const audiobookPositionDiffers = listener => {
+  const current = listener?.current;
+  const furthest = listener?.furthest;
+  if (!current || !furthest) return Boolean(furthest && !current);
+  if (current.offsetMs != null && furthest.offsetMs != null) return Number(current.offsetMs) !== Number(furthest.offsetMs);
+  return Number(current.progressPercent) !== Number(furthest.progressPercent) || Number(current.chapterIndex) !== Number(furthest.chapterIndex);
+};
+const audiobookIsRevisiting = listener => Boolean(listener?.revisitDetected || listener?.rewindDetected || listener?.movement === "rewind" || listener?.movement === "revisit");
+const audiobookListenerCurrentText = listener => {
+  let current = audiobookPositionText(listener?.current);
+  const quality = listener?.current?.evidence?.quality;
+  if (current !== "Position unknown" && (quality === "approximate_position" || quality === "stale_progress" || listener?.current?.evidenceKind === "approximate")) current = `Approx. ${current}`;
+  return audiobookIsRevisiting(listener) && current !== "Position unknown" ? `Revisiting · ${current}` : current;
+};
+const audiobookEvidenceCopy = listener => {
+  const evidence = listener?.current?.evidence || listener?.furthest?.evidence;
+  const quality = audiobookProgressQualityCopy(evidence);
+  const reason = audiobookProgressReasonCopy(evidence?.reason);
+  if (quality === "Verified position" && reason === "exact position") return "Verified exact position";
+  if (quality === "Approximate position - source percentage appears stale") return "Approximate position · source percentage appears stale";
+  if (quality === "Position unavailable") return "Position unavailable";
+  return `${quality} · ${reason}`;
+};
+const audiobookProgressMeter = (listener, title) => {
+  const percent = listener?.current?.progressPercent;
+  if (percent == null || !Number.isFinite(Number(percent))) return "";
+  const bounded = Math.max(0, Math.min(100, Number(percent)));
+  const furthest = audiobookPositionDiffers(listener) ? `; furthest reached ${audiobookPositionText(listener.furthest).toLowerCase()}` : "";
+  return `<span class="audiobook-progress-meter" data-testid="audiobook-current-meter" role="progressbar" aria-label="${esc(`${listener.displayName} current position in ${title}: ${audiobookListenerCurrentText(listener)}${furthest}`)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${bounded}"><i style="width:${bounded}%"></i>${audiobookPositionDiffers(listener) && listener.furthest?.progressPercent != null ? `<b style="left:${Math.max(0, Math.min(100, Number(listener.furthest.progressPercent)))}%" aria-hidden="true"></b>` : ""}</span>`;
+};
+const audiobookChapterStateCopy = state => ({
+  in_progress: "In progress",
+  revisiting: "Revisiting",
+  passed: "Passed",
+  probably_passed: "Probably passed",
+  explicitly_completed: "Completed",
+  unknown: "Unknown"
+})[state] || "Unknown";
+const audiobookChapterDots = listener => {
+  const chapters = Array.isArray(listener?.chapters) ? listener.chapters : [];
+  if (!chapters.length) return "";
+  return `<span class="audiobook-chapter-states" data-testid="audiobook-chapter-states" aria-label="${esc(`${listener.displayName} chapter states`)}">${chapters.slice(0, 24).map(chapter => `<i class="state-${esc(chapter.state)}" title="${esc(`${chapter.title}: ${audiobookChapterStateCopy(chapter.state)}`)}" aria-label="${esc(`${chapter.title}: ${audiobookChapterStateCopy(chapter.state)}`)}"></i>`).join("")}${chapters.length > 24 ? `<span>+${chapters.length - 24}</span>` : ""}</span>`;
+};
+const audiobookProgressMarkup = (source, title, { showChapters = false, compact = false } = {}) => {
+  const listeners = audiobookProgressListeners(source);
+  if (!listeners.length) return `<div class="audiobook-progress ${compact ? "compact" : ""}" data-testid="audiobook-progress"><span class="audiobook-progress-unknown">Position unknown</span></div>`;
+  return `<div class="audiobook-progress ${compact ? "compact" : ""}" data-testid="audiobook-progress">${listeners.map(listener => {
+    const furthest = audiobookPositionDiffers(listener) ? `<span class="audiobook-progress-furthest" data-testid="audiobook-furthest">Furthest reached: ${esc(audiobookPositionText(listener.furthest))}</span>` : "";
+    return `<section class="audiobook-progress-listener" data-testid="audiobook-listener-progress" data-listener-id="${esc(listener.listenerId ?? "")}">
+      <span class="audiobook-progress-person">${esc(listener.displayName || "Listener")}</span>
+      <strong data-testid="audiobook-current">${esc(audiobookListenerCurrentText(listener))}</strong>
+      ${audiobookProgressMeter(listener, title)}
+      ${furthest}
+      <span class="audiobook-progress-quality">${esc(audiobookEvidenceCopy(listener))}</span>
+      ${showChapters ? audiobookChapterDots(listener) : ""}
+    </section>`;
+  }).join("")}</div>`;
+};
+const audiobookProjectionSourceCopy = source => {
+  const listeners = audiobookProgressListeners(source);
+  if (!listeners.length) return "Canonical audiobook position unavailable";
+  const labels = [...new Set(listeners.map(audiobookEvidenceCopy))];
+  return `Canonical per-listener progress · ${labels.join("; ")}`;
+};
+const audiobookSessionText = listener => {
+  const session = listener?.sessionMovement;
+  if (!session) return audiobookListenerCurrentText(listener);
+  const start = audiobookPositionText({ chapterIndex: session.startChapterIndex, progressPercent: session.startProgressPercent });
+  const end = audiobookPositionText({ chapterIndex: session.endChapterIndex, progressPercent: session.endProgressPercent });
+  const movement = start === "Position unknown" || start === end ? end : `${start} → ${end}`;
+  return audiobookIsRevisiting(listener) || session.revisitDetected || session.direction === "backward" ? `Revisiting · ${movement}` : movement;
+};
+const audiobookSessionMarkup = (source, title) => {
+  const listeners = audiobookProgressListeners(source);
+  if (!listeners.length) return `<div class="audiobook-session-progress" data-testid="audiobook-session-progress"><span>Position unknown</span></div>`;
+  return `<div class="audiobook-session-progress" data-testid="audiobook-session-progress">${listeners.map(listener => {
+    const session = listener.sessionMovement;
+    const percent = session?.endProgressPercent ?? listener.current?.progressPercent;
+    const bounded = percent == null ? null : Math.max(0, Math.min(100, Number(percent)));
+    return `<div class="audiobook-session-listener" data-testid="audiobook-session-listener"><span><strong>${esc(listener.displayName || "Listener")}</strong> · ${esc(audiobookSessionText(listener))}</span>${bounded == null || !Number.isFinite(bounded) ? "" : `<span class="digest-progress-track" role="progressbar" aria-label="${esc(`${listener.displayName} position at the end of this ${title} session`)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${bounded}"><i style="width:${bounded}%"></i></span>`}<small>${esc(audiobookProgressQualityCopy(session?.evidence || listener.current?.evidence))}</small></div>`;
+  }).join("")}</div>`;
+};
 const digestSessionBody = (digest, session) => {
   const sections = [];
-  if (Array.isArray(session.completedChapters) && session.completedChapters.length) {
+  if (digest.category === "audiobook") {
+    sections.push(`<div class="digest-session-section"><span class="digest-session-label">Session progress</span>${audiobookSessionMarkup(session, digest.title || "audiobook")}</div>`);
+  } else if (Array.isArray(session.completedChapters) && session.completedChapters.length) {
     sections.push(`<div class="digest-session-section"><span class="digest-session-label">Completed</span><span>${esc(compactChapterIndexes(session.completedChapters))}</span></div>`);
   }
-  if (session.currentChapter) {
+  if (digest.category !== "audiobook" && session.currentChapter) {
     const percent = session.currentChapter.progressPercent == null ? "partial" : `${session.currentChapter.progressPercent}%`;
     const chapterIndex = Number.isInteger(Number(session.currentChapter.chapterIndex)) ? `Ch. ${session.currentChapter.chapterIndex}` : "Current chapter";
     const percentValue = Number(session.currentChapter.progressPercent);
@@ -259,12 +368,6 @@ const digestSessionBody = (digest, session) => {
       ? `<span class="digest-progress-track" role="progressbar" aria-label="${esc(`${chapterIndex} progress`)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${boundedPercent}"><i style="width:${boundedPercent}%"></i></span>`
       : "";
     sections.push(`<div class="digest-session-section"><span class="digest-session-label">In progress</span><span class="digest-progress-summary"><span>${esc(chapterIndex)} - ${esc(percent)}</span>${progressBar}</span></div>`);
-  }
-  if (digest.category === "audiobook" && !sections.length) {
-    sections.push(`<div class="digest-session-section"><span class="digest-session-label">Chapter evidence</span><span class="muted">Verified chapter completion unavailable for this session.</span></div>`);
-  }
-  if (digest.category === "audiobook") {
-    sections.push(`<div class="digest-session-section" data-testid="digest-progress-quality"><span class="digest-session-label">Progress quality</span><span class="muted">${esc(audiobookProgressQualityCopy(session))}</span></div>`);
   }
   const episodes = Array.isArray(digest.episodes) && Array.isArray(session.episodeKeys)
     ? digest.episodes.filter(episode => session.episodeKeys.includes(episode.ratingKey))
@@ -316,7 +419,7 @@ const playbackDigestCard = digest => {
     ${sessionRows ? `<div class="digest-session-list" aria-label="Playback sessions">${sessionRows}</div>` : ""}
   </article>`;
 };
-const activityRow=x=>'<article class="activity-row" data-cat="'+esc(x.category)+'" tabindex="0" data-select-key="'+esc(x.groupKey || x.ratingKey)+'" data-item="'+encodeURIComponent(JSON.stringify(x))+'">'+art(x)+'<div class="activity-copy"><div class="activity-heading"><strong>'+mediaTitle(x)+'</strong><span>'+esc(x.categoryLabel)+'</span></div>'+(x.category==="audiobook"&&x.showTitle?'<p>By '+esc(x.showTitle)+'</p>':x.showTitle&&x.showTitle!==x.displayTitle?'<p>'+esc(x.title)+'</p>':'')+'<p>'+esc(x.displayName)+' &middot; '+fmtDate(x.watchedAt)+' &middot; '+fmtDuration(x.duration)+'</p>'+evidence(x)+'</div><div class="progress-ring">'+esc(x.percentComplete??"--")+'%</div></article>';
+const activityRow=x=>'<article class="activity-row" data-cat="'+esc(x.category)+'" tabindex="0" data-select-key="'+esc(x.groupKey || x.ratingKey)+'" data-item="'+encodeURIComponent(JSON.stringify(x))+'">'+art(x)+'<div class="activity-copy"><div class="activity-heading"><strong>'+mediaTitle(x)+'</strong><span>'+esc(x.categoryLabel)+'</span></div>'+(x.category==="audiobook"&&x.showTitle?'<p>By '+esc(x.showTitle)+'</p>':x.showTitle&&x.showTitle!==x.displayTitle?'<p>'+esc(x.title)+'</p>':'')+'<p>'+esc(x.displayName)+' &middot; '+fmtDate(x.watchedAt)+' &middot; '+fmtDuration(x.duration)+'</p>'+(x.category==="audiobook"?audiobookSessionMarkup(x,mediaTitle(x)):evidence(x))+'</div>'+(x.category==="audiobook"?'':'<div class="progress-ring">'+esc(x.percentComplete??"--")+'%</div>')+'</article>';
 const empty=label=>'<div class="panel-state"><h3>No '+esc(label)+' here yet</h3><p>Try broadening the filters. Missing evidence stays unknown.</p></div>';
 const encodeRoute=route=>encodeURIComponent(JSON.stringify(route));
 const fmtHourValue=minutes=>{
@@ -1071,15 +1174,6 @@ function detailSourceLabel(progress) {
 function detailProgressLabel(progress) {
   const unit = progress.unit && progress.unit !== "unknown" ? progress.unit : "item";
   const plural = progress.totalItems === 1 ? unit : `${unit}s`;
-  const approximateChapter = unit === "chapter"
-    && (progress.quality === "approximate_position" || progress.quality === "stale_progress")
-    && Number.isInteger(Number(progress.currentChapterIndex))
-    && Number(progress.currentChapterIndex) > 0;
-  if (approximateChapter) {
-    const total = progress.totalItems == null ? "" : ` of ${progress.totalItems}`;
-    const percent = progress.currentPercent == null ? "" : ` · ${progress.currentPercent}%`;
-    return `Approx. chapter ${progress.currentChapterIndex}${total}${percent}`;
-  }
   const count = progress.totalItems == null
     ? `${progress.completedItems} completed ${plural}; total unknown`
     : `${progress.completedItems} of ${progress.totalItems} ${plural}`;
@@ -1340,6 +1434,7 @@ function renderAudiobookDetailPresenter(workspace, state) {
     return `<div data-testid="detail-presenter-audiobook"><section class="detail-hierarchy-section" data-testid="detail-workspace-hierarchy"><h3>Book hierarchy</h3><p class="text-muted">No chapter hierarchy is available for this book.</p></section></div>`;
   }
   const series = [hierarchy.parentSeries, hierarchy.subseries, hierarchy.series].filter(Boolean);
+  const projection = state.data?.audiobookProgress || workspace.audiobookProgress;
   return `<div data-testid="detail-presenter-audiobook">
     <section class="detail-hierarchy-section" data-testid="detail-workspace-hierarchy" aria-label="Book hierarchy">
       <h3>Book hierarchy</h3>
@@ -1348,12 +1443,32 @@ function renderAudiobookDetailPresenter(workspace, state) {
         <summary class="detail-tree-season-header"><span>Chapters</span><span class="detail-hierarchy-count">${esc(hierarchy.chapters.length)} ${workspace.progressSummary.unit === "chapter" ? "chapters" : "tracks/files"}</span></summary>
         <div class="detail-tree-season-episodes">
           ${hierarchy.chapters.map((chapter, index) => `<div class="detail-tree-episode-row" data-testid="detail-hierarchy-node" data-episode-key="${esc(chapter.ratingKey)}">
-            ${detailWatcherLanes(chapter, workspace, chapter.title || `Chapter ${index + 1}`)}
+            ${audiobookChapterLanes(chapter, workspace, projection, chapter.title || `Chapter ${index + 1}`)}
           </div>`).join("")}
         </div>
       </details>
     </section>
   </div>`;
+}
+
+function audiobookChapterLanes(chapter, workspace, projection, label) {
+  const roster = detailWatcherRoster(workspace);
+  const listeners = audiobookProgressListeners(projection);
+  if (!roster.length) return '<span class="text-muted">No visible listener evidence</span>';
+  const selectedId = detailWatcherSelection ? String(detailWatcherSelection) : "";
+  const markers = roster.map(person => {
+    const listener = listeners.find(candidate => candidate?.listenerId != null && String(candidate.listenerId) === person.id)
+      || listeners.find(candidate => candidate?.listenerId == null && candidate?.displayName === person.displayName);
+    const canonicalChapter = listener?.chapters?.find(candidate => Number(candidate.chapterIndex) === Number(chapter.chapterIndex));
+    const chapterState = canonicalChapter?.state || "unknown";
+    const stateLabel = audiobookChapterStateCopy(chapterState);
+    const progress = canonicalChapter?.progressPercent == null ? "" : ` · ${canonicalChapter.progressPercent}%`;
+    const quality = canonicalChapter ? audiobookProgressQualityCopy(canonicalChapter.evidence) : "Position unavailable";
+    const summary = `${person.displayName}: ${stateLabel}${progress}. ${quality}.`;
+    const selected = selectedId === person.id ? " is-selected" : "";
+    return `<button type="button" class="watcher-lane-marker audiobook-${esc(chapterState)}${selected}" data-detail-watcher-lane data-person-id="${esc(person.id)}" data-person-name="${esc(person.displayName)}" data-state="${esc(chapterState)}" aria-pressed="${selected ? "true" : "false"}" aria-label="${esc(summary)}" title="${esc(summary)}" tabindex="-1"><span class="watcher-state-icon" aria-hidden="true">${esc(chapterState === "revisiting" ? "↻" : chapterState === "in_progress" ? "◐" : ["passed", "explicitly_completed"].includes(chapterState) ? "✓" : chapterState === "probably_passed" ? "~" : "·")}</span><span class="watcher-lane-tooltip" role="tooltip">${esc(person.displayName)}<br><span>${esc(stateLabel)}${esc(progress)} · ${esc(quality)}</span></span></button>`;
+  }).join("");
+  return `<div class="detail-watcher-grid" data-testid="detail-watcher-grid" style="--watcher-count:${roster.length}"><div class="detail-tree-episode-label"><strong>${esc(label)}</strong></div>${markers}</div>`;
 }
 
 function renderDetailCategoryPresenter(workspace, hierarchyState) {
@@ -1409,8 +1524,8 @@ function renderDefaultDetailRail(workspace, people, playback, progress) {
     <div class="detail-workspace-summary-grid">
       <section class="detail-summary-card" data-testid="detail-workspace-progress" aria-label="Progress summary">
         <span class="eyebrow">Progress</span>
-        <strong>${esc(detailProgressLabel(progress))}</strong>
-        <span data-testid="detail-workspace-source">${esc(detailSourceLabel(progress))}</span>
+        ${workspace.category === "audiobook" ? audiobookProgressMarkup(workspace, workspace.title, { showChapters: true, compact: true }) : `<strong>${esc(detailProgressLabel(progress))}</strong>`}
+        <span data-testid="detail-workspace-source">${esc(workspace.category === "audiobook" ? audiobookProjectionSourceCopy(workspace) : detailSourceLabel(progress))}</span>
       </section>
       <section class="detail-summary-card" data-testid="detail-workspace-playback" aria-label="Playback summary">
         <span class="eyebrow">Playback</span>
@@ -1464,10 +1579,10 @@ function renderDetailWorkspace(workspace, hierarchyState) {
         </div>
         ${workspace.category === "movie" ? renderMovieDetailRail(workspace) : `<div class="detail-workspace-rail">
           <div class="detail-workspace-summary-grid">
-          <section class="detail-summary-card" data-testid="detail-workspace-progress" aria-label="Progress summary">
+          <section class="detail-summary-card" data-testid="detail-workspace-progress" aria-label="${esc(workspace.category === "audiobook" ? "Canonical audiobook progress by listener" : "Progress summary")}">
             <span class="eyebrow">Progress</span>
-            <strong>${esc(detailProgressLabel(progress))}</strong>
-            <span data-testid="detail-workspace-source">${esc(detailSourceLabel(progress))}</span>
+            ${workspace.category === "audiobook" ? audiobookProgressMarkup(workspace, workspace.title, { showChapters: true, compact: true }) : `<strong>${esc(detailProgressLabel(progress))}</strong>`}
+            <span data-testid="detail-workspace-source">${esc(workspace.category === "audiobook" ? audiobookProjectionSourceCopy(workspace) : detailSourceLabel(progress))}</span>
           </section>
           <section class="detail-summary-card" data-testid="detail-workspace-playback" aria-label="Playback summary">
             <span class="eyebrow">Playback</span>
@@ -1718,7 +1833,7 @@ async function renderOverview() {
       ? `<div class="cw-carousel cw-carousel-overview">${recentPlaybackItems.map(cw => `
           <article class="cw-card" data-cat="${esc(cw.category)}" data-testid="recent-playback-card" tabindex="0" data-select-key="${esc(cw.groupKey || cw.ratingKey)}" data-item="${encodeURIComponent(JSON.stringify(cw))}">
             ${libraryArt(cw)}
-            <div class="cw-bar"><i style="width:${esc(cw.percentComplete ?? 0)}%"></i></div>
+            ${cw.category === "audiobook" ? audiobookProgressMarkup(cw, mediaTitle(cw), { compact: true }) : `<div class="cw-bar"><i style="width:${esc(cw.percentComplete ?? 0)}%"></i></div>`}
             <p>${esc(cw.displayTitle || cw.title || '')}</p>
             <span class="cw-meta">${sessionTimeLabel(cw)}</span>
           </article>
@@ -1742,7 +1857,7 @@ async function renderOverview() {
         <button class="overview-mix-card" data-route="${encodeRoute({layout:"explorer",filters:{...state.filters,category:item.category}})}" data-cat="${esc(item.category)}">
           <span>${esc(categoryLabel(item.category))}</span>
           <strong>${esc(fmtHourValue(item.durationMinutes))}</strong>
-          <small>${esc(item.plays)} plays · ${esc(item.completionRate)}% complete</small>
+          <small>${item.category === "audiobook" ? `${esc(item.plays)} playback observations · book completion shown per listener` : `${esc(item.plays)} plays · ${esc(item.completionRate)}% complete`}</small>
         </button>
       `).join("")}</div>`
     : '<div class="panel-state compact"><p>Category mix will appear once visible household activity exists.</p></div>';
@@ -1752,13 +1867,19 @@ async function renderOverview() {
           <div class="overview-person-avatar">${esc((person.displayName || '?').slice(0,1).toUpperCase())}</div>
           <div class="overview-person-copy">
             <strong>${esc(person.displayName)}</strong>
-            <p>${esc(fmtHourValue(person.minutes))} · ${esc(person.completed)} completed · ${esc(person.inProgress)} in progress</p>
+            <p>${esc(fmtHourValue(person.minutes))} · ${person.completionFacts ? `${esc(person.completionFacts.completedPlaybackObservations)} completed playback observations · ${esc(person.completionFacts.completedAudiobookBooks)} completed audiobook books · ${esc(person.completionFacts.passedAudiobookChapters)} passed chapters` : `${esc(person.completed)} completed · ${esc(person.inProgress)} in progress`}</p>
             <p class="muted">Latest: ${esc(person.latestItemTitle)} · ${fmtDate(person.latestWatchedAt)}</p>
           </div>
           <span class="overview-person-tag">${esc(categoryLabel(person.topCategory || 'movie'))}</span>
         </button>
       `).join("")}</div>`
     : '<div class="panel-state compact"><p>No visible household activity in this window.</p></div>';
+  const audiobookFacts = d.completionFacts?.audiobook;
+  const audiobookFactsHtml = audiobookFacts ? `<div class="overview-audiobook-facts" data-testid="overview-audiobook-completion-facts" aria-label="Audiobook completion facts">
+    <span><strong>${esc(audiobookFacts.completedPlaybackObservations)}</strong> completed playback observations</span>
+    <span><strong>${esc(audiobookFacts.passedAudiobookChapters)}</strong> passed chapters</span>
+    <span><strong>${esc(audiobookFacts.completedAudiobookBooks)}</strong> completed books</span>
+  </div>` : "";
   const attentionHtml = (d.needsAttention || []).length
     ? `<div class="overview-attention-list">${d.needsAttention.map(item => `
         <button class="overview-attention-row ${toneClass(item.status)}" data-route="${encodeRoute(item.route)}">
@@ -1826,6 +1947,7 @@ async function renderOverview() {
           </article>
           ${summaryHtml}
         </div>
+        ${audiobookFactsHtml}
       </section>
 
       <section class="overview-grid-two">
@@ -1927,11 +2049,14 @@ async function renderTimeline() {
         const timeRange = `${timeFmt.format(new Date(session.startTime))} - ${timeFmt.format(new Date(session.endTime))}`;
         const statusText = session.isCompleted ? "Completed" : "Incomplete";
         const relationText = session.relationship === "together" ? "Together" : session.relationship === "likely_together" ? "Likely Together" : "Individual";
-        const tooltip = `${esc(user)} watched ${esc(session.item.displayTitle)} (${esc(session.itemCount)} items)\nTime: ${timeRange} (${statusText}, ${relationText})`;
+        const audiobookSessionSummary = session.category === "audiobook"
+          ? audiobookProgressListeners(session).map(listener => `${listener.displayName}: ${audiobookSessionText(listener)}`).join("; ")
+          : "";
+        const tooltip = `${esc(user)} watched ${esc(session.item.displayTitle)} (${esc(session.itemCount)} items)\nTime: ${timeRange} (${statusText}, ${relationText})${audiobookSessionSummary ? `\nProgress at this session: ${esc(audiobookSessionSummary)}` : ""}`;
         
         const serializedItem = encodeURIComponent(JSON.stringify(session.item));
         
-        return `<div class="${classes.join(" ")}" style="left: ${left}%; width: max(6px, ${width}%); background: ${catColor};" title="${tooltip}" tabindex="0" data-item="${serializedItem}"></div>`;
+        return `<div class="${classes.join(" ")}" style="left: ${left}%; width: max(6px, ${width}%); background: ${catColor};" title="${tooltip}" aria-label="${tooltip}" tabindex="0" data-testid="${session.category === "audiobook" ? "audiobook-timeline-session" : "timeline-session"}" data-item="${serializedItem}"></div>`;
       }).join("");
       return `<div class="gantt-lane"><div class="gantt-user">${esc(user)}</div><div class="gantt-track">${blocks}</div></div>`;
     }).join("");
@@ -2086,7 +2211,7 @@ async function renderExplorer() {
     }
     return `${count} episode${count===1?"":"s"} · ${x.plays} play${x.plays===1?"":"s"}`;
   };
-  const card=x=>`<article class="poster-card library-card ${state.explorer.selected===x.groupKey||state.detail.key===x.detailKey?"selected":""}" data-cat="${esc(x.category)}" data-testid="library-card" tabindex="0" role="button" aria-pressed="${state.explorer.selected===x.groupKey||state.detail.key===x.detailKey}" data-library-item="${encodeURIComponent(JSON.stringify(x))}" data-select-key="${esc(x.groupKey)}" data-detail-key="${esc(x.detailKey||"")}">${libraryArt(x)}${x.percentComplete!=null&&!x.completed?`<div class="cw-bar"><i style="width:${esc(x.percentComplete)}%"></i></div>`:""}<strong>${mediaTitle(x)}</strong><span>${esc(secondary(x))}</span>${watchedBy(x)}</article>`;
+  const card=x=>`<article class="poster-card library-card ${state.explorer.selected===x.groupKey||state.detail.key===x.detailKey?"selected":""}" data-cat="${esc(x.category)}" data-testid="library-card" tabindex="0" role="button" aria-pressed="${state.explorer.selected===x.groupKey||state.detail.key===x.detailKey}" data-library-item="${encodeURIComponent(JSON.stringify(x))}" data-select-key="${esc(x.groupKey)}" data-detail-key="${esc(x.detailKey||"")}">${libraryArt(x)}${x.category === "audiobook" ? audiobookProgressMarkup(x, mediaTitle(x), { compact: true }) : x.percentComplete!=null&&!x.completed?`<div class="cw-bar"><i style="width:${esc(x.percentComplete)}%"></i></div>`:""}<strong>${mediaTitle(x)}</strong><span>${esc(secondary(x))}</span>${watchedBy(x)}</article>`;
   if(section){
     const d=await fetchJson(endpoint(section,{limit:pageLimit,offset:state.explorer.offset,sort:state.explorer.sort}));
     if(renderVersion!==explorerRenderVersion)return;
@@ -2163,7 +2288,7 @@ async function renderPeople() {
       const route=encodeRoute({layout:"timeline",filters:{...state.filters,user:person.plex_username},timelineDate:day.date});
       return `<span id="heatmap-${esc(person.id)}-${index}" class="person-heat-cell level-${level}${together?" has-together":""}${index===activeIndex?" is-active":""}" role="gridcell" aria-label="${esc(label)}" data-heatmap-cell data-person-id="${esc(person.id)}" data-person-name="${esc(name)}" data-heatmap-date="${esc(day.date)}" data-minutes="${esc(day.minutes)}" data-observed-minutes="${esc(day.observedMinutes)}" data-attributed-minutes="${esc(day.attributedMinutes)}" data-plays="${esc(day.plays)}" data-confirmed-together-sessions="${esc(together)}" data-route="${esc(route)}"></span>`;
     }).join("");
-    const recent=(person.recent||[]).map(item=>`<button class="person-recent-title" data-item="${encodeURIComponent(JSON.stringify(item))}"><span>${mediaTitle(item)}</span><small>${item.contribution==="attributed_confirmed_together"?'<span class="together-label">Together</span> &middot; ':""}${esc(categoryLabel(item.category))} &middot; ${fmtDate(item.watchedAt)}</small></button>`).join("");
+    const recent=(person.recent||[]).map(item=>`<button class="person-recent-title" data-item="${encodeURIComponent(JSON.stringify(item))}"><span>${mediaTitle(item)}</span><small>${item.contribution==="attributed_confirmed_together"?'<span class="together-label">Together</span> &middot; ':""}${esc(categoryLabel(item.category))} &middot; ${fmtDate(item.watchedAt)}</small>${item.category === "audiobook" ? audiobookSessionMarkup(item, mediaTitle(item)) : ""}</button>`).join("");
     const warnings=(person.possibleDuplicates||[]).length?`<p class="person-warning"><strong>Possible duplicate</strong><span>Similar to ${esc(person.possibleDuplicates.join(", "))}. Kept separate.</span></p>`:"";
     const breakdown=person.activityBreakdown||{observed:{plays:person.plays||0,minutes:person.minutes||0,completed:person.completed||0},attributedTogether:{plays:0,minutes:0,completed:0,unknownDuration:0},confirmedTogetherSessions:0};
     const unknown=breakdown.attributedTogether.unknownDuration?` &middot; ${breakdown.attributedTogether.unknownDuration} unknown duration`:"";
@@ -2185,7 +2310,8 @@ async function renderPeople() {
     return `<article class="person-card" data-testid="person-card" data-person-card data-person-id="${esc(person.id)}" data-person-group="${esc(group)}" data-person-status="${esc(person.status)}">
       <header class="person-card-header"><div class="avatar" aria-hidden="true">${esc(name.slice(0,1))}</div><div><h4>${esc(name)}</h4><span class="person-status status-${esc(person.status)}">${esc(statusLabel)}</span></div>${orderControlsHtml}</header>
       ${warnings}
-      <div class="person-stats"><span><strong>${esc(fmtHourValue(person.minutes))}</strong> total watched</span><span><strong>${esc(person.completed)}</strong> completed</span><span><strong>${esc(person.activeDays)}</strong> active days</span></div>
+      <div class="person-stats"><span><strong>${esc(fmtHourValue(person.minutes))}</strong> total watched</span><span><strong>${esc(person.completionFacts?.completedPlaybackObservations ?? person.completed)}</strong> ${person.completionFacts ? "completed playback observations" : "completed"}</span><span><strong>${esc(person.activeDays)}</strong> active days</span></div>
+      ${person.completionFacts ? `<div class="person-completion-facts" data-testid="person-audiobook-completion-facts" aria-label="Audiobook completion facts for ${esc(name)}"><span><strong>${esc(person.completionFacts.completedAudiobookBooks)}</strong> completed audiobook books</span><span><strong>${esc(person.completionFacts.passedAudiobookChapters)}</strong> passed chapters</span></div>` : ""}
       <div class="person-breakdown" data-testid="person-breakdown"><span><strong>${esc(fmtHourValue(breakdown.observed.minutes))}</strong> directly observed</span><span><strong>${esc(fmtHourValue(breakdown.attributedTogether.minutes))}</strong> added from Together${unknown}</span><span><strong>${esc(breakdown.confirmedTogetherSessions)}</strong> confirmed shared session${breakdown.confirmedTogetherSessions===1?"":"s"}</span></div>
       <div class="person-mix" aria-label="Category mix">${(person.mix||[]).length?person.mix.map(m=>`<span class="proof">${esc(m.label)} ${esc(m.count)}</span>`).join(""):'<span class="text-muted">No category activity</span>'}</div>
       <div class="person-heatmap" role="grid" tabindex="0" aria-label="Activity by day for ${esc(name)}" aria-activedescendant="heatmap-${esc(person.id)}-${activeIndex}" data-person-heatmap data-person-id="${esc(person.id)}" data-active-index="${activeIndex}">${heatmap}</div>
@@ -2309,13 +2435,15 @@ async function renderProgress() {
         ${overflow > 0 ? `<div class="progress-dot-overflow">+${overflow}</div>` : ""}
       </div>
     `;
-    let barHtml = dotHtml;
+    let barHtml = isAudiobook
+      ? audiobookProgressMarkup(x, x.title, { showChapters: true })
+      : dotHtml;
 
     // Stats
     const totalLabel = x.totalKnown ? x.totalItems : "unknown";
     const observedStr = x.observedMinutes > 0 ? fmtHourValue(x.observedMinutes) : "0m";
-    const sourceLine = x.category === "audiobook" ? progressSourceCopy(x) : "";
-    const visibleProgress = progressSummaryCopy(x);
+    const sourceLine = isAudiobook ? audiobookProjectionSourceCopy(x) : "";
+    const visibleProgress = isAudiobook ? null : progressSummaryCopy(x);
 
     // People Badges
     const peopleBadges = (x.people || []).map(p => `
@@ -2354,8 +2482,7 @@ async function renderProgress() {
               <span class="progress-card-category-badge" data-cat="${esc(x.category)}">${esc(categoryLabel(x.category))}</span>
             </div>
             ${summaryLine ? `<p class="progress-card-summary">${summaryLine}</p>` : ""}
-            <p class="progress-card-progress" data-testid="progress-summary">${esc(visibleProgress.text)}</p>
-            ${progressMeterMarkup(visibleProgress, x.title)}
+            ${visibleProgress ? `<p class="progress-card-progress" data-testid="progress-summary">${esc(visibleProgress.text)}</p>${progressMeterMarkup(visibleProgress, x.title)}` : ""}
             <p class="progress-card-details">
               ${x.distinctItems} distinct &middot; ${x.observationCount ?? x.plays} observation${Number(x.observationCount ?? x.plays) === 1 ? "" : "s"} &middot; ${x.sessionCount ?? 0} session${Number(x.sessionCount) === 1 ? "" : "s"} ${Number(x.replayCount) > 0 ? `&middot; ${x.replayCount} replay${Number(x.replayCount) === 1 ? "" : "s"}` : ""}
             </p>
@@ -2439,52 +2566,16 @@ async function renderProgress() {
 
 }
 
-function progressSourceCopy(x) {
-  if (x.progressSource === "audiobook_tool") {
-    if (x.progressQuality === "verified_position" || x.progressQuality === "verified_completion") {
-      return "Verified audiobook chapters and position";
-    }
-    if (x.progressQuality === "stale_progress") {
-      return "Verified chapters - approximate position; source percentage appears stale";
-    }
-    if (x.progressQuality === "approximate_position") return "Verified chapters - approximate position";
-    return "Verified chapters - position unavailable";
-  }
-  if (x.progressUnit === "track") return "Plex track/file evidence";
-  if (x.progressUnit === "book") return "Book-level evidence";
-  return "Progress source unknown";
-}
-
 function progressUnitCopy(x, count) {
-  const fallback = x.category === "audiobook" ? "items" : "items";
-  const label = String(x.progressUnitLabel || x.progressUnit || fallback);
+  const label = String(x.progressUnitLabel || x.progressUnit || "items");
   return count === 1 ? label.replace(/s$/, "") : label;
 }
 
 function progressSummaryCopy(x) {
   const total = Number(x.totalItems || 0);
   if (x.totalKnown && total > 0) {
-    const hasCurrentAudiobookPosition = x.category === "audiobook"
-      && x.progressUnit === "chapter"
-      && Number.isInteger(Number(x.currentChapterIndex))
-      && Number(x.currentChapterIndex) > 0;
-    const approximateCurrentPosition = hasCurrentAudiobookPosition
-      && (x.progressQuality === "approximate_position" || x.progressQuality === "stale_progress");
-    if (approximateCurrentPosition) {
-      const percent = x.currentProgressPercent == null
-        ? null
-        : Math.max(0, Math.min(100, Number(x.currentProgressPercent)));
-      return {
-        text: `Approx. chapter ${Number(x.currentChapterIndex)} of ${total}${percent == null ? "" : ` · ${percent}%`}`,
-        percent
-      };
-    }
-    const completed = hasCurrentAudiobookPosition
-      ? Math.max(0, Math.min(total, Number(x.currentChapterIndex)))
-      : Math.max(0, Math.min(total, Number(x.distinctCompleted || 0)));
-    const percent = hasCurrentAudiobookPosition && x.currentProgressPercent != null
-      ? Math.max(0, Math.min(100, Number(x.currentProgressPercent)))
-      : Math.max(0, Math.min(100, Math.round((completed / total) * 100)));
+    const completed = Math.max(0, Math.min(total, Number(x.distinctCompleted || 0)));
+    const percent = Math.max(0, Math.min(100, Math.round((completed / total) * 100)));
     return {
       text: `${completed} of ${total} ${progressUnitCopy(x, total)} · ${percent}%`,
       percent
