@@ -38,6 +38,10 @@ import {
   mapMultiFilePlaybackOffset
 } from "../dist/service/audiobookMultiFileService.js";
 import { evaluateAudiobookProgressTimeline } from "../dist/service/audiobookProgressEvidence.js";
+import {
+  AudiobookPositionCaptureService,
+  getCapturedAudiobookProgressObservations
+} from "../dist/service/audiobookPositionCaptureService.js";
 import { AudiobookProofAdapter } from "../dist/service/audiobookProofAdapter.js";
 import {
   AudiobookProofRuntime,
@@ -227,6 +231,232 @@ test("6H canonical evaluator keeps approximate chapter inference separate from v
   });
   assert.equal(singleFile.currentPosition.offsetMs, multiFile.currentPosition.offsetMs);
   assert.deepEqual(singleFile.chapters.map((chapter) => chapter.state), multiFile.chapters.map((chapter) => chapter.state));
+});
+
+function seedPositionCaptureFixture(db) {
+  new UserService(db).syncConfiguredUsers([
+    { plexUsername: "Tony", plexUserId: "plex-tony", displayName: "Tony", isSourceUser: true, enabled: true }
+  ]);
+  const userId = Number(db.prepare("SELECT id FROM users WHERE plex_username = 'Tony'").get().id);
+  db.prepare(`
+    INSERT INTO audiobook_books
+      (id, folder_key, title, source_provenance, enrichment_status, identity_status,
+       current_media_revision, created_at, updated_at)
+    VALUES (90, 'capture-book', 'Capture Book', 'fixture', 'enriched', 'identified',
+      'capture-revision-1', '2026-08-20T00:00:00Z', '2026-08-20T00:00:00Z')
+  `).run();
+  const revision = db.prepare(`
+    INSERT INTO audiobook_media_revisions
+      (audiobook_id, media_revision, track_count, file_count, total_duration_ms, manifest_status, created_at)
+    VALUES (90, 'capture-revision-1', 1, 1, 180000, 'ready', '2026-08-20T00:00:00Z')
+  `).run();
+  db.prepare(`
+    INSERT INTO audiobook_media_revision_items
+      (revision_id, item_order, stable_identity, rating_key, guid, duration_ms, path_hash)
+    VALUES (?, 0, 'guid:capture-track', 'capture-track', 'plex://track/capture', 180000, 'capture-hash')
+  `).run(Number(revision.lastInsertRowid));
+  db.prepare(`
+    INSERT INTO content_catalog
+      (rating_key, guid, media_type, title, duration, library_title, audiobook_id, source_provenance, refreshed_at)
+    VALUES ('capture-track', 'plex://track/capture', 'track', 'Capture Book', 180000,
+      'Audiobooks', 90, 'fixture', '2026-08-20T00:00:00Z')
+  `).run();
+  db.prepare(`
+    INSERT INTO audiobook_chapter_sources
+      (audiobook_id, source_type, source_status, confidence, refreshed_at)
+    VALUES (90, 'fixture_tool', 'active', 1.0, '2026-08-20T00:00:00Z')
+  `).run();
+  const chapterRevision = db.prepare(`
+    INSERT INTO audiobook_chapter_revisions
+      (audiobook_id, media_revision, source_type, source_status, confidence, chapter_digest,
+       duration_ms, contract_version, warnings_json, created_at, activated_at)
+    VALUES (90, 'capture-revision-1', 'fixture_tool', 'active', 1.0, 'capture-chapters-1',
+      180000, 1, '[]', '2026-08-20T00:00:00Z', '2026-08-20T00:00:00Z')
+  `).run();
+  db.prepare("UPDATE audiobook_books SET active_chapter_revision_id = ? WHERE id = 90")
+    .run(Number(chapterRevision.lastInsertRowid));
+  const insertChapter = db.prepare(`
+    INSERT INTO audiobook_chapters
+      (audiobook_id, chapter_index, title, start_offset_ms, end_offset_ms, created_at, updated_at)
+    VALUES (90, ?, ?, ?, ?, '2026-08-20T00:00:00Z', '2026-08-20T00:00:00Z')
+  `);
+  insertChapter.run(1, "Capture One", 0, 60000);
+  insertChapter.run(2, "Capture Two", 60000, 120000);
+  insertChapter.run(3, "Capture Three", 120000, 180000);
+  return userId;
+}
+
+function positionPayload(overrides = {}) {
+  return {
+    event: "on_stop",
+    media_type: "track",
+    user_id: "tautulli-user-7",
+    username: "Tony",
+    session_key: "capture-session-1",
+    rating_key: "capture-track",
+    guid: "plex://track/capture",
+    observed_at_unix: 1787235600,
+    started_at: 1787235540,
+    view_offset: 150000,
+    duration_ms: 180000,
+    ...overrides
+  };
+}
+
+test("6I exact stop capture is additive, revision-safe, idempotent, and preserves rewinds and out-of-order evidence", () => {
+  withTestDb((db) => {
+    const userId = seedPositionCaptureFixture(db);
+    db.prepare(`
+      INSERT INTO playback_observations
+        (user_id, rating_key, media_type, library_name, title, watched_at, watched_at_provenance,
+         percent_complete, percent_complete_provenance, completed, created_at, updated_at)
+      VALUES (?, 'capture-track', 'audiobook', 'Audiobooks', 'Capture Book',
+        '2026-08-20T09:00:00Z', 'source', 80, 'source', 0,
+        '2026-08-20T09:00:00Z', '2026-08-20T09:00:00Z')
+    `).run(userId);
+    const rawBefore = db.prepare("SELECT * FROM playback_observations ORDER BY id").all();
+    const service = new AudiobookPositionCaptureService(db, {
+      enabled: true,
+      secret: "fixture-position-secret"
+    });
+
+    const forward = service.capture(positionPayload());
+    assert.deepEqual(forward, { ok: true, status: "accepted", outOfOrder: false });
+    new UserService(db).syncConfiguredUsers([
+      { plexUsername: "Tony", plexUserId: "plex-tony", displayName: "Tony", isSourceUser: true, enabled: true },
+      { plexUsername: "Garner", plexUserId: "plex-garner", displayName: "Garner", isTypicalCowatcher: true, enabled: true }
+    ]);
+    assert.equal(
+      service.capture(positionPayload({ username: "Garner", session_key: "conflicting-listener-session" })).errorCode,
+      "AUDIOBOOK_POSITION_LISTENER_CONFLICT"
+    );
+    const duplicate = service.capture(positionPayload());
+    assert.deepEqual(duplicate, { ok: true, status: "duplicate", outOfOrder: false });
+    const rewind = service.capture(positionPayload({
+      session_key: "capture-session-2",
+      observed_at_unix: 1787236200,
+      started_at: 1787236140,
+      view_offset: 90000
+    }));
+    assert.deepEqual(rewind, { ok: true, status: "accepted", outOfOrder: false });
+    const outOfOrder = service.capture(positionPayload({
+      session_key: "capture-session-between",
+      observed_at_unix: 1787235900,
+      started_at: 1787235840,
+      view_offset: 160000
+    }));
+    assert.deepEqual(outOfOrder, { ok: true, status: "accepted", outOfOrder: true });
+
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audiobook_position_evidence").get().count, 3);
+    assert.deepEqual(db.prepare("SELECT * FROM playback_observations ORDER BY id").all(), rawBefore);
+    const observations = getCapturedAudiobookProgressObservations(db, 90, userId, "capture-chapters-1");
+    const snapshot = evaluateAudiobookProgressTimeline({
+      listenerId: userId,
+      observations,
+      bookDurationMs: 180000,
+      chapters: [
+        { chapterIndex: 1, title: "Capture One", startOffsetMs: 0, endOffsetMs: 60000 },
+        { chapterIndex: 2, title: "Capture Two", startOffsetMs: 60000, endOffsetMs: 120000 },
+        { chapterIndex: 3, title: "Capture Three", startOffsetMs: 120000, endOffsetMs: 180000 }
+      ],
+      mediaRevision: "capture-revision-1",
+      chapterRevision: "capture-chapters-1"
+    });
+    assert.equal(snapshot.currentPosition.offsetMs, 90000);
+    assert.equal(snapshot.currentPosition.evidenceKind, "exact");
+    assert.equal(snapshot.furthestPosition.offsetMs, 160000);
+    assert.equal(snapshot.rewindDetected, true);
+    assert.equal(snapshot.revisitDetected, true);
+    assert.equal(snapshot.currentPosition.chapterIndex, 2);
+    assert.equal(snapshot.chapters.find((chapter) => chapter.chapterIndex === 2).state, "revisiting");
+  });
+});
+
+test("6I rejects disabled, malformed, conflicting, invalid-unit, and stale-revision capture without degrading existing evidence", () => {
+  withTestDb((db) => {
+    seedPositionCaptureFixture(db);
+    const disabled = new AudiobookPositionCaptureService(db, { enabled: false, secret: "" });
+    assert.equal(disabled.capture(positionPayload()).errorCode, "AUDIOBOOK_POSITION_CAPTURE_DISABLED");
+    const service = new AudiobookPositionCaptureService(db, { enabled: true, secret: "fixture-position-secret" });
+    assert.equal(service.capture(positionPayload({ view_offset: "not-a-number" })).errorCode, "AUDIOBOOK_POSITION_UNITS_INVALID");
+    assert.equal(service.capture(positionPayload({ duration_ms: 1000, view_offset: 5000 })).errorCode, "AUDIOBOOK_POSITION_UNITS_INVALID");
+    assert.equal(service.capture(positionPayload({ session_key: "" })).errorCode, "AUDIOBOOK_POSITION_IDENTITY_MISSING");
+    assert.equal(service.capture(positionPayload({ username: "Unknown" })).errorCode, "AUDIOBOOK_POSITION_LISTENER_UNKNOWN");
+    assert.equal(service.capture(positionPayload({ guid: "plex://track/conflict" })).errorCode, "AUDIOBOOK_POSITION_ITEM_CONFLICT");
+    db.prepare("UPDATE audiobook_books SET current_media_revision = 'capture-revision-2' WHERE id = 90").run();
+    assert.equal(service.capture(positionPayload()).errorCode, "AUDIOBOOK_POSITION_REVISION_STALE");
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audiobook_position_evidence").get().count, 0);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM playback_observations").get().count, 0);
+  });
+});
+
+test("6I trusted ingress authenticates, dedupes, and exposes only bounded health state", async () => {
+  await withTestDb(async (db) => {
+    seedPositionCaptureFixture(db);
+    const { createApp } = await import("../dist/server/app.js");
+    const secret = "fixture-position-secret";
+    const app = createApp(db, new MockPlexAdapter(), {
+      skipStartupUserSync: true,
+      audiobookPositionCaptureConfig: { enabled: true, secret }
+    });
+    const server = await new Promise((resolve) => {
+      const instance = app.listen(0, "127.0.0.1", () => resolve(instance));
+    });
+    const port = server.address().port;
+    try {
+      const post = (body) => fetch(`http://127.0.0.1:${port}/webhooks/tautulli/audiobook-position`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const unauthorized = await post(positionPayload());
+      assert.equal(unauthorized.status, 401);
+      const malformed = await post({ ...positionPayload(), secret, view_offset: null });
+      assert.equal(malformed.status, 400);
+      const accepted = await post({ ...positionPayload(), secret });
+      assert.equal(accepted.status, 202);
+      assert.equal((await accepted.json()).status, "accepted");
+      const duplicate = await post({ ...positionPayload(), secret });
+      assert.equal(duplicate.status, 200);
+      assert.equal((await duplicate.json()).status, "duplicate");
+      const health = await (await fetch(`http://127.0.0.1:${port}/api/health`)).json();
+      assert.equal(health.audiobookPositionCapture.status, "healthy");
+      assert.equal(health.audiobookPositionCapture.evidenceCount, 1);
+      assert.equal(health.readiness.audiobookPositionCapture.status, "healthy");
+      const serialized = JSON.stringify(health);
+      assert.equal(serialized.includes(secret), false);
+      assert.equal(serialized.includes("tautulli-user-7"), false);
+      assert.equal(serialized.includes("capture-track"), false);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
+test("6I captured exact stop evidence feeds verified audiobook hierarchy without creating activity rows", async () => {
+  await withTestDb(async (db) => {
+    const userId = seedPositionCaptureFixture(db);
+    db.prepare(`
+      INSERT INTO playback_observations
+        (user_id, rating_key, media_type, library_name, title, watched_at, watched_at_provenance,
+         percent_complete, percent_complete_provenance, completed, created_at, updated_at)
+      VALUES (?, 'capture-track', 'audiobook', 'Audiobooks', 'Capture Book',
+        '2026-08-20T09:00:00Z', 'source', 20, 'source', 0,
+        '2026-08-20T09:00:00Z', '2026-08-20T09:00:00Z')
+    `).run(userId);
+    const service = new AudiobookPositionCaptureService(db, { enabled: true, secret: "fixture-position-secret" });
+    assert.equal(service.capture(positionPayload({ view_offset: 90000 })).ok, true);
+    const observationCount = db.prepare("SELECT COUNT(*) AS count FROM playback_observations").get().count;
+    const dashboard = new DashboardService(db, { timeZone: "UTC" });
+    const expansion = dashboard.getProgressExpansion("audiobook:Audiobooks:90");
+    assert.ok(expansion);
+    assert.equal(expansion.progressQuality, "verified_position");
+    assert.equal(expansion.currentChapterIndex, 2);
+    assert.equal(expansion.currentProgressPercent, 50);
+    assert.equal(expansion.hierarchy.chapters[1].watchedStates.Tony, "partial");
+    assert.equal(expansion.hierarchy.chapters[1].stateSources.Tony, "verified_offset");
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM playback_observations").get().count, observationCount);
+  });
 });
 
 test("historical Plex last-view evidence does not fabricate a replay", () => {

@@ -36,3 +36,11 @@ Every tool must have a risk level.
 - A one-book canary and requeue are `write_action` operations. Both are dry-run by default and require explicit apply and confirmation.
 - Requeue can reset only one existing non-running job and cannot create a second job for a revision.
 - No public HTTP proof mutation route or household dashboard repair action is permitted.
+
+## Audiobook Position Trusted Ingress
+
+- `POST /webhooks/tautulli/audiobook-position` is a machine-to-machine `write_action` confined to the localhost service boundary.
+- It is disabled by default and accepts no write unless a separately configured secret of at least 16 characters matches in constant time.
+- Enabling the route or changing the Tautulli notifier is an `admin_action` requiring explicit operator approval. The notifier must be dedicated to audiobook stop events.
+- Accepted writes are additive and idempotent. They cannot mutate Plex, Tautulli, `playback_observations`, chapter proof, or non-audiobook state.
+- Responses, public health, and audit events must not include the secret, raw event body, source account identifier, title, local path, token, or upstream URL.

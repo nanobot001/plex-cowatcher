@@ -1,11 +1,18 @@
 import type { Db } from "../db/database.js";
 import type { HealthResponse, ReadinessSubsystem } from "../types/api.js";
 import { appConfig, getUsersConfigSummary } from "../utils/config.js";
+import type { AudiobookPositionCaptureConfig } from "./audiobookPositionCaptureService.js";
 
 const startedAt = Date.now();
 
 export class HealthService {
-  constructor(private readonly db: Db) {}
+  constructor(
+    private readonly db: Db,
+    private readonly positionCaptureConfig: AudiobookPositionCaptureConfig = {
+      enabled: appConfig.AUDIOBOOK_POSITION_CAPTURE_ENABLED,
+      secret: appConfig.AUDIOBOOK_POSITION_CAPTURE_SECRET
+    }
+  ) {}
 
   getHealth(): HealthResponse {
     const pendingPrompts = this.db.prepare("SELECT COUNT(*) AS count FROM watch_events WHERE prompt_status = 'pending'").get() as { count: number };
@@ -19,6 +26,7 @@ export class HealthService {
     const plexMutation = plexMutationReadiness();
     const audiobookDiscovery = audiobookDiscoveryReadiness(this.db);
     const audiobookProof = audiobookProofReadiness(this.db);
+    const audiobookPositionCapture = audiobookPositionCaptureReadiness(this.db, this.positionCaptureConfig);
     const readiness = {
       database,
       plex,
@@ -27,7 +35,8 @@ export class HealthService {
       watcher,
       plexMutation,
       audiobookDiscovery,
-      audiobookProof
+      audiobookProof,
+      audiobookPositionCapture
     };
 
     return {
@@ -43,10 +52,33 @@ export class HealthService {
       plexMutation,
       audiobookDiscovery,
       audiobookProof,
+      audiobookPositionCapture,
       pendingPrompts: pendingPrompts.count,
       failedSyncs: failedSyncs.count
     };
   }
+}
+
+function audiobookPositionCaptureReadiness(
+  db: Db,
+  config: AudiobookPositionCaptureConfig
+): HealthResponse["audiobookPositionCapture"] {
+  const summary = db.prepare(`
+    SELECT COUNT(*) AS evidence_count, MAX(observed_at) AS last_captured_at
+    FROM audiobook_position_evidence
+  `).get() as { evidence_count: number; last_captured_at: string | null };
+  const evidence = {
+    evidenceCount: Number(summary.evidence_count ?? 0),
+    lastCapturedAt: summary.last_captured_at ?? undefined
+  };
+  if (!config.enabled) {
+    return { ...ready("disabled", false, "Exact audiobook position ingress is disabled pending notifier rollout."), ...evidence };
+  }
+  const secret = config.secret.trim();
+  if (secret.length < 16 || secret === "replace_me") {
+    return { ...ready("unconfigured", false, "Exact audiobook position ingress requires a trusted secret."), ...evidence };
+  }
+  return { ...ready("healthy", true, "Trusted exact audiobook position ingress is configured."), ...evidence };
 }
 
 function audiobookProofReadiness(db: Db): HealthResponse["audiobookProof"] {

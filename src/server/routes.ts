@@ -20,6 +20,10 @@ import { ArtworkResolver, type ArtworkVariant } from "../service/artworkService.
 import { MovieProfileAdapter, type MovieProfileAdapterLike } from "../service/movieProfileAdapter.js";
 import { MovieProfileService } from "../service/movieProfileService.js";
 import { DashboardDetailRefreshService } from "../service/dashboardDetailRefreshService.js";
+import {
+  AudiobookPositionCaptureService,
+  type AudiobookPositionCaptureConfig
+} from "../service/audiobookPositionCaptureService.js";
 import { appConfig } from "../utils/config.js";
 import { parseDays } from "../utils/time.js";
 
@@ -27,6 +31,7 @@ export type RouterOptions = {
   skipStartupUserSync?: boolean;
   discordReviewAvailable?: boolean;
   movieProfileAdapter?: MovieProfileAdapterLike;
+  audiobookPositionCaptureConfig?: AudiobookPositionCaptureConfig;
 };
 
 export function buildRouter(
@@ -38,7 +43,12 @@ export function buildRouter(
   const tautulli = createTautulliAdapter();
   const sync = new SyncService(plex);
   const audit = new AuditService(db);
-  const health = new HealthService(db);
+  const audiobookPositionCaptureConfig = options.audiobookPositionCaptureConfig ?? {
+    enabled: appConfig.AUDIOBOOK_POSITION_CAPTURE_ENABLED,
+    secret: appConfig.AUDIOBOOK_POSITION_CAPTURE_SECRET
+  };
+  const audiobookPositionCapture = new AudiobookPositionCaptureService(db, audiobookPositionCaptureConfig);
+  const health = new HealthService(db, audiobookPositionCaptureConfig);
   const users = new UserService(db);
   const cowatch = new CowatchService(db, sync);
   const historyCopy = new HistoryCopyService(db, tautulli, sync, plex);
@@ -89,6 +99,30 @@ export function buildRouter(
 
   router.get("/api/health", (_req, res) => res.json(health.getHealth()));
   router.get("/api/status", (_req, res) => res.json(health.getHealth()));
+
+  router.post("/webhooks/tautulli/audiobook-position", (req, res) => {
+    const readiness = audiobookPositionCapture.readiness();
+    if (readiness === "disabled") {
+      res.status(404).json({ ok: false, errorCode: "AUDIOBOOK_POSITION_CAPTURE_DISABLED", message: "Position capture is disabled." });
+      return;
+    }
+    if (readiness === "unconfigured") {
+      res.status(503).json({ ok: false, errorCode: "AUDIOBOOK_POSITION_CAPTURE_UNCONFIGURED", message: "Position capture is not configured." });
+      return;
+    }
+    const providedSecret = req.header("x-cowatcher-position-secret") ?? req.body?.secret;
+    if (!audiobookPositionCapture.isAuthorized(providedSecret)) {
+      res.status(401).json({ ok: false, errorCode: "AUDIOBOOK_POSITION_CAPTURE_UNAUTHORIZED", message: "Position capture was not authorized." });
+      return;
+    }
+    const result = audiobookPositionCapture.capture(req.body);
+    if (result.ok) {
+      res.status(result.status === "accepted" ? 202 : 200).json({ ok: true, status: result.status, outOfOrder: result.outOfOrder });
+      return;
+    }
+    const status = result.errorCode === "AUDIOBOOK_POSITION_REVISION_STALE" ? 409 : 400;
+    res.status(status).json({ ok: false, errorCode: result.errorCode, message: "Position evidence was rejected." });
+  });
 
   router.get("/api/settings", (_req, res) => {
     try {

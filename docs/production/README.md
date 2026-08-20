@@ -14,6 +14,10 @@ Runtime secrets belong in `.env`; household user mapping belongs in `config/user
 
 Public status and health responses must not expose tokens, API keys, private paths, or raw local config. Use the readiness summary instead.
 
+## Exact Audiobook Position Capture
+
+Future exact audiobook stopping positions can be accepted through a dedicated, secret-gated Tautulli stop webhook. Capture is disabled by default and requires a separate approved notifier rollout and positive/negative canaries. See [audiobook-position-capture.md](audiobook-position-capture.md) for the verified source fields, JSON template, privacy contract, and reversible enable/disable procedure.
+
 ## Automatic Audiobook Proof Rollout
 
 Automatic proof defaults to `AUDIOBOOK_PROOF_ENABLED=false`. Configure `AUDIOBOOK_PROOF_EXECUTABLE` and `AUDIOBOOK_PROOF_SCRIPT` without enabling the worker; Whisper also requires `AUDIOBOOK_PROOF_WHISPER_ENABLED=true` and remains opt-in.

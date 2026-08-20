@@ -19,6 +19,7 @@ export interface HealthResponse {
     plexMutation: ReadinessSubsystem;
     audiobookDiscovery: ReadinessSubsystem;
     audiobookProof: ReadinessSubsystem;
+    audiobookPositionCapture: ReadinessSubsystem;
   };
   watcher: ReadinessSubsystem & {
     enabled: boolean;
@@ -48,6 +49,10 @@ export interface HealthResponse {
     nextRunAt?: string;
     lastCompletedAt?: string;
     leaseActive: boolean;
+  };
+  audiobookPositionCapture: ReadinessSubsystem & {
+    evidenceCount: number;
+    lastCapturedAt?: string;
   };
   pendingPrompts: number;
   failedSyncs: number;

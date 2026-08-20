@@ -51,6 +51,7 @@ export function migrateDatabase(db: Db): void {
   migrateCanonicalPlexMovieIdentity(db);
   migratePlexSupplementalHistoricalRecovery(db);
   migratePlexPlayHistoryRecovery(db);
+  migrateAudiobookPositionEvidence(db);
 }
 
 function migrateCowatchReviewPrompts(db: Db): void {
@@ -1101,6 +1102,49 @@ function migratePlexPlayHistoryRecovery(db: Db): void {
       CREATE INDEX IF NOT EXISTS idx_plex_history_rows_event ON plex_history_ingestion_rows(archive_event_id);
     `);
     if (!applied) db.prepare("INSERT INTO schema_migrations (version, name) VALUES (25, ?)").run("plex_play_history_recovery");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrateAudiobookPositionEvidence(db: Db): void {
+  const applied = db.prepare("SELECT 1 FROM schema_migrations WHERE version = 27").get();
+  if (applied) return;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS audiobook_position_evidence (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_type TEXT NOT NULL CHECK (source_type IN ('tautulli_stop')),
+        source_event_key TEXT NOT NULL,
+        source_user_key TEXT NOT NULL,
+        source_session_key TEXT NOT NULL,
+        user_id INTEGER NOT NULL,
+        audiobook_id INTEGER NOT NULL,
+        rating_key TEXT NOT NULL,
+        plex_guid TEXT,
+        observed_at TEXT NOT NULL,
+        session_started_at TEXT,
+        session_stopped_at TEXT NOT NULL,
+        view_offset_ms INTEGER NOT NULL CHECK (view_offset_ms >= 0),
+        duration_ms INTEGER NOT NULL CHECK (duration_ms > 0),
+        capture_reason TEXT NOT NULL CHECK (capture_reason IN ('playback_stop')),
+        media_revision TEXT,
+        payload_digest TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY(audiobook_id) REFERENCES audiobook_books(id) ON DELETE CASCADE,
+        UNIQUE(source_type, source_event_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_audiobook_position_evidence_timeline
+        ON audiobook_position_evidence(audiobook_id, user_id, observed_at, id);
+      CREATE INDEX IF NOT EXISTS idx_audiobook_position_evidence_session
+        ON audiobook_position_evidence(source_type, source_session_key);
+    `);
+    db.prepare("INSERT INTO schema_migrations (version, name) VALUES (27, ?)")
+      .run("audiobook_position_evidence");
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");

@@ -608,7 +608,19 @@ test("detail shell owns one scroller and stays content-first across required wid
   }
 });
 
-test("verified Audiobook detail summary matches the expanded chapter hierarchy", async ({ page }) => {
+test("exact audiobook stop evidence drives the shared detail and chapter hierarchy", async ({ page }) => {
+  const hierarchyResponse = await page.request.get("/api/dashboard/detail-workspace/" + encodeURIComponent("audiobook:Audiobooks:21") + "/hierarchy");
+  const hierarchyBody = await hierarchyResponse.json();
+  expect(hierarchyResponse.ok(), JSON.stringify(hierarchyBody)).toBeTruthy();
+  expect(hierarchyBody.data.hierarchy.currentChapterIndex).toBe(3);
+  expect(hierarchyBody.data.hierarchy.currentProgressPercent).toBe(83);
+  expect(hierarchyBody.data.hierarchy.chapters[2]).toMatchObject({
+    chapterIndex: 3,
+    watchedStates: { Tony: "partial" },
+    stateSources: { Tony: "verified_offset" },
+    partialPositions: { Tony: 50 }
+  });
+
   await page.goto("/");
   await page.getByRole("button", { name: "Media Explorer" }).click();
 
@@ -618,7 +630,7 @@ test("verified Audiobook detail summary matches the expanded chapter hierarchy",
 
   const dialog = page.locator("#detail-dialog");
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByTestId("detail-workspace-progress")).toContainText("1 of 3 chapters · 50%");
+  await expect(dialog.getByTestId("detail-workspace-progress")).toContainText("2 of 3 chapters · 83%");
   await expect(dialog.getByTestId("detail-workspace-source")).toContainText("Verified audiobook chapters");
   await expect(dialog.getByTestId("detail-presenter-audiobook")).toBeVisible();
   await expect(dialog.getByTestId("detail-hierarchy-group").locator("summary")).toContainText("3 chapters");
@@ -1114,7 +1126,7 @@ test("Progress uses the shared detail workspace and preserves bounded lazy loadi
   await expect(dialog.getByTestId("detail-workspace-source")).toContainText("Verified audiobook chapters");
   await expect(dialog.getByTestId("detail-workspace-hierarchy")).toContainText("Verified Chapter 1");
   await dialog.locator(".dialog-close").click();
-  await expect(verifiedAudiobookCard.getByTestId("progress-summary")).toContainText("2 of 3 chapters · 50%");
+  await expect(verifiedAudiobookCard.getByTestId("progress-summary")).toContainText("3 of 3 chapters · 83%");
   const movieCard = cardFor("Fixture Movie");
   await expect(movieCard).toBeVisible();
   await movieCard.click();
