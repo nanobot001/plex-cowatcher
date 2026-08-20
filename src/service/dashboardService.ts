@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Db } from "../db/database.js";
-import type { AudiobookProgressEvidenceSource, AudiobookProgressQuality, AudiobookProgressQualityReason, DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket, ProgressHierarchyExpansion, ProgressNodeState, ProgressNodeStateSource, ProgressWatcherEvidence, DashboardDetailIdentity, DashboardDetailIdentityInput, DashboardDetailResolution, DashboardDetailWorkspaceResult, DashboardDetailWorkspaceHierarchyResult, DashboardMovieHistory, DashboardMovieHistoryRow, DashboardArchiveIdentityReview, DashboardPlaybackDigest, DashboardPlaybackDigestChapter, DashboardPlaybackDigestEpisode, DashboardPlaybackDigestSession } from "../types/api.js";
+import type { AudiobookProgressEvidenceSource, AudiobookProgressListenerProjection, AudiobookProgressProjectionSet, AudiobookProgressQuality, AudiobookProgressQualityReason, DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket, ProgressHierarchyExpansion, ProgressNodeState, ProgressNodeStateSource, ProgressWatcherEvidence, DashboardDetailIdentity, DashboardDetailIdentityInput, DashboardDetailResolution, DashboardDetailWorkspaceResult, DashboardDetailWorkspaceHierarchyResult, DashboardMovieHistory, DashboardMovieHistoryRow, DashboardArchiveIdentityReview, DashboardPlaybackDigest, DashboardPlaybackDigestChapter, DashboardPlaybackDigestEpisode, DashboardPlaybackDigestSession } from "../types/api.js";
 import { CowatchingIntelligenceService } from "./cowatchingIntelligenceService.js";
 import { CowatchAdjudicationService } from "./cowatchAdjudicationService.js";
 import { buildDashboardArtworkDescriptor, type DashboardArtworkDescriptor } from "./artworkService.js";
@@ -12,6 +12,7 @@ import type { MultiFileTimelineItem } from "./audiobookMultiFileService.js";
 import {
   adaptAudiobookProgressSnapshotToLegacyPosition,
   evaluateAudiobookProgressTimeline,
+  projectAudiobookProgressSnapshot,
   resolveAudiobookPositionEvidence,
   type AudiobookCanonicalProgressSnapshot,
   type AudiobookPositionEvidence,
@@ -115,6 +116,7 @@ type AudiobookChapterProgressSnapshot = {
   distinctCompleted: number;
   currentChapterIndex?: number | null;
   currentProgressPercent?: number | null;
+  audiobookProgress: AudiobookProgressProjectionSet;
   replaySemantics: ReplaySemantics;
   peopleStats: Map<string, { distinctItems: number; distinctCompleted: number; partials: number; observationCount: number; sessionCount: number; viewingDayCount: number; replayCount: number }>;
 };
@@ -299,13 +301,35 @@ function isRecognizedExplorerItem(item: DashboardActivityItem): boolean {
   return Boolean(explorerTitle(item).trim()) && (item.category === "audiobook" || Boolean(item.libraryName));
 }
 
+function explorerProgressSortKey(item: any): { percent: number; qualityRank: number } {
+  if (item.category === "audiobook" && item.audiobookProgress?.listeners?.length) {
+    const candidates = item.audiobookProgress.listeners.map((listener: AudiobookProgressListenerProjection) => {
+      const position = listener.furthest ?? listener.current;
+      const qualityRank = position?.evidenceKind === "exact"
+        ? 2
+        : position?.evidenceKind === "approximate" || position?.evidenceKind === "uncertain"
+          ? 1
+          : 0;
+      return { percent: position?.progressPercent ?? -1, qualityRank };
+    });
+    return candidates.sort((left: { percent: number; qualityRank: number }, right: { percent: number; qualityRank: number }) =>
+      right.percent - left.percent || right.qualityRank - left.qualityRank
+    )[0] ?? { percent: -1, qualityRank: 0 };
+  }
+  return { percent: item.percentComplete ?? -1, qualityRank: 0 };
+}
+
 function compareExplorerItems(a: any, b: any, sort: string): number {
   const aTitle = a.displayTitle ?? a.title;
   const bTitle = b.displayTitle ?? b.title;
   const titleOrder = explorerSortTitle(aTitle).localeCompare(explorerSortTitle(bTitle), undefined, { sensitivity: "base" });
   const stableIdentityOrder = String(a.groupKey ?? "").localeCompare(String(b.groupKey ?? ""), undefined, { sensitivity: "base" });
   if (sort === "title") return titleOrder || aTitle.localeCompare(bTitle, undefined, { sensitivity: "base" }) || stableIdentityOrder;
-  if (sort === "progress") return (b.percentComplete ?? -1) - (a.percentComplete ?? -1) || b.plays - a.plays || b.latestWatchedAt.localeCompare(a.latestWatchedAt) || stableIdentityOrder;
+  if (sort === "progress") {
+    const aProgress = explorerProgressSortKey(a);
+    const bProgress = explorerProgressSortKey(b);
+    return bProgress.percent - aProgress.percent || bProgress.qualityRank - aProgress.qualityRank || b.plays - a.plays || b.latestWatchedAt.localeCompare(a.latestWatchedAt) || stableIdentityOrder;
+  }
   if (sort === "plays") return b.plays - a.plays || b.latestWatchedAt.localeCompare(a.latestWatchedAt) || titleOrder || stableIdentityOrder;
   return b.latestWatchedAt.localeCompare(a.latestWatchedAt) || titleOrder || stableIdentityOrder;
 }
@@ -472,7 +496,7 @@ export class DashboardService {
         : undefined;
       const activity = identity.kind === "movie"
         ? []
-        : this.getActivity({ ...this.detailActivityFilter(identity), limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
+        : this.getActivity({ ...this.detailActivityFilter(identity), limit: DETAIL_SAMPLE_LIMIT, offset: 0, includeAudiobookProgress: false }).items;
       const aggregate = this.db.prepare(`
         SELECT COUNT(*) AS plays,
           SUM(CASE WHEN po.completed = 1 THEN 1 ELSE 0 END) AS completed_plays,
@@ -572,6 +596,7 @@ export class DashboardService {
               : Math.round(Number(aggregate?.observed_duration ?? 0) / 60000)
           },
           progressSummary: progress,
+          ...(audiobookProgress ? { audiobookProgress: audiobookProgress.audiobookProgress } : {}),
           hierarchy: {
             available: true,
             route: `/api/dashboard/detail-workspace/${encodeURIComponent(identity.detailKey)}/hierarchy`
@@ -603,6 +628,7 @@ export class DashboardService {
           identity,
           category: identity.category,
           hierarchy: expansion.hierarchy,
+          ...(expansion.audiobookProgress ? { audiobookProgress: expansion.audiobookProgress } : {}),
           timingMs: 0
         }
       };
@@ -1241,7 +1267,10 @@ export class DashboardService {
       canonicalMovieKeys: new Map(),
       artwork: new Map()
     };
-    const items = rows.map((row) => this.mapActivity(row, cowatchMap, mappingCache)).filter(Boolean) as DashboardActivityItem[];
+    const mappedItems = rows.map((row) => this.mapActivity(row, cowatchMap, mappingCache)).filter(Boolean) as DashboardActivityItem[];
+    const items = (input as any)?.includeAudiobookProgress === false
+      ? mappedItems
+      : this.attachAudiobookSessionProjections(mappedItems);
     return { items, total, limit: p.limit, offset: p.offset };
   }
 
@@ -1280,10 +1309,10 @@ export class DashboardService {
   getContinueConsuming(input: unknown) {
     const p = parseFilters(input);
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const all = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0, sort: "recent" }).items;
+    const all = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0, sort: "recent", includeAudiobookProgress: false }).items;
     const groups = new Map<string, any>();
     for (const item of all) {
-      if (!isRecognizedExplorerItem(item) || item.completed) continue;
+      if (!isRecognizedExplorerItem(item) || (item.completed && item.category !== "audiobook")) continue;
       if (item.watchedAt < thirtyDaysAgo) continue;
       const key = explorerGroupKey(item);
       const group = groups.get(key) ?? {
@@ -1294,8 +1323,10 @@ export class DashboardService {
         distinctItems: new Set<string>(),
         people: new Set<number>(),
         displayNames: new Set<string>(),
-        latestWatchedAt: item.watchedAt
+        latestWatchedAt: item.watchedAt,
+        rawItems: [] as DashboardActivityItem[]
       };
+      group.rawItems.push(item);
       group.plays += 1;
       group.distinctItems.add(item.ratingKey);
       group.people.add(item.userId);
@@ -1315,12 +1346,27 @@ export class DashboardService {
       groups.set(key, group);
     }
     const items = [...groups.values()]
-      .map((group) => ({
-        ...group,
-        distinctItems: group.distinctItems.size,
-        people: [...group.people],
-        displayNames: [...group.displayNames].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
-      }))
+      .map((group) => {
+        const { rawItems, ...item } = group;
+        const listeners = [...new Map((rawItems as DashboardActivityItem[]).map((row) => [row.userId, {
+          userId: row.userId,
+          displayName: row.displayName
+        }])).values()];
+        const audiobookProgress = item.category === "audiobook" && item.audiobookId != null
+          ? this.buildAudiobookProgressProjectionSet(item.audiobookId, listeners)
+          : undefined;
+        return {
+          ...item,
+          ...(audiobookProgress ? { audiobookProgress } : {}),
+          distinctItems: item.distinctItems.size,
+          people: [...item.people],
+          displayNames: [...item.displayNames].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
+        };
+      })
+      .filter((item) => item.category !== "audiobook" || (
+        item.audiobookProgress?.listeners.some((listener: AudiobookProgressListenerProjection) => !listener.bookCompleted)
+        ?? !item.completed
+      ))
       .sort((a, b) => compareExplorerItems(a, b, p.sort));
     return { items: items.slice(p.offset, p.offset + p.limit), total: items.length, limit: p.limit, offset: p.offset };
   }
@@ -1399,10 +1445,10 @@ export class DashboardService {
   getOverview(input: unknown) {
     const timed = withTiming(() => {
       const filters = parseFilters(input);
-      const sampledActivity = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0 });
+      const sampledActivity = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0, includeAudiobookProgress: false });
       const all = sampledActivity.items;
       const baseActivity = {
-        items: all.slice(0, 48),
+        items: this.attachAudiobookSessionProjections(all.slice(0, 48)),
         total: sampledActivity.total,
         limit: 48,
         offset: 0
@@ -1471,7 +1517,7 @@ export class DashboardService {
         if (!earliestDay || watchedDay < earliestDay) earliestDay = watchedDay;
         if (!latestDay || watchedDay > latestDay) latestDay = watchedDay;
 
-        if (item.completed) {
+        if (item.completed && item.category !== "audiobook") {
           const key = explorerGroupKey(item);
           if (!recentCompletedMap.has(key)) {
             recentCompletedMap.set(key, { ...item, displayTitle: explorerTitle(item) });
@@ -1503,6 +1549,36 @@ export class DashboardService {
         }
         householdActivityMap.set(item.userId, household);
       }
+
+      const audiobookProgressByBook = new Map<number, AudiobookProgressProjectionSet>();
+      const audiobookItemsByBook = new Map<number, DashboardActivityItem[]>();
+      for (const item of all) {
+        if (item.category !== "audiobook" || item.audiobookId == null) continue;
+        const rows = audiobookItemsByBook.get(item.audiobookId) ?? [];
+        rows.push(item);
+        audiobookItemsByBook.set(item.audiobookId, rows);
+      }
+      for (const [audiobookId, items] of audiobookItemsByBook) {
+        const listeners = [...new Map(items.map((item) => [item.userId, {
+          userId: item.userId,
+          displayName: item.displayName
+        }])).values()];
+        const projection = this.buildAudiobookProgressProjectionSet(audiobookId, listeners);
+        audiobookProgressByBook.set(audiobookId, projection);
+        if (projection.listeners.some((listener) => listener.bookCompleted)) {
+          const latest = [...items].sort((left, right) => right.watchedAt.localeCompare(left.watchedAt) || right.id - left.id)[0];
+          if (latest) recentCompletedMap.set(explorerGroupKey(latest), { ...latest, audiobookProgress: projection, displayTitle: explorerTitle(latest) });
+        }
+      }
+      const audiobookCompletionFacts = {
+        completedPlaybackObservations: all.filter((item) => item.category === "audiobook" && item.completed).length,
+        completedAudiobookBooks: [...audiobookProgressByBook.values()].reduce((total, projection) =>
+          total + projection.listeners.filter((listener) => listener.bookCompleted).length, 0),
+        passedAudiobookChapters: [...audiobookProgressByBook.values()].reduce((total, projection) =>
+          total + projection.listeners.reduce((listenerTotal, listener) => listenerTotal + listener.chapters.filter((chapter) =>
+            chapter.state === "passed" || chapter.state === "revisiting" || chapter.state === "explicitly_completed"
+          ).length, 0), 0)
+      };
 
       const statsList = [...categoryStats.values()].map((s) => ({
         ...s,
@@ -1544,15 +1620,24 @@ export class DashboardService {
           minutes: minutesFromSeconds(stat?.duration ?? 0),
           plays: stat?.plays ?? 0,
           completed: stat?.completed ?? 0,
+          ...(category === "audiobook" ? { completionFacts: audiobookCompletionFacts } : {}),
           deltaMinutes
         };
       });
 
-      const recentPlayback = this.buildRecentPlaybackCards(all, 24);
+      const recentPlayback = this.attachAudiobookSessionProjections(this.buildRecentPlaybackCards(all, 24));
       const recentPlaybackDigests = this.buildRecentPlaybackDigests(all, 24, observedSecondsByItem);
       const householdActivity = [...householdActivityMap.values()]
         .map((item) => ({
           ...item,
+          completionFacts: {
+            completedPlaybackObservations: all.filter((activity) => activity.userId === item.userId && activity.completed).length,
+            completedAudiobookBooks: [...audiobookProgressByBook.values()].reduce((total, projection) =>
+              total + projection.listeners.filter((listener) => listener.listenerId === item.userId && listener.bookCompleted).length, 0),
+            passedAudiobookChapters: [...audiobookProgressByBook.values()].reduce((total, projection) =>
+              total + projection.listeners.filter((listener) => listener.listenerId === item.userId).reduce((listenerTotal, listener) =>
+                listenerTotal + listener.chapters.filter((chapter) => chapter.state === "passed" || chapter.state === "revisiting" || chapter.state === "explicitly_completed").length, 0), 0)
+          },
           topCategory: Object.entries(item.topCategoryCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? null
         }))
         .sort((a, b) => b.minutes - a.minutes || b.latestWatchedAt.localeCompare(a.latestWatchedAt))
@@ -1587,6 +1672,7 @@ export class DashboardService {
         summaryStrip,
         recentlyCompleted,
         householdActivity,
+        completionFacts: { audiobook: audiobookCompletionFacts },
         needsAttention,
         categoryMix: statsList,
         windows: {
@@ -1621,7 +1707,8 @@ export class DashboardService {
       dateFrom: previousStart.toISOString(),
       dateTo: previousEnd.toISOString(),
       limit: SUMMARY_SAMPLE_LIMIT,
-      offset: 0
+      offset: 0,
+      includeAudiobookProgress: false
     }).items;
     if (!previous.length) return null;
     const previousMinutes = minutesFromSeconds(this.effectiveObservedSeconds(previous, true));
@@ -1629,7 +1716,8 @@ export class DashboardService {
       ...filters,
       category,
       limit: SUMMARY_SAMPLE_LIMIT,
-      offset: 0
+      offset: 0,
+      includeAudiobookProgress: false
     }).items;
     const currentMinutes = minutesFromSeconds(this.effectiveObservedSeconds(current, true));
     return currentMinutes - previousMinutes;
@@ -1757,7 +1845,7 @@ export class DashboardService {
   getMedia(input: unknown) {
     const timed = withTiming(() => {
       const p = parseFilters(input);
-      const all = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0, sort: "recent" }).items;
+      const all = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0, sort: "recent", includeAudiobookProgress: false }).items;
       
       let allowedNames: Set<string> | null = null;
       if (p.user) {
@@ -1777,7 +1865,8 @@ export class DashboardService {
           : (item.category === "tv" || item.category === "classic_tv" || item.category === "anime")
             ? item.grandparentRatingKey ?? item.ratingKey
             : item.ratingKey;
-        const group = groups.get(key) ?? { ...item, title, showTitle: undefined, displayTitle: title, groupKey: key, groupRatingKey, plays: 0, distinctItems: new Set<string>(), people: new Set<number>(), displayNames: new Set<string>(), latestWatchedAt: item.watchedAt, ...this.resolveArtworkDescriptor(item, groupRatingKey), evidence: undefined };
+        const group = groups.get(key) ?? { ...item, title, showTitle: undefined, displayTitle: title, groupKey: key, groupRatingKey, plays: 0, distinctItems: new Set<string>(), people: new Set<number>(), displayNames: new Set<string>(), latestWatchedAt: item.watchedAt, rawItems: [] as DashboardActivityItem[], ...this.resolveArtworkDescriptor(item, groupRatingKey), evidence: undefined };
+      group.rawItems.push(item);
       group.plays += 1;
       group.distinctItems.add(item.ratingKey);
       group.people.add(item.userId);
@@ -1813,12 +1902,23 @@ export class DashboardService {
         }
         groups.set(key, group);
       }
-      const items = [...groups.values()].map((group) => ({
-        ...group,
-        distinctItems: group.distinctItems.size,
-        people: [...group.people],
-        displayNames: [...group.displayNames].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
-      })).sort((a, b) => compareExplorerItems(a, b, p.sort));
+      const items = [...groups.values()].map((group) => {
+        const { rawItems, ...item } = group;
+        const listeners = [...new Map((rawItems as DashboardActivityItem[]).map((row) => [row.userId, {
+          userId: row.userId,
+          displayName: row.displayName
+        }])).values()];
+        const audiobookProgress = item.category === "audiobook" && item.audiobookId != null
+          ? this.buildAudiobookProgressProjectionSet(item.audiobookId, listeners)
+          : undefined;
+        return {
+          ...item,
+          ...(audiobookProgress ? { audiobookProgress } : {}),
+          distinctItems: item.distinctItems.size,
+          people: [...item.people],
+          displayNames: [...item.displayNames].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
+        };
+      }).sort((a, b) => compareExplorerItems(a, b, p.sort));
       return { items: items.slice(p.offset, p.offset + p.limit), total: items.length, limit: p.limit, offset: p.offset };
     });
     return { ...timed.value, timingMs: timed.timingMs };
@@ -1861,6 +1961,21 @@ export class DashboardService {
         const attributedItems = items.filter((item) => item.contribution === "attributed_confirmed_together");
         const minutes = minutesFromSeconds(items.reduce((total, item) => total + normalizeDurationSeconds(item.duration), 0));
         const completed = items.filter((item) => item.completed).length;
+        const audiobookProgress = [...new Set(observedItems
+          .filter((item) => item.category === "audiobook" && item.audiobookId != null)
+          .map((item) => item.audiobookId!))]
+          .map((audiobookId) => this.buildAudiobookProgressProjectionSet(audiobookId, [{
+            userId: Number(user.id),
+            displayName: String(user.display_name)
+          }]))
+          .flatMap((projection) => projection.listeners);
+        const completionFacts = {
+          completedPlaybackObservations: completed,
+          completedAudiobookBooks: audiobookProgress.filter((listener) => listener.bookCompleted).length,
+          passedAudiobookChapters: audiobookProgress.reduce((total, listener) => total + listener.chapters.filter((chapter) =>
+            chapter.state === "passed" || chapter.state === "revisiting" || chapter.state === "explicitly_completed"
+          ).length, 0)
+        };
         const duplicateIds = new Set<number>();
         for (const value of [user.plex_username, user.dashboard_alias]) {
           const owners = identityOwners.get(normalizePersonIdentity(value));
@@ -1899,8 +2014,9 @@ export class DashboardService {
           completed,
           inProgress: items.length - completed,
           completionRate: items.length ? Math.round((completed / items.length) * 100) : null,
+          completionFacts,
           activeDays: activityByDay.size,
-          recent: items.slice(0, 5),
+          recent: this.attachAudiobookSessionProjections(items.slice(0, 5)),
           activityBreakdown: {
             observed: {
               plays: observedItems.length,
@@ -2253,6 +2369,7 @@ export class DashboardService {
       }
 
       const sessions: any[] = [];
+      const dashboardService = this;
       for (const [userId, items] of userItemsMap.entries()) {
         const itemsWithIntervals = items.map(item => {
           const durationSec = item.duration ?? 0;
@@ -2299,6 +2416,19 @@ export class DashboardService {
         }
 
         const cowatchEventId = groupItems.find(it => it.evidence?.cowatchEventId)?.evidence?.cowatchEventId || null;
+        const audiobookItems = groupItems.filter((item) => item.category === "audiobook" && item.audiobookId != null);
+        const audiobookProgress = audiobookItems.length > 0 && audiobookItems.every((item) => item.audiobookId === audiobookItems[0]!.audiobookId)
+          ? dashboardService.buildAudiobookProgressProjectionSet(
+            audiobookItems[0]!.audiobookId!,
+            [{ userId: first.item.userId, displayName: first.item.displayName }],
+            {
+              context: "session_as_of",
+              asOfAt: new Date(endTimeMs).toISOString(),
+              sessionStartAt: new Date(startTimeMs).toISOString(),
+              sessionEndAt: new Date(endTimeMs).toISOString()
+            }
+          )
+          : undefined;
 
         return {
           id: `${first.item.userId}-${startTimeMs}`,
@@ -2314,7 +2444,8 @@ export class DashboardService {
           isPaused,
           relationship,
           cowatchEventId,
-          item: first.item
+          item: first.item,
+          ...(audiobookProgress ? { audiobookProgress } : {})
         };
       }
 
@@ -2539,7 +2670,7 @@ export class DashboardService {
       const p = parseFilters(input);
 
       // Get all matching activity items in the effective window, ignoring page limit/offset during retrieval
-      const all = this.getActivity({ ...(input as object), limit: 10000, offset: 0 }).items;
+      const all = this.getActivity({ ...(input as object), limit: 10000, offset: 0, includeAudiobookProgress: false }).items;
       const observedSecondsByItem = this.effectiveObservedSecondsByItem(
         all,
         Boolean(p.dateFrom || p.dateTo)
@@ -2695,6 +2826,7 @@ export class DashboardService {
         let hasVerifiedChapters: boolean | undefined = undefined;
         let currentChapterIndex: number | null = null;
         let currentProgressPercent: number | null = null;
+        let audiobookProgress: AudiobookProgressProjectionSet | undefined;
         let audiobookBook: any = null;
 
         if (first.category === "audiobook") {
@@ -2785,31 +2917,39 @@ export class DashboardService {
         let distinctCompleted = g.distinctCompleted.size;
         let partials = g.partials;
         if (first.category === "audiobook" && audiobookBook) {
-          const audiobookProgress = this.buildAudiobookHierarchy(audiobookBook, g.rawItems, people);
-          hasVerifiedChapters = audiobookProgress.hasVerifiedChapters;
-          if (audiobookProgress.hasVerifiedChapters) {
+          const chapterProgress = this.buildAudiobookHierarchy(audiobookBook, g.rawItems, people);
+          audiobookProgress = chapterProgress.audiobookProgress;
+          hasVerifiedChapters = chapterProgress.hasVerifiedChapters;
+          if (chapterProgress.hasVerifiedChapters) {
             progressUnit = "chapter";
             progressUnitLabel = "chapters";
             progressSource = "audiobook_tool";
-            progressQuality = audiobookProgress.progressQuality;
-            progressEvidenceSource = audiobookProgress.progressEvidenceSource;
-            progressQualityReason = audiobookProgress.progressQualityReason;
-            progressSourceVerified = isVerifiedAudiobookProgressQuality(audiobookProgress.progressQuality);
+            progressQuality = chapterProgress.progressQuality;
+            progressEvidenceSource = chapterProgress.progressEvidenceSource;
+            progressQualityReason = chapterProgress.progressQualityReason;
+            progressSourceVerified = isVerifiedAudiobookProgressQuality(chapterProgress.progressQuality);
             totalKnown = true;
-            totalItems = audiobookProgress.chapters.length;
-            distinctItems = audiobookProgress.distinctItems;
-            distinctCompleted = audiobookProgress.distinctCompleted;
-            currentChapterIndex = audiobookProgress.currentChapterIndex ?? null;
-            currentProgressPercent = audiobookProgress.currentProgressPercent ?? null;
-            partials = [...audiobookProgress.peopleStats.values()].reduce((sum, stat) => sum + stat.partials, 0);
+            totalItems = chapterProgress.chapters.length;
+            distinctItems = chapterProgress.distinctItems;
+            distinctCompleted = chapterProgress.distinctCompleted;
+            currentChapterIndex = chapterProgress.currentChapterIndex ?? null;
+            currentProgressPercent = chapterProgress.currentProgressPercent ?? null;
+            partials = [...chapterProgress.peopleStats.values()].reduce((sum, stat) => sum + stat.partials, 0);
             people = people.map((person) => {
-              const stats = audiobookProgress.peopleStats.get(person.displayName);
+              const stats = chapterProgress.peopleStats.get(person.displayName);
+              const listenerProgress = audiobookProgress?.listeners.find((listener) => listener.listenerId === person.userId);
               return stats ? {
                 ...person,
                 distinctItems: stats.distinctItems,
                 distinctCompleted: stats.distinctCompleted,
-                partials: stats.partials
+                partials: stats.partials,
+                ...(listenerProgress ? { audiobookProgress: listenerProgress } : {})
               } : person;
+            });
+          } else {
+            people = people.map((person) => {
+              const listenerProgress = audiobookProgress?.listeners.find((listener) => listener.listenerId === person.userId);
+              return listenerProgress ? { ...person, audiobookProgress: listenerProgress } : person;
             });
           }
         }
@@ -2832,6 +2972,7 @@ export class DashboardService {
           hasVerifiedChapters,
           currentChapterIndex,
           currentProgressPercent,
+          audiobookProgress,
           totalKnown,
           totalItems,
           distinctItems,
@@ -2866,6 +3007,7 @@ export class DashboardService {
           replayCount,
           completed: g.completedPlays,
           averagePercent,
+          ...(audiobookProgress ? { audiobookProgress } : {}),
           totalKnown,
           totalItems,
           hierarchy,
@@ -2884,6 +3026,9 @@ export class DashboardService {
         if (g.category === "movie") {
           return g.distinctCompleted === 0 && g.plays > 0;
         }
+        if (g.category === "audiobook" && g.audiobookProgress) {
+          return g.audiobookProgress.listeners.some((listener) => !listener.bookCompleted) || g.partials > 0;
+        }
         if (g.totalKnown) {
           return g.distinctCompleted < (g.totalItems || 0);
         }
@@ -2891,6 +3036,9 @@ export class DashboardService {
       }).sort((a, b) => b.latestWatchedAt.localeCompare(a.latestWatchedAt));
 
       const recentlyCompletedGroups = progressGroups.filter((g) => {
+        if (g.category === "audiobook") {
+          return g.audiobookProgress?.listeners.some((listener) => listener.bookCompleted) ?? false;
+        }
         return g.completedPlays > 0;
       }).sort((a, b) => b.latestWatchedAt.localeCompare(a.latestWatchedAt));
 
@@ -2918,7 +3066,18 @@ export class DashboardService {
       };
 
       // Populate old compatibility recently completed array
-      const recentlyCompletedOld = all.filter(item => item.completed).map(item => ({ ...item, displayTitle: explorerTitle(item) }));
+      const completedAudiobookGroups = new Map(progressGroups
+        .filter((group) => group.category === "audiobook" && group.audiobookProgress?.listeners.some((listener) => listener.bookCompleted))
+        .map((group) => [group.groupKey, group.audiobookProgress!]));
+      const recentlyCompletedOld = all
+        .filter((item) => item.category === "audiobook"
+          ? completedAudiobookGroups.has(explorerGroupKey(item))
+          : item.completed)
+        .map((item) => ({
+          ...item,
+          ...(item.category === "audiobook" ? { audiobookProgress: completedAudiobookGroups.get(explorerGroupKey(item)) } : {}),
+          displayTitle: explorerTitle(item)
+        }));
       const uniqueCompleted: any[] = [];
       const seenTitles = new Set<string>();
       for (const item of recentlyCompletedOld) {
@@ -3017,15 +3176,15 @@ export class DashboardService {
       let plays: DashboardActivityItem[] = [];
       if (category === "tv" || category === "classic_tv" || category === "anime") {
         const showKey = catalog.grandparent_rating_key || ratingKey;
-        plays = this.getActivity({ grandparentRatingKey: showKey, limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
+        plays = this.getActivity({ grandparentRatingKey: showKey, limit: DETAIL_SAMPLE_LIMIT, offset: 0, includeAudiobookProgress: false }).items;
       } else if (category === "audiobook" && catalog.audiobook_id) {
-        plays = this.getActivity({ audiobookId: catalog.audiobook_id, limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
+        plays = this.getActivity({ audiobookId: catalog.audiobook_id, limit: DETAIL_SAMPLE_LIMIT, offset: 0, includeAudiobookProgress: false }).items;
       } else {
-        plays = this.getActivity({ ratingKey, limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
+        plays = this.getActivity({ ratingKey, limit: DETAIL_SAMPLE_LIMIT, offset: 0, includeAudiobookProgress: false }).items;
       }
 
       if (!plays.length) {
-        plays = this.getActivity({ ratingKey, limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
+        plays = this.getActivity({ ratingKey, limit: DETAIL_SAMPLE_LIMIT, offset: 0, includeAudiobookProgress: false }).items;
       }
 
       const first = plays[0] || {
@@ -3056,12 +3215,14 @@ export class DashboardService {
 
       // 6. Build the rich hierarchy
       let hierarchy: any = null;
+      let audiobookProgressProjection: AudiobookProgressProjectionSet | undefined;
 
       if (category === "tv" || category === "classic_tv" || category === "anime") {
         const showKey = catalog.grandparent_rating_key || ratingKey;
         hierarchy = this.buildTvHierarchy(showKey, catalog.grandparent_title || catalog.title, plays, people);
       } else if (category === "audiobook" && audiobook) {
         const audiobookProgress = this.buildAudiobookHierarchy(audiobook, plays, people);
+        audiobookProgressProjection = audiobookProgress.audiobookProgress;
         hierarchy = {
           type: "audiobook",
           parentSeries: audiobook.parent_series_title,
@@ -3106,6 +3267,7 @@ export class DashboardService {
         repeatCount: replayProjection.total.replayCount,
         catalog,
         audiobook,
+        ...(audiobookProgressProjection ? { audiobookProgress: audiobookProgressProjection } : {}),
         hierarchy,
         adjudications
       };
@@ -3251,6 +3413,133 @@ export class DashboardService {
     }
 
     return this.buildTrackFileAudiobookProgress(audiobook, plays, people);
+  }
+
+  private buildAudiobookProgressProjectionSet(
+    audiobookId: number,
+    people: Array<{ displayName: string; userId?: number | null }>,
+    options: {
+      context?: "current" | "session_as_of";
+      asOfAt?: string | null;
+      sessionStartAt?: string | null;
+      sessionEndAt?: string | null;
+    } = {}
+  ): AudiobookProgressProjectionSet {
+    const book = this.db.prepare(`
+      SELECT id, current_media_revision, total_duration_seconds
+      FROM audiobook_books
+      WHERE id = ?
+    `).get(audiobookId) as { id: number; current_media_revision: string | null; total_duration_seconds: number | null } | undefined;
+    if (!book) return { schemaVersion: 1, listeners: [] };
+    const source = this.getActiveAudiobookChapterSource(audiobookId);
+    const cachedChapters = source ? this.getCachedAudiobookChapters(audiobookId) : [];
+    const manifestItems = this.getAudiobookTimelineItems(audiobookId);
+    const revisionDuration = book.current_media_revision
+      ? this.db.prepare(`
+        SELECT total_duration_ms
+        FROM audiobook_media_revisions
+        WHERE audiobook_id = ? AND media_revision = ?
+        ORDER BY id DESC LIMIT 1
+      `).get(audiobookId, book.current_media_revision) as { total_duration_ms?: number | null } | undefined
+      : undefined;
+    const chapterDurationMs = cachedChapters.length > 0
+      ? Math.max(...cachedChapters.map((chapter) => Number(chapter.end_offset_ms)))
+      : 0;
+    const manifestDurationMs = manifestItems.reduce((total, item) => total + Math.max(0, Number(item.durationMs ?? 0)), 0);
+    const bookDurationMs = chapterDurationMs
+      || Number(revisionDuration?.total_duration_ms ?? 0)
+      || Number(book.total_duration_seconds ?? 0) * 1000
+      || manifestDurationMs;
+    const mediaRevision = source?.media_revision ?? book.current_media_revision ?? null;
+    const chapterRevision = source?.chapter_revision ?? null;
+    const chapterTimeline = cachedChapters.map((chapter) => ({
+      chapterIndex: Number(chapter.chapter_index),
+      title: chapter.title,
+      startOffsetMs: Number(chapter.start_offset_ms),
+      endOffsetMs: Number(chapter.end_offset_ms)
+    }));
+    const listeners: AudiobookProgressListenerProjection[] = [];
+    const seenUsers = new Set<number>();
+    for (const person of people) {
+      const userId = Number(person.userId);
+      if (!Number.isInteger(userId) || seenUsers.has(userId)) continue;
+      seenUsers.add(userId);
+      const rows = this.db.prepare(`
+        SELECT po.id, po.user_id, po.rating_key, po.plex_guid, po.watched_at,
+          po.session_start_at, po.session_end_at, po.duration, po.view_offset,
+          po.percent_complete, po.completed
+        FROM playback_observations po
+        LEFT JOIN content_catalog catalog ON catalog.rating_key = po.rating_key
+        WHERE po.user_id = ?
+          AND (
+            catalog.audiobook_id = ?
+            OR EXISTS (
+              SELECT 1
+              FROM audiobook_media_revision_items item
+              JOIN audiobook_media_revisions revision ON revision.id = item.revision_id
+              WHERE revision.audiobook_id = ?
+                AND (item.rating_key = po.rating_key OR (po.plex_guid IS NOT NULL AND item.guid = po.plex_guid))
+            )
+          )
+        ORDER BY po.watched_at, po.id
+      `).all(userId, audiobookId, audiobookId) as any[];
+      const observations: AudiobookProgressObservation[] = [
+        ...rows.map((row) => ({
+          id: Number(row.id),
+          userId: Number(row.user_id),
+          ratingKey: String(row.rating_key),
+          plexGuid: row.plex_guid ?? null,
+          watchedAt: String(row.watched_at),
+          duration: row.duration == null ? null : Number(row.duration),
+          viewOffset: row.view_offset == null ? null : Number(row.view_offset),
+          percentComplete: row.percent_complete == null ? null : Number(row.percent_complete),
+          completed: Number(row.completed) === 1,
+          sessionStartAt: row.session_start_at ?? null,
+          sessionEndAt: row.session_end_at ?? null,
+          mediaRevision,
+          chapterRevision
+        })),
+        ...getCapturedAudiobookProgressObservations(this.db, audiobookId, userId, chapterRevision)
+      ];
+      if (observations.length === 0) continue;
+      const snapshot = evaluateAudiobookProgressTimeline({
+        listenerId: userId,
+        observations,
+        bookDurationMs,
+        chapters: chapterTimeline,
+        ...(options.asOfAt ? { asOfAt: options.asOfAt } : {}),
+        mediaRevision,
+        chapterRevision,
+        manifestItems
+      });
+      listeners.push({
+        ...projectAudiobookProgressSnapshot(snapshot, bookDurationMs, {
+          context: options.context,
+          sessionStartAt: options.sessionStartAt,
+          sessionEndAt: options.sessionEndAt
+        }),
+        displayName: person.displayName
+      });
+    }
+    return { schemaVersion: 1, listeners };
+  }
+
+  private attachAudiobookSessionProjections(items: DashboardActivityItem[]): DashboardActivityItem[] {
+    for (const item of items) {
+      if (item.category !== "audiobook" || item.audiobookId == null) continue;
+      const asOfAt = item.sessionEndAt ?? item.watchedAt;
+      item.audiobookProgress = this.buildAudiobookProgressProjectionSet(
+        item.audiobookId,
+        [{ userId: item.userId, displayName: item.displayName }],
+        {
+          context: "session_as_of",
+          asOfAt,
+          sessionStartAt: item.sessionStartAt ?? item.watchedAt,
+          sessionEndAt: asOfAt
+        }
+      );
+    }
+    return items;
   }
 
   private getActiveAudiobookChapterSource(audiobookId: number): CachedAudiobookSource | null {
@@ -3521,6 +3810,7 @@ export class DashboardService {
       distinctCompleted: completedChapters.size,
       currentChapterIndex: currentSnapshotEntry?.snapshot.currentPosition?.chapterIndex ?? null,
       currentProgressPercent: currentPosition?.progressPercent ?? null,
+      audiobookProgress: this.buildAudiobookProgressProjectionSet(audiobook.id, people),
       replaySemantics,
       peopleStats
     };
@@ -3606,6 +3896,7 @@ export class DashboardService {
       chapters,
       distinctItems: touchedTracks.size,
       distinctCompleted: completedTracks.size,
+      audiobookProgress: this.buildAudiobookProgressProjectionSet(audiobook.id, people),
       replaySemantics,
       peopleStats
     };
@@ -3626,7 +3917,7 @@ export class DashboardService {
 
         if (!catalog) return null;
 
-        const plays = this.getActivity({ grandparentRatingKey, limit: DETAIL_HIERARCHY_HISTORY_LIMIT, offset: 0 }).items;
+        const plays = this.getActivity({ grandparentRatingKey, limit: DETAIL_HIERARCHY_HISTORY_LIMIT, offset: 0, includeAudiobookProgress: false }).items;
         const people = this.visibleDashboardPeople();
 
         const hierarchy = this.buildTvHierarchy(grandparentRatingKey, catalog.title, plays, people);
@@ -3675,7 +3966,7 @@ export class DashboardService {
 
         if (!audiobook) return null;
 
-        const plays = this.getActivity({ audiobookId, limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
+        const plays = this.getActivity({ audiobookId, limit: DETAIL_SAMPLE_LIMIT, offset: 0, includeAudiobookProgress: false }).items;
         const people = this.visibleDashboardPeople();
 
         const audiobookProgress = this.buildAudiobookHierarchy(audiobook, plays, people);
@@ -3728,6 +4019,7 @@ export class DashboardService {
           hasVerifiedChapters,
           currentChapterIndex: hasVerifiedChapters ? (audiobookProgress.currentChapterIndex ?? null) : null,
           currentProgressPercent: hasVerifiedChapters ? (audiobookProgress.currentProgressPercent ?? null) : null,
+          audiobookProgress: audiobookProgress.audiobookProgress,
           totalKnown,
           totalItems,
           distinctItems: hasVerifiedChapters ? audiobookProgress.distinctItems : distinctItems.size,
@@ -3754,7 +4046,7 @@ export class DashboardService {
 
         if (!catalog) return null;
 
-        const plays = this.getActivity({ ratingKey, limit: DETAIL_SAMPLE_LIMIT, offset: 0 }).items;
+        const plays = this.getActivity({ ratingKey, limit: DETAIL_SAMPLE_LIMIT, offset: 0, includeAudiobookProgress: false }).items;
         const peopleByName = new Map<string, { displayName: string }>();
         for (const play of plays) {
           const names = play.displayNames?.length ? play.displayNames : [play.displayName];
@@ -4049,7 +4341,7 @@ export class DashboardService {
     items: DashboardActivityItem[],
     userId: number,
     displayName: string
-  ): Pick<DashboardPlaybackDigestSession, "completedChapters" | "currentChapter" | "progressQuality" | "progressEvidenceSource" | "progressQualityReason"> {
+  ): Pick<DashboardPlaybackDigestSession, "completedChapters" | "currentChapter" | "progressQuality" | "progressEvidenceSource" | "progressQualityReason" | "audiobookProgress"> {
     const audiobookId = items.find((item) => item.audiobookId != null)?.audiobookId;
     if (audiobookId == null) {
       return {
@@ -4073,35 +4365,51 @@ export class DashboardService {
         progressQualityReason: "POSITION_UNAVAILABLE"
       };
     }
-    const progress = this.buildAudiobookHierarchy(audiobook, items, [{ userId, displayName }]);
-    if (!progress.hasVerifiedChapters) {
+    const startAt = [...items]
+      .map((item) => item.sessionStartAt ?? item.watchedAt)
+      .sort()[0] ?? null;
+    const endAt = [...items]
+      .map((item) => item.sessionEndAt ?? item.watchedAt)
+      .sort()
+      .at(-1) ?? null;
+    const audiobookProgress = this.buildAudiobookProgressProjectionSet(
+      audiobook.id,
+      [{ userId, displayName }],
+      { context: "session_as_of", asOfAt: endAt, sessionStartAt: startAt, sessionEndAt: endAt }
+    );
+    const listenerProgress = audiobookProgress.listeners.find((listener) => listener.listenerId === userId);
+    if (!listenerProgress || listenerProgress.chapters.length === 0) {
       return {
         completedChapters: [],
         currentChapter: null,
-        progressQuality: progress.progressQuality,
-        progressEvidenceSource: progress.progressEvidenceSource,
-        progressQualityReason: progress.progressQualityReason
+        progressQuality: listenerProgress?.current?.evidence.quality ?? "unavailable",
+        progressEvidenceSource: listenerProgress?.current?.evidence.source ?? "none",
+        progressQualityReason: listenerProgress?.current?.evidence.reason ?? "POSITION_UNAVAILABLE",
+        audiobookProgress
       };
     }
     const completedChapters: DashboardPlaybackDigestChapter[] = [];
     const partialChapters: DashboardPlaybackDigestChapter[] = [];
-    for (const chapter of progress.chapters) {
-      const state = chapter.watchedStates[displayName];
+    for (const chapter of listenerProgress.chapters) {
       const chapterValue = {
-        chapterIndex: chapter.chapterIndex ?? null,
+        chapterIndex: chapter.chapterIndex,
         title: chapter.title,
-        progressPercent: chapter.partialPositions[displayName] ?? null
+        progressPercent: chapter.progressPercent
       } satisfies DashboardPlaybackDigestChapter;
-      if (state === "watched" || state === "repeated") completedChapters.push({ ...chapterValue, progressPercent: 100 });
-      else if (state === "partial") partialChapters.push(chapterValue);
+      if (chapter.state === "passed" || chapter.state === "explicitly_completed") {
+        completedChapters.push({ ...chapterValue, progressPercent: 100 });
+      } else if (chapter.state === "in_progress" || chapter.state === "revisiting") {
+        partialChapters.push(chapterValue);
+      }
     }
     partialChapters.sort((a, b) => (b.chapterIndex ?? -1) - (a.chapterIndex ?? -1));
     return {
       completedChapters,
       currentChapter: partialChapters[0] ?? null,
-      progressQuality: progress.progressQuality,
-      progressEvidenceSource: progress.progressEvidenceSource,
-      progressQualityReason: progress.progressQualityReason
+      progressQuality: listenerProgress.current?.evidence.quality ?? "unavailable",
+      progressEvidenceSource: listenerProgress.current?.evidence.source ?? "none",
+      progressQualityReason: listenerProgress.current?.evidence.reason ?? "POSITION_UNAVAILABLE",
+      audiobookProgress
     };
   }
 
@@ -4137,7 +4445,8 @@ export class DashboardService {
       ...(primary.category === "audiobook" ? {
         progressQuality: chapterSummary.progressQuality,
         progressEvidenceSource: chapterSummary.progressEvidenceSource,
-        progressQualityReason: chapterSummary.progressQualityReason
+        progressQualityReason: chapterSummary.progressQualityReason,
+        audiobookProgress: chapterSummary.audiobookProgress
       } : {}),
       episodeKeys: primary.category === "tv" || primary.category === "classic_tv" || primary.category === "anime"
         ? [...new Set(sorted.map((item) => item.ratingKey))]

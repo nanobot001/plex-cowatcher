@@ -387,7 +387,7 @@ export function buildRouter(
   });
   router.get("/api/dashboard/export.csv", (req, res, next) => {
     try {
-      const { items } = dashboardService.getActivity({ ...req.query, limit: 10000 });
+      const { items } = dashboardService.getActivity({ ...req.query, limit: 10000, includeAudiobookProgress: false });
       res.setHeader("Content-Type", "text/csv");
       res.setHeader("Content-Disposition", 'attachment; filename="history.csv"');
       res.write("watched_at,person,category,library,title,progress,duration_minutes,status\n");

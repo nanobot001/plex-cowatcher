@@ -205,6 +205,7 @@ export interface DashboardDetailWorkspaceResponse {
     currentPercent: number | null;
     totalItems: number | null;
   };
+  audiobookProgress?: AudiobookProgressProjectionSet;
   hierarchy: {
     available: boolean;
     route: string;
@@ -222,6 +223,7 @@ export interface DashboardDetailWorkspaceHierarchyResponse {
   identity: DashboardDetailIdentity;
   category: DashboardCategory;
   hierarchy: ProgressHierarchyExpansion["hierarchy"];
+  audiobookProgress?: AudiobookProgressProjectionSet;
   timingMs: number;
 }
 
@@ -260,6 +262,86 @@ export type AudiobookProgressQualityReason =
   | "DUPLICATE_OBSERVATION"
   | "STALE_OR_RESET_EVIDENCE"
   | "NO_TRUSTED_CHAPTER_EVIDENCE";
+export type AudiobookProgressEvidenceKind = "exact" | "approximate" | "uncertain";
+export type AudiobookProgressMovement = "none" | "forward" | "rewind" | "revisit" | "stale" | "unknown";
+export type AudiobookProgressDirection = "forward" | "backward" | "stationary" | "unknown";
+export type AudiobookProgressChapterState =
+  | "in_progress"
+  | "revisiting"
+  | "passed"
+  | "probably_passed"
+  | "explicitly_completed"
+  | "unknown";
+
+export interface AudiobookProgressEvidenceMetadata {
+  quality: AudiobookProgressQuality;
+  source: AudiobookProgressEvidenceSource;
+  reason: AudiobookProgressQualityReason;
+  evaluatedAt: string;
+  mediaRevision: string | null;
+  chapterRevision: string | null;
+}
+
+export interface AudiobookProgressPositionProjection {
+  offsetMs: number | null;
+  progressPercent: number | null;
+  chapterIndex: number | null;
+  evidenceKind: AudiobookProgressEvidenceKind;
+  evidence: AudiobookProgressEvidenceMetadata;
+}
+
+export interface AudiobookProgressSessionProjection {
+  sessionKey: string;
+  startAt: string;
+  endAt: string;
+  itemCount: number;
+  durationMs: number | null;
+  startPositionMs: number | null;
+  endPositionMs: number | null;
+  startProgressPercent: number | null;
+  endProgressPercent: number | null;
+  startChapterIndex: number | null;
+  endChapterIndex: number | null;
+  direction: AudiobookProgressDirection;
+  revisitDetected: boolean;
+  evidence: AudiobookProgressEvidenceMetadata;
+}
+
+export interface AudiobookProgressChapterProjection {
+  chapterIndex: number;
+  title: string;
+  state: AudiobookProgressChapterState;
+  progressPercent: number | null;
+  evidence: AudiobookProgressEvidenceMetadata;
+}
+
+export interface AudiobookProgressProjection {
+  schemaVersion: 1;
+  context: "current" | "session_as_of";
+  listenerId: number | null;
+  evaluatedAt: string;
+  mediaRevision: string | null;
+  chapterRevision: string | null;
+  current: AudiobookProgressPositionProjection | null;
+  furthest: AudiobookProgressPositionProjection | null;
+  movement: AudiobookProgressMovement;
+  direction: AudiobookProgressDirection;
+  rewindDetected: boolean;
+  revisitDetected: boolean;
+  bookCompleted: boolean;
+  listeningTimeMs: number;
+  sessionMovement: AudiobookProgressSessionProjection | null;
+  chapters: AudiobookProgressChapterProjection[];
+}
+
+export interface AudiobookProgressListenerProjection extends AudiobookProgressProjection {
+  displayName: string;
+}
+
+export interface AudiobookProgressProjectionSet {
+  schemaVersion: 1;
+  listeners: AudiobookProgressListenerProjection[];
+}
 export type ProgressNodeState = "watched" | "partial" | "repeated" | "unknown" | "source_uncertain";
 export type ProgressNodeStateSource = "verified_offset" | "approximate_position" | "book_completion" | "track_file" | "source_uncertain" | "none";
 export type ReplayReason = "different_viewing_day" | "same_day_completed_sessions" | "same_day_offset_reset";
@@ -311,6 +393,11 @@ export interface DashboardPersonSummary {
   completed: number;
   inProgress: number;
   completionRate: number | null;
+  completionFacts?: {
+    completedPlaybackObservations: number;
+    completedAudiobookBooks: number;
+    passedAudiobookChapters: number;
+  };
   activeDays: number;
   recent: DashboardActivityItem[];
   mix: Array<{ category: DashboardCategory; label: string; count: number }>;
@@ -380,6 +467,7 @@ export interface DashboardActivityItem {
   displayTitle?: string;
   displayNames?: string[];
   confirmedUserIds?: number[];
+  audiobookProgress?: AudiobookProgressProjectionSet;
   evidence: Record<string, unknown>;
 }
 
@@ -402,6 +490,7 @@ export interface DashboardPlaybackDigestSession {
   progressQuality?: AudiobookProgressQuality;
   progressEvidenceSource?: AudiobookProgressEvidenceSource;
   progressQualityReason?: AudiobookProgressQualityReason;
+  audiobookProgress?: AudiobookProgressProjectionSet;
   episodeKeys?: string[];
 }
 
@@ -459,6 +548,7 @@ export interface DashboardTimelineSession {
   relationship?: string;
   cowatchEventId?: string | null;
   item?: DashboardActivityItem;
+  audiobookProgress?: AudiobookProgressProjectionSet;
 }
 
 export interface DashboardProgressPersonContext {
@@ -475,6 +565,7 @@ export interface DashboardProgressPersonContext {
   distinctItems: number;
   distinctCompleted: number;
   latestWatchedAt: string;
+  audiobookProgress?: AudiobookProgressListenerProjection;
 }
 
 export interface DashboardProgressGroup {
@@ -495,6 +586,7 @@ export interface DashboardProgressGroup {
   hasVerifiedChapters?: boolean;
   currentChapterIndex?: number | null;
   currentProgressPercent?: number | null;
+  audiobookProgress?: AudiobookProgressProjectionSet;
   totalKnown: boolean;
   totalItems: number | null;
   distinctItems: number;
@@ -586,6 +678,7 @@ export interface ProgressHierarchyExpansion {
   hasVerifiedChapters?: boolean;
   currentChapterIndex?: number | null;
   currentProgressPercent?: number | null;
+  audiobookProgress?: AudiobookProgressProjectionSet;
   totalKnown: boolean;
   totalItems: number | null;
   distinctItems: number;

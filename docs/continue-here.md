@@ -1,5 +1,17 @@
 # Continue Here
 
+## 2026-08-20 — 3-2n-6J-A Service And API Projection Implemented
+
+Current state:
+- **3-2n-6J-A** is implemented on `codex/3-2n-6j-a-service-api-progress-projection` with one typed additive projection over the 6H evaluator for current position, furthest attainment, session-as-of movement, chapter state, quality, provenance, and revision identity.
+- Overview, Progress, shared detail, audiobook hierarchy, Media Explorer, Continue Consuming, Timeline, People, legacy detail/activity, and public dashboard reads now select an explicit canonical audiobook projection. Progress and detail share the same values; Overview and Timeline retain historical session-as-of movement; Media sorting uses canonical furthest attainment.
+- Raw CSV and mutation paths remain raw and cannot consume approximate or unknown projections. The durable consumer inventory and compatibility contract are in `docs/data/audiobook-progress-projection.md`.
+- `npm run verify:block` passed with 153 service/integration tests, 69 browser regressions plus one intentional skip, dashboard syntax, and tool contracts. No deployed runtime was rebuilt or restarted because 6J-A changes only the service/API contract for the next browser block.
+- The unrelated pre-existing Discord runtime edits remain safely stashed as `preserve Discord runtime edits before 6I`; do not drop that stash when publishing or changing branches.
+
+Next step:
+- Review and publish 6J-A, then implement **3-2n-6J-B** against its stable canonical fields. 6J-B owns the visible listening bar, current-versus-furthest and revisiting presentation, chapter states, responsive/accessibility behavior, browser regression coverage, and the separate live-dashboard gate.
+
 ## 2026-08-20 — 3-2n-6I Exact Audiobook Position Capture Implemented And Live
 
 Current state:

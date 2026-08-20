@@ -1,4 +1,6 @@
 import type {
+  AudiobookProgressProjection,
+  AudiobookProgressSessionProjection,
   AudiobookProgressEvidenceSource,
   AudiobookProgressQuality,
   AudiobookProgressQualityReason,
@@ -894,6 +896,100 @@ export function evaluateAudiobookProgressTimeline(
     sessions,
     chapters: canonicalChapters,
     diagnostics
+  };
+}
+
+function projectedPercent(offsetMs: number | null, bookDurationMs: number): number | null {
+  if (offsetMs == null || !Number.isFinite(bookDurationMs) || bookDurationMs <= 0) return null;
+  return Math.max(0, Math.min(100, Math.round((offsetMs / bookDurationMs) * 100)));
+}
+
+function projectedChapterIndex(snapshot: AudiobookCanonicalProgressSnapshot, offsetMs: number | null): number | null {
+  if (offsetMs == null) return null;
+  return snapshot.chapters.find((chapter) => offsetMs >= chapter.startOffsetMs && offsetMs < chapter.endOffsetMs)?.chapterIndex
+    ?? (snapshot.chapters.length > 0 && offsetMs >= snapshot.chapters.at(-1)!.endOffsetMs
+      ? snapshot.chapters.at(-1)!.chapterIndex
+      : null);
+}
+
+function projectCanonicalSession(
+  snapshot: AudiobookCanonicalProgressSnapshot,
+  session: AudiobookCanonicalSessionMovement,
+  bookDurationMs: number
+): AudiobookProgressSessionProjection {
+  return {
+    sessionKey: session.sessionKey,
+    startAt: session.startAt,
+    endAt: session.endAt,
+    itemCount: session.itemCount,
+    durationMs: session.durationMs,
+    startPositionMs: session.startPositionMs,
+    endPositionMs: session.endPositionMs,
+    startProgressPercent: projectedPercent(session.startPositionMs, bookDurationMs),
+    endProgressPercent: projectedPercent(session.endPositionMs, bookDurationMs),
+    startChapterIndex: projectedChapterIndex(snapshot, session.startPositionMs),
+    endChapterIndex: projectedChapterIndex(snapshot, session.endPositionMs),
+    direction: session.direction,
+    revisitDetected: session.revisitDetected,
+    evidence: {
+      quality: session.quality,
+      source: session.source,
+      reason: session.reason,
+      evaluatedAt: session.evaluatedAt,
+      mediaRevision: session.mediaRevision,
+      chapterRevision: session.chapterRevision
+    }
+  };
+}
+
+/**
+ * Adapt the canonical evaluator result into the stable additive 6J API shape.
+ * Callers select current or session-as-of context; no source observation fields
+ * are renamed or rewritten by this projection.
+ */
+export function projectAudiobookProgressSnapshot(
+  snapshot: AudiobookCanonicalProgressSnapshot,
+  bookDurationMs: number,
+  options: {
+    context?: "current" | "session_as_of";
+    sessionStartAt?: string | null;
+    sessionEndAt?: string | null;
+  } = {}
+): AudiobookProgressProjection {
+  const sessions = snapshot.sessions.map((session) => projectCanonicalSession(snapshot, session, bookDurationMs));
+  const context = options.context ?? "current";
+  let sessionMovement = sessions.at(-1) ?? null;
+  if (context === "session_as_of") {
+    const startAt = options.sessionStartAt ?? null;
+    const endAt = options.sessionEndAt ?? snapshot.evaluatedAt;
+    sessionMovement = sessions
+      .filter((session) => (!startAt || session.endAt >= startAt) && (!endAt || session.startAt <= endAt))
+      .at(-1)
+      ?? sessions.filter((session) => !endAt || session.endAt <= endAt).at(-1)
+      ?? null;
+  }
+  const furthest = snapshot.furthestPosition;
+  const bookCompleted = Boolean(furthest && furthest.evidenceKind === "exact" && (
+    (furthest.progressPercent ?? 0) >= 100 ||
+    (furthest.offsetMs != null && bookDurationMs > 0 && furthest.offsetMs >= bookDurationMs)
+  ));
+  return {
+    schemaVersion: 1,
+    context,
+    listenerId: snapshot.listenerId,
+    evaluatedAt: snapshot.evaluatedAt,
+    mediaRevision: snapshot.mediaRevision,
+    chapterRevision: snapshot.chapterRevision,
+    current: snapshot.currentPosition,
+    furthest: snapshot.furthestPosition,
+    movement: snapshot.latestMovement,
+    direction: snapshot.latestDirection,
+    rewindDetected: snapshot.rewindDetected,
+    revisitDetected: snapshot.revisitDetected,
+    bookCompleted,
+    listeningTimeMs: snapshot.listeningTimeMs,
+    sessionMovement,
+    chapters: snapshot.chapters
   };
 }
 
