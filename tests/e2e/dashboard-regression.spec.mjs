@@ -129,7 +129,9 @@ test("audiobook digest sessions use canonical session-as-of progress", async ({ 
   await expect(card).toBeVisible();
   const session = card.getByTestId("digest-session").first();
   await session.locator("summary").click();
-  await expect(session.locator("summary")).toContainText("Session 1");
+  await expect(session.locator("summary span")).toHaveCount(1);
+  await expect(session.locator("summary")).not.toContainText("Session");
+  await expect(session.locator("summary")).toContainText(/\d{1,2}:\d{2} [AP]M/);
   await expect(session.locator("summary")).not.toContainText("Tony");
   const body = session.locator(".digest-session-body");
   await expect(body.getByTestId("audiobook-session-progress")).toContainText("Tony");
@@ -678,6 +680,37 @@ test("stale Audiobook percentages remain approximate and agree across Overview, 
   expect(digest.sessions[0].progressEvidenceSource).toBe("play_duration");
   expect(digest.sessions[0].completedChapters).toHaveLength(0);
   expect(digest.sessions[0].currentChapter.chapterIndex).toBe(2);
+  const sessionListener = digest.sessions[0].audiobookProgress.listeners[0];
+  expect(sessionListener.current).toMatchObject({ chapterIndex: 2, progressPercent: 30 });
+
+  // Reproduce the live contract edge: canonical current is useful, while the
+  // narrower movement record has evidence but no start/end position fields.
+  await page.route("**/api/dashboard/overview?*", async route => {
+    const response = await route.fetch();
+    const payload = await response.json();
+    const routedDigest = payload.data.recentPlaybackDigests.find(item => item.title === "Stale Progress Fixture Audiobook");
+    const routedListener = routedDigest.sessions[0].audiobookProgress.listeners[0];
+    routedListener.sessionMovement = {
+      ...routedListener.sessionMovement,
+      startPositionMs: null,
+      endPositionMs: null,
+      startProgressPercent: null,
+      endProgressPercent: null,
+      startChapterIndex: null,
+      endChapterIndex: null
+    };
+    await route.fulfill({ response, json: payload });
+  });
+
+  await page.goto(`/#overview?${staleWindow}`);
+  const overviewCard = page.getByTestId("recent-playback-card").filter({ hasText: "Stale Progress Fixture Audiobook" }).first();
+  await expect(overviewCard).toBeVisible();
+  const overviewSession = overviewCard.getByTestId("digest-session").first();
+  await expect(overviewSession.locator("summary span")).toHaveCount(1);
+  await expect(overviewSession.locator("summary")).not.toContainText("Session");
+  await overviewSession.locator("summary").click();
+  await expect(overviewSession.getByTestId("audiobook-session-progress")).toContainText("Approx. Chapter 2 · 30%");
+  await expect(overviewSession.getByTestId("audiobook-session-progress")).not.toContainText("Position unknown");
 
   await page.goto(`/#progress?${staleWindow}`);
   const card = page.getByTestId("progress-card")

@@ -29,9 +29,11 @@ try {
       const sessions = audiobookCards.nth(index).getByTestId("digest-session");
       if (await sessions.count() === 0) continue;
       const session = sessions.first();
+      if (/Session\s+\d+/i.test(await session.locator("summary").innerText())) failures.push(`${viewport.width}px Audiobook digest retained redundant numbered session copy`);
       await session.locator("summary").click();
       if (await session.getByTestId("audiobook-session-progress").count() !== 1) failures.push(`${viewport.width}px Audiobook digest omitted canonical session progress`);
       if ((await session.innerText()).includes("Verified chapter completion unavailable")) failures.push(`${viewport.width}px Audiobook digest retained the legacy missing-chapter fallback`);
+      if ((await session.innerText()).includes("Position unknown") && await session.getByRole("progressbar").count() > 0) failures.push(`${viewport.width}px Audiobook digest showed an unknown position beside a canonical progress meter`);
       break;
     }
 
