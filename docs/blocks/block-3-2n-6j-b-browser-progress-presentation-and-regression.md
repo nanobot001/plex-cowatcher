@@ -1,9 +1,10 @@
 # Block 3-2n-6J-B: Browser Progress Presentation And Regression
 
-> Status: Planned.
-> Result: Not implemented.
-> Dependency: Block 3-2n-6J-A must provide the stable additive service/API projection contract.
-> Notes: Final child of 3-2n-6J. This block owns browser adoption, responsive presentation, accessibility, and cross-surface regression; it must not recreate progress calculations in JavaScript.
+> Status: Implemented and live on 2026-08-20.
+> Result: Implemented.
+> Dependency: Block 3-2n-6J-A provides the stable additive service/API projection contract.
+> Verification: `npm run verify:block` passed with 153 service/integration tests, 73 browser regressions plus one intentional narrow-project skip, dashboard syntax, and tool contracts. After restarting only `plex-cowatch-service`, `npm run verify:live-dashboard` passed.
+> Notes: Canonical per-listener progress is now presented across Overview, Progress/shared detail, Media Explorer/Continue Consuming, Timeline, and People. Current position is primary; furthest attainment, rewinds, session-as-of movement, chapter states, quality, and separate completion facts remain source-honest. Browser code does not recreate raw audiobook progress math.
 
 ## Goal
 

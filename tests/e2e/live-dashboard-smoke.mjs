@@ -23,6 +23,17 @@ try {
     if (cardCount !== badgeCount) failures.push(`${viewport.width}px recent cards/badges differ: ${cardCount}/${badgeCount}`);
     const duplicateParticipantLines = await cards.getByTestId("watched-by").count();
     if (duplicateParticipantLines !== 0) failures.push(`${viewport.width}px Overview cards still render duplicate participant lines`);
+    const audiobookCards = cards.locator('[data-cat="audiobook"]');
+    const audiobookCardCount = await audiobookCards.count();
+    for (let index = 0; index < audiobookCardCount; index += 1) {
+      const sessions = audiobookCards.nth(index).getByTestId("digest-session");
+      if (await sessions.count() === 0) continue;
+      const session = sessions.first();
+      await session.locator("summary").click();
+      if (await session.getByTestId("audiobook-session-progress").count() !== 1) failures.push(`${viewport.width}px Audiobook digest omitted canonical session progress`);
+      if ((await session.innerText()).includes("Verified chapter completion unavailable")) failures.push(`${viewport.width}px Audiobook digest retained the legacy missing-chapter fallback`);
+      break;
+    }
 
     for (let index = 0; index < cardCount; index += 1) {
       const card = cards.nth(index);

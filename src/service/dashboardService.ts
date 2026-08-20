@@ -2372,9 +2372,16 @@ export class DashboardService {
       const dashboardService = this;
       for (const [userId, items] of userItemsMap.entries()) {
         const itemsWithIntervals = items.map(item => {
+          const observedAt = new Date(item.watchedAt).getTime();
+          const explicitStart = item.category === "audiobook" && item.sessionStartAt
+            ? new Date(item.sessionStartAt).getTime()
+            : Number.NaN;
+          const explicitEnd = item.category === "audiobook" && item.sessionEndAt
+            ? new Date(item.sessionEndAt).getTime()
+            : Number.NaN;
+          const endTime = Number.isFinite(explicitEnd) ? explicitEnd : observedAt;
           const durationSec = item.duration ?? 0;
-          const endTime = new Date(item.watchedAt).getTime();
-          const startTime = endTime - durationSec * 1000;
+          const startTime = Number.isFinite(explicitStart) ? explicitStart : endTime - durationSec * 1000;
           return { item, startTime, endTime };
         }).sort((a, b) => a.startTime - b.startTime);
 
@@ -2386,7 +2393,12 @@ export class DashboardService {
           }
           const last = currentSessionItems[currentSessionItems.length - 1];
           const gapMs = x.startTime - last.endTime;
-          if (gapMs < 2 * 60 * 60 * 1000) {
+          const crossesAudiobook = last.item.category === "audiobook" || x.item.category === "audiobook";
+          const sameAudiobook = last.item.category === "audiobook"
+            && x.item.category === "audiobook"
+            && last.item.audiobookId != null
+            && last.item.audiobookId === x.item.audiobookId;
+          if (gapMs < 2 * 60 * 60 * 1000 && (!crossesAudiobook || sameAudiobook)) {
             currentSessionItems.push(x);
           } else {
             sessions.push(buildTimelineSession(currentSessionItems));
