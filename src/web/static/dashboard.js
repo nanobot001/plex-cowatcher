@@ -247,9 +247,11 @@ const compactChapterIndexes = chapters => {
   ranges.push(start === end ? `${start}` : `${start}-${end}`);
   return `Ch. ${ranges.join(", ")}`;
 };
-const digestSessionSummaryLabel = (digest, session) => digest.category === "audiobook"
-  ? ""
-  : digestSessionViewerLabel(session);
+const digestSessionSummaryLabel = (digest, session) => {
+  if (digest.category === "audiobook") return "";
+  const label = digestSessionViewerLabel(session);
+  return label.startsWith("Watched by ") ? "" : label;
+};
 const digestEpisodeStrip = digest => {
   const episodes = Array.isArray(digest.episodes) ? digest.episodes : [];
   if (!episodes.length) return "";

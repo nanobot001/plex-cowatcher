@@ -1,5 +1,17 @@
 # Continue Here
 
+## 2026-08-21 — 3-2n-6F-A TV And Anime Session Episode Progress Implemented and Verified
+
+Current state:
+- **Block 3-2n-6F-A** is implemented and verified on `codex/3-2n-6f-a-tv-anime-session-progress`.
+- Overview session cards now include an additive per-episode progress projection for TV, Classic TV, and Anime: explicitly completed episodes render a 100% completed bar, partial episodes render source-honest approximate percentages, and missing evidence remains visibly unknown without fabricating 0% or modifying raw database records.
+- Deterministic verification passed: `npm run verify:block` passed with 153/153 service tests, 77/77 browser regressions (1 intentional skip), syntax checks, and tool contracts.
+- Live verification passed: `npm run verify:live-dashboard` passed against the live deployment.
+
+Next step:
+- Review/publish PR for **3-2n-6F-A**.
+- Follow recommended closure order from modernized planning: **Block 3-6-1: Archive Evidence and Provenance Contract**, then **Block 3-7: Operational Readiness & Recovery**, followed by the **Block 3-2o: Final Dashboard Release Gate**.
+
 ## 2026-08-20 — Remaining Block Inventory Modernized
 
 Current state:

@@ -57,6 +57,7 @@ test("participant evidence stays consistent from recent card to detail", async (
   await expect(card.getByTestId("viewer-badge")).toHaveAttribute("aria-label", "Watched by Ace, Justin, Tony");
   await expect(card.getByTestId("watched-by")).toHaveCount(0);
   await expectBadgeRowsDoNotOverlap(card.getByTestId("viewer-badge"));
+  await expect(card.getByTestId("digest-session").first().locator("summary")).not.toContainText("Watched by");
   await expect(card.getByTestId("digest-session").first().locator("summary")).toContainText("Justin");
   await expect(card.getByTestId("digest-session").first().locator("summary")).toContainText("Tony");
 
@@ -71,7 +72,7 @@ test("participant evidence stays consistent from recent card to detail", async (
   expect(pageErrors).toEqual([]);
 });
 
-test("overview recent cards represent sessions and keep one participant expression", async ({ page }) => {
+test("overview recent cards use the poster badge for participant expression", async ({ page }) => {
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.goto("/");
@@ -80,7 +81,8 @@ test("overview recent cards represent sessions and keep one participant expressi
   await expect(sessionCards).toHaveCount(1);
   const sessionCard = sessionCards.first();
   await expect(sessionCard.getByTestId("digest-session")).toHaveCount(1);
-  await expect(sessionCard.getByTestId("digest-session").locator("summary")).toContainText("Watched by Tony");
+  await expect(sessionCard.getByTestId("digest-session").locator("summary")).not.toContainText("Watched by");
+  await expect(sessionCard.getByTestId("digest-session").locator("summary")).toContainText(/\d{1,2}:\d{2} [AP]M/);
   await expect(sessionCard.getByTestId("viewer-badge")).toHaveAttribute("aria-label", "Watched by Tony");
   await expect(sessionCard.getByTestId("watched-by")).toHaveCount(0);
   await expect(page.getByTestId("recent-playback-card").filter({ hasText: "Session Other Item" })).toHaveCount(1);
@@ -136,6 +138,12 @@ test("episodic session progress stays source-honest and deduplicated", async ({ 
     const confirmedEpisode = progressRows.filter({ hasText: "S1E1 - Confirmed Episode" });
     await expect(confirmedEpisode).toContainText("Approximate progress");
     await expect(confirmedEpisode.getByTestId("digest-episode-progress-meter")).toHaveAttribute("aria-valuenow", "93");
+    const confirmedGeometry = await confirmedEpisode.evaluate(row => {
+      const title = row.querySelector(".digest-episode-progress-title");
+      const rowRect = row.getBoundingClientRect();
+      return { rowWidth: rowRect.width, titleWidth: title?.getBoundingClientRect().width ?? 0 };
+    });
+    expect(confirmedGeometry.titleWidth).toBeGreaterThanOrEqual(confirmedGeometry.rowWidth - 1);
     const completedEpisode = progressRows.filter({ hasText: "S1E2 - Completed Episode" });
     await expect(completedEpisode).toContainText("Completed");
     await expect(completedEpisode.getByTestId("digest-episode-progress-meter")).toHaveAttribute("aria-valuenow", "100");
