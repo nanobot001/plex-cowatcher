@@ -76,13 +76,7 @@ Make the browser and CLI copy workflow safe enough for real use.
 
 ### Block 1-6: MVP Operations And Acceptance
 
-Make the MVP dependable enough for daily household use.
-
-- Confirm PM2 runs exactly one forked instance.
-- Document start, stop, restart, logs, status, and save commands.
-- Choose and document Windows restart-after-reboot strategy.
-- Add operational troubleshooting for Discord, Tautulli, Plex, SQLite, and port conflicts.
-- Run the MVP manual acceptance checklist.
+Superseded historical ticket. Its MVP-era goals were delivered incrementally by later blocks, so Phase 1 is treated as historically complete. The current expanded-system acceptance belongs to Block 3-7.
 
 ## Phase 2: Watch History Intelligence MVP
 
@@ -186,24 +180,31 @@ The corrective sequence is mandatory and ordered:
     9. **3-2n-6E-3B - On-Demand Plex Metadata And Artwork Refresh:** Implemented 2026-07-17. Added confirmed title-scoped shared-detail refresh from Plex with exact identity/GUID targeting, stable artwork revisions, privacy-safe failure handling, and no restart or whole-library refresh requirement.
     10. **3-2n-6E-3C - Plex Historical Movie Backfill:** Implemented 2026-07-18. Added per-user Plex movie last-view recovery before the 2022 cutoff with exact-GUID identity, durable raw snapshots, source-labeled derived observations, dry-run/apply confirmation, idempotent reruns, and no replay inflation.
 30. **3-2n-6F - Overview Playback Digest Cards:** Implemented 2026-07-26. Added compact category-aware Overview digests: per-user audiobook book/day cards with verified session chapter summaries, movie/day digests, and show/day digests with episode rows and artwork while preserving raw observations and the existing session projection.
+    1. **3-2n-6F-A - TV And Anime Session Episode Progress:** Planned corrective child. Add per-session episode progress to TV, Anime, and Classic TV Overview digests so explicit completion renders as a full bar, source percentages render as approximate partial bars, and missing evidence remains unknown without changing ingestion or persistence.
 31. **3-2n-6G - Audiobook Progress Evidence Repair And Retroactive Rebuild:** Implemented 2026-07-26. Validates `view_offset`, canonical Tautulli `play_duration`, and `percent_complete`; assigns explicit verified, approximate, stale, and unavailable quality states; handles cumulative-duration reset rows with a high-water mark; and rebuilds Overview, Progress, and detail without rewriting raw observations.
-32. **3-2n-6H - Canonical Audiobook Progress Timeline And Rewind Semantics:** Planned. Establish one per-user, revision-safe evaluator that separates current position, furthest trusted position, session movement, rewind/revisit state, chapter history, and uncertainty without rewriting raw observations.
-33. **3-2n-6I - Exact Audiobook Position Evidence Capture:** Planned. Audit the configured source and capture exact future audiobook stop/activity positions additively through the narrowest proven capability, with explicit units, identity, provenance, disabled behavior, and live canaries.
-34. **3-2n-6J - Project-Wide Audiobook Progress Projection Adoption:** Planned umbrella; do not implement directly. Complete the two children in order.
-    1. **3-2n-6J-A - Service And API Progress Projection Adoption:** Inventory every consumer and expose one typed canonical current/furthest/session/chapter projection across service/API reads while preserving raw exports, compatibility, and mutation isolation.
-    2. **3-2n-6J-B - Browser Progress Presentation And Regression:** Adopt the stable 6J-A contract across Overview, Progress, shared detail, Media Explorer, Continue Consuming, Timeline, and People drill-through with responsive cross-surface regression.
+32. **3-2n-6H - Canonical Audiobook Progress Timeline And Rewind Semantics:** Implemented 2026-08-15. One revision-safe evaluator now separates current position, furthest attainment, session movement, rewind/revisit state, chapter history, and uncertainty without rewriting raw observations.
+33. **3-2n-6I - Exact Audiobook Position Evidence Capture:** Implemented and live 2026-08-20. Exact future stop offsets are captured additively with explicit units, identity, provenance, dedupe, and disabled behavior.
+34. **3-2n-6J - Project-Wide Audiobook Progress Projection Adoption:** Implemented umbrella 2026-08-20.
+    1. **3-2n-6J-A - Service And API Progress Projection Adoption:** Implemented 2026-08-20. Typed canonical current/furthest/session/chapter projections are adopted across service/API consumers while raw exports and mutation isolation remain intact.
+    2. **3-2n-6J-B - Browser Progress Presentation And Regression:** Implemented and live 2026-08-20 across Overview, Progress/shared detail, Media Explorer/Continue Consuming, Timeline, and People.
 35. **3-2n-6D - Whisper-Assisted Audiobook Resume Context:** Planned umbrella. Reuse 6I exact position evidence to convert source-backed audiobook stops into private bounded transcript context and a useful resume modal after the canonical progress sequence; do not implement the umbrella directly.
-    1. **3-2n-6D-1 - Bounded Resume Transcription Contract:** Add and verify a tool-agnostic read-only `transcribe-window` JSON command in the separate `audiobook` project, plus sanitized CoWatcher fixtures.
-    2. **3-2n-6D-2 - Trusted Resume Adapter And State:** Validate the external transcript contract and add revision-safe durable jobs/results without connecting automatic execution.
-    3. **3-2n-6D-3 - Stable-Stop Worker And Rollout:** Consume 6I exact stop evidence, coalesce candidates, run one bounded background job, expose safe operations, and verify resource behavior with a canary without creating a competing capture path.
-    4. **3-2n-6D-4 - Audiobook Resume Modal:** Replace the default chapter wall with listener-attributed position, completed stopping-point excerpt, compact chapter map, up-next, and optional complete-list disclosure.
-36. **3-2o - Dashboard Accessibility And Regression Gate:** Validate all layouts, viewports, performance, privacy, and existing workflows before release.
+    1. **3-2n-6D-1 - Resume Transcription Contract:** Planned split umbrella; do not implement directly.
+       1. **3-2n-6D-1A - Audiobook transcribe-window Command And Runtime Proof:** Implement in the sibling audiobook repository with separate branch and verification.
+       2. **3-2n-6D-1B - CoWatcher Transcription Contract Fixtures:** Add sanitized versioned fixtures and boundary documentation only.
+    2. **3-2n-6D-2 - Trusted Resume Adapter And State:** Revised. Key revision-safe jobs/results directly to durable 6I `audiobook_position_evidence`.
+    3. **3-2n-6D-3 - Stable-Stop Reconciliation Worker And Rollout:** Revised. Reconcile durable 6I evidence into a disabled bounded worker; live enablement remains separately authorized.
+    4. **3-2n-6D-4 - Audiobook Stopping-Point Excerpt Extension:** Narrowed. Add only optional private excerpt context to the existing canonical 6J-B detail UI.
+36. **3-2o - Dashboard Accessibility And Regression Release Gate:** Rewritten. After 6F-A, audit all dashboard surfaces at 320/390/768/1024/1440 with semantic/geometry assertions and no broad screenshot snapshots. Optional 6D is excluded.
 
 Each block, including every 3-2m sub-block, must pass its own exit gate before the next begins. Block 3-3 is paused until 3-2o completes.
 
 ### Block 3-3: Household Watch Reports
 
-Automate and schedule the delivery of daily or weekly household watch reports to Discord, summarizing what was watched, by whom, and what co-watching sessions occurred.
+Planned umbrella; implement these children in order:
+
+1. **3-3A - Household Report Contract And Preview:** Source-honest household-local aggregation and bounded read-only preview.
+2. **3-3B - Discord Delivery And Idempotency:** Manually confirmed, privacy-safe delivery with durable period/channel/revision dedupe.
+3. **3-3C - Scheduled Runtime And Rollout:** Timezone/DST/catch-up/restart-safe scheduling with controlled live canary.
 
 ### Block 3-4: Hierarchical Audiobook Series Modeling
 
@@ -217,16 +218,24 @@ Implemented on 2026-06-28. Added the full-library audiobook scanner service, CLI
 
 Planned product foundation. Preserve the household memory of who saw what and when independently of current Plex library membership, then derive explainable achievements from the archive.
 
-1. **3-6-1 - Archive Evidence And Provenance Contract:** Define source, confidence, event-time, last-view-time, ingestion-time, unknown, and conflict semantics.
-2. **3-6-2 - Canonical Media Identity And Alias Registry:** Preserve exact identity across stale rating keys, renamed media, migrations, and removals.
+1. **3-6-1 - Archive Provenance Contract Closure:** Planned corrective closure. Fix remaining missing/conflicting timestamp semantics and define downstream evidence eligibility without rebuilding the archive.
+2. **3-6-2 - Canonical Media Identity And Alias Registry:** Superseded by 3-6-2A/B/C and 3-6-4/4A; retain only as a historical parent.
 3. **3-6-2A - Legacy Plex Identity Bridge And Archive-Owned View Recovery:** Implemented 2026-07-18. Import external Plex view rows into CoWatcher's archive tables, bridge legacy/current identities, and link exact matches back to canonical CoWatcher observations without duplicating them.
 4. **3-6-2B - Archive Identity Review And Account Context:** Implemented 2026-07-19. Automate exact account attribution and add a compact, reversible identity-review overlay for uncertain archive media without mutating source evidence.
 5. **3-6-2C - Canonical Plex Movie Identity And Stale-Key Adoption:** Implemented 2026-07-19. Use exact Plex GUIDs to preserve stale rating keys as aliases while making movie grouping, refresh, poster, and backdrop resolution canonical and revision-safe. The local repair CLI is dry-run by default; live apply remains deferred for operator review.
 6. **3-6-3 - Tautulli Ingestion Completeness And Reconciliation:** Implemented 2026-07-19. Durable per-user Tautulli backfill checkpoints, bounded retries, source-row outcomes, and exact-identity reconciliation distinguish source absence from local ingestion failure.
 7. **3-6-4 - Plex Supplemental Historical Recovery:** Implemented 2026-07-20 for aggregate movie/episode last-view recovery; live apply remains operator-controlled.
 8. **3-6-4A - Plex Play-History Recovery And Reconciliation:** Implemented 2026-07-21 and rolled out 2026-07-23. Paginated dated movie/episode rows are retained additively, exact interval overlaps reconcile without source loss, and the deployed dashboard projection is enabled. Profiles without an exact Plex local-account mapping remain unknown and untouched.
-9. **3-6-5 - Archive Query, Export, And Backup:** Make the archive portable, queryable, privacy-safe, and recoverable.
-9. **3-6-6 - Achievements Engine v1:** Add versioned, evidence-backed, deterministic achievements after the archive foundation is stable.
+9. **3-6-5 - Archive Query, Export, And Backup:** Planned umbrella.
+    1. **3-6-5A - Versioned Archive Query Contract**
+    2. **3-6-5B - Canonical JSON/CSV Export**
+    3. **3-6-5C - Verified Backup, Restore, And Disaster Recovery**
+10. **3-6-6 - Achievements Engine v1:** Planned umbrella.
+    1. **3-6-6A - Achievement Evidence And Versioned Rule Contract**
+    2. **3-6-6B - Deterministic Engine, Persistence, And Recalculation**
+    3. **3-6-6C - First-Watch And Watch-Count Rules**
+    4. **3-6-6D - Rewatch And Confirmed Co-Watch Rules**
+    5. **3-6-6E - Series, Genre, And Library Completion Rules:** Deferred until trustworthy denominator/classification evidence exists.
 
 ### Block 3-2n-5c: Reliable Audiobook Discovery Automation
 
@@ -251,6 +260,10 @@ Implemented and verified. The strict file-boundary evidence parser now accepts o
 ### Block 3-2n-5E-C: Deferred Multi-File Layouts
 
 Deferred planning inventory. Eleven current multi-file jobs remain in source-honest fallback. Record and later split the materially different layouts: multipart chapters; Foreword, credits, and numbered sections; track/count defects; and generic repeated titles. Do not implement this umbrella directly.
+
+### Block 3-7: Operations Readiness, Recovery, And Windows Reboot Acceptance
+
+Planned modern successor to superseded Block 1-6. Audit the current expanded Windows/PM2 system, reconcile operator documentation and truthful readiness, prove backup/recovery responsibilities, and run a separately authorized Windows reboot acceptance without adding product features.
 
 ### Deferred Beyond The Phase 3 MVP
 

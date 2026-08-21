@@ -1,8 +1,8 @@
 # Block 3-2n: Hierarchy Progress Workspace Umbrella
 
-> Status: Planned.
+> Status: Implemented umbrella with one planned corrective child.
 > Result: Split into implementation sub-blocks.
-> Notes: Use this as the product and drift guardrail for the 3-2n progress sequence, including the corrective 6H-6J audiobook projection work; do not implement it directly.
+> Notes: Use this as the product and drift guardrail; do not implement it directly. The 6H-6J audiobook projection sequence is complete. Block 6F-A is the remaining selected corrective child before the 3-2o release gate.
 
 ## Goal
 
@@ -73,9 +73,10 @@ Implement the outcome through these ordered sub-blocks:
 - 3-2n-5a imports and caches verified chapter boundaries from the separate tool-friendly `audiobook` project or compatible structured fixtures.
 - 3-2n-5b maps playback evidence onto cached verified chapter boundaries while preserving honest track/file or book-level fallbacks.
 - 3-2n-6 polishes the expanded Progress UI into compact lazy evidence maps with accessible dots and readable typography.
-- 3-2n-6H defines one rewind-safe current/furthest/session/chapter evaluator without changing capture or presentation.
-- 3-2n-6I captures exact future position evidence through the narrowest proven source capability.
-- 3-2n-6J is an umbrella only. 6J-A migrates service/API consumers and preserves compatibility/raw/write boundaries; 6J-B adopts that contract in the browser and locks responsive cross-surface parity.
+- 3-2n-6H implemented one rewind-safe current/furthest/session/chapter evaluator without changing raw observations.
+- 3-2n-6I implemented additive exact future position evidence capture through the proven stop-notification capability.
+- 3-2n-6J-A and 6J-B implemented the canonical projection across service/API and browser consumers while preserving compatibility/raw/write boundaries.
+- 3-2n-6F-A remains the bounded corrective child for per-episode session progress in TV, Anime, and Classic TV Overview digests.
 
 ## Likely Files Or Areas Across The Sequence
 
@@ -88,9 +89,10 @@ Implement the outcome through these ordered sub-blocks:
 
 ## Acceptance Criteria
 
-- The child blocks together deliver the original 3-2n goal without moving 3-2o earlier in the sequence.
+- The child blocks together deliver the original 3-2n goal without moving 3-2o ahead of 6F-A.
 - Each child block is independently verifiable with `npm run verify:block`.
-- The final corrective child proves project-wide audiobook progress parity, rewind behavior, raw-evidence preservation, payload/DOM bounds, and non-audiobook compatibility across the current dashboard entry surfaces.
+- Completed 6H-6J-B evidence proves project-wide audiobook progress parity, rewind behavior, raw-evidence preservation, payload/DOM bounds, and non-audiobook compatibility.
+- The remaining 6F-A child proves source-honest per-episode session progress before 3-2o performs the final dashboard release audit.
 
 ## Verification And Exit Gate
 

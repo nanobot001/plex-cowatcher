@@ -1,5 +1,27 @@
 # Continue Here
 
+## 2026-08-20 — Remaining Block Inventory Modernized
+
+Current state:
+- Planning was reconciled on branch `codex/modernize-planned-blocks` against the current expanded service, archive, tool, dashboard, and Windows/PM2 runtime.
+- Blocks 1-6 and 3-6-2 are explicit superseded historical records. Block 3-7 is the modern operations/readiness/recovery/Windows reboot successor, and the project charter no longer presents Phase 1 as unfinished.
+- Blocks 3-2o and 3-6-1 were rebuilt as narrow evidence-first closure gates. Blocks 6D-2/3 now consume durable 6I `audiobook_position_evidence`, and 6D-4 is narrowed to an optional private stopping-point excerpt because 6J-B already owns canonical progress/chapter presentation.
+- Broad report, archive utility, achievement, and cross-repository transcription work is split into 3-3A/B/C, 3-6-5A/B/C, 3-6-6A/B/C/D/E, and 6D-1A/B. Block 5E-C remains an evidence inventory; no speculative child was created.
+- This branch changes planning documentation only. It does not implement code, alter the database, restart PM2, enable workers, send Discord messages, mutate Plex, or edit the sibling audiobook repository.
+
+Next step:
+- Review and commit the planning modernization separately, then prepare and implement **3-2n-6F-A**. After 6F-A, the recommended closure order is 3-6-1, 3-7, then the 3-2o release gate. Reports/archive/achievements and optional 6D remain independently selectable.
+
+## 2026-08-20 — 3-2n-6F-A TV And Anime Session Episode Progress Planned
+
+Current state:
+- Browser review showed that expanded TV and Anime Overview sessions list episode names but do not show per-episode partial or completed progress.
+- A read-only database audit confirmed that existing episode observations already include explicit completion and many source percentages, while historical episode offsets remain unavailable. The service currently projects only episode keys into these session rows.
+- **3-2n-6F-A** is now the bounded corrective block for an additive per-session episode-progress projection and source-honest partial/full/unknown bars. It excludes ingestion, persistence, historical fabrication, and all audiobook progress logic.
+
+Next step:
+- Prepare and implement **3-2n-6F-A** as an independent block. Preserve the unrelated Discord stash and require `npm run verify:block` plus the separate deployed `npm run verify:live-dashboard` gate.
+
 ## 2026-08-20 — 3-2n-6J-B Browser Progress Implemented And Live
 
 Current state:
@@ -192,12 +214,12 @@ Current state:
 - Block 3-2n-6E-3 is implemented and verified. Progress now opens the canonical shared detail workspace; `#progress-dialog`, its duplicate renderer/CSS, and browser `/progress/expand` reads are retired. Canonical `detail` URLs are generated, legacy `progressDetail`/`selected` URLs still restore and normalize, and the deterministic/live gates passed.
 - Block **3-2n-6E-3A: Replay Semantics And Session Provenance** (`docs/blocks/completed/block-3-2n-6e-3a-replay-semantics-and-session-provenance.md`) is implemented and verified. One shared evaluator now separates observations, two-hour reconstructed sessions, household-local viewing days, and completed-session replays across TV, Classic TV, Anime, Movie, verified Audiobook chapters, unverified Audiobook tracks/files, Progress, and shared detail. Compatibility fields remain additive, ambiguous and partial evidence stays non-repeated, and raw book observations are not multiplied when they map onto several verified chapters.
 - The 6E-3A deterministic gate passed with 113 service/integration tests and 53 dashboard regression cases plus one intentional viewport-matrix skip, including API and visible watcher-lane proof that two same-session completed observations remain one session and zero replays. Tool contracts passed, production was rebuilt/restarted under PM2, and `npm run verify:live-dashboard` passed. A separate read-only live canary found all 150 returned Progress items carrying the explicit replay fields and zero false `repeated` rows across 434 verified-audiobook watcher-evidence rows.
-- A follow-on corrective block, **3-2n-6E-3B: On-Demand Plex Metadata And Artwork Refresh** (`docs/blocks/block-3-2n-6e-3b-on-demand-plex-metadata-and-artwork-refresh.md`), is now planned after 6E-3A and before 6D. It will add a title-scoped shared-detail refresh from Plex so changed artwork/metadata becomes visible without restarting CoWatcher or refreshing an entire library.
+- A follow-on corrective block, **3-2n-6E-3B: On-Demand Plex Metadata And Artwork Refresh** (`docs/blocks/completed/block-3-2n-6e-3b-on-demand-plex-metadata-and-artwork-refresh.md`), was planned after 6E-3A and before 6D. It would add a title-scoped shared-detail refresh from Plex so changed artwork/metadata becomes visible without restarting CoWatcher or refreshing an entire library.
 - A follow-on data-completeness block, **3-2n-6E-3C: Plex Historical Movie Backfill** (`docs/blocks/block-3-2n-6e-3c-plex-historical-movie-backfill.md`), is planned after 6E-3B. It will supplement detailed post-2022 Tautulli observations with explicitly labeled pre-2022 Plex last-view evidence, beginning with movies; Plex aggregate state must not be treated as complete play-by-play history.
 - A broader planned initiative, **3-6: Historical Watch Archive** (`docs/blocks/block-3-6-historical-watch-archive.md`), now frames the durable product direction: preserve watch memory independently of current Plex library state, reconcile Tautulli and Plex without false certainty, and derive achievements only from explainable archive evidence. The existing 6E-3C movie slice is the immediate vertical recovery path and should conform to the later 3-6 archive contracts.
 
 Next step:
-- Implement **6E-3B: On-Demand Plex Metadata And Artwork Refresh** (`docs/blocks/block-3-2n-6e-3b-on-demand-plex-metadata-and-artwork-refresh.md`) next, then **6E-3C: Plex Historical Movie Backfill** (`docs/blocks/block-3-2n-6e-3c-plex-historical-movie-backfill.md`) before beginning 6D. Preserve the verified replay/session contract, 6E-2D hero, Audiobook summary contract, and shared detail presenter seam.
+- Historical next step at that time: implement **6E-3B: On-Demand Plex Metadata And Artwork Refresh** (`docs/blocks/completed/block-3-2n-6e-3b-on-demand-plex-metadata-and-artwork-refresh.md`), then **6E-3C: Plex Historical Movie Backfill** (`docs/blocks/block-3-2n-6e-3c-plex-historical-movie-backfill.md`) before beginning 6D.
 
 ## 2026-07-12
 

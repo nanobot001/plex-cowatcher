@@ -35,7 +35,7 @@ The MVP is a local, single-process household co-watch assistant that can complet
 1. **Discord co-watch confirmation:** when Tony or another configured source user completes a movie or episode, the service records a deduped watch event, posts a Discord prompt, accepts a household co-watcher selection, writes an audit trail, and marks the selected Plex user watched when live Plex mutation has been verified for that account.
 2. **Preview-first history copy:** from the browser UI or CLI, the admin can choose a source user, target user(s), and basic filters, preview the items that would be copied, then explicitly apply the job. Apply must skip already-watched/already-copied items and record successes or failures.
 
-The MVP is **Phase 1** of the roadmap. The current scaffold is the **foundation milestone**: it proves build/test, SQLite initialization, API health, CLI shape, browser shell, Discord prompt seams, and adapter boundaries. Phase 1 is complete when blocks `1-1` through `1-6` are implemented and the real local Plex/Tautulli/Discord loop is verified with safe defaults.
+The MVP was **Phase 1** of the roadmap and is historically complete. Blocks 1-1 through 1-5 and later implementation work delivered the real local Plex/Tautulli/Discord loop and incrementally superseded the original broad Block 1-6 operations ticket. Current expanded-system operations, recovery, and Windows reboot acceptance belong to Block 3-7 and do not reopen Phase 1.
 
 ## Future Goals
 
@@ -107,8 +107,8 @@ When a block creates durable project knowledge, update the relevant docs area so
 - Block index: `docs/blocks/README.md`
 - Roadmap: `docs/roadmap.md`
 - Project definition block: `docs/blocks/completed/block-00-project-definition.md`
-- Next MVP block: `docs/blocks/completed/block-1-4-plex-watched-state-verification.md`
-- Phase 2 starts after Phase 1 acceptance with `docs/blocks/completed/block-2-1-rich-playback-evidence-capture.md`.
+- Current selected implementation block: `docs/blocks/block-3-2n-6f-a-tv-and-anime-session-episode-progress.md`
+- Current operations acceptance successor: `docs/blocks/block-3-7-operations-readiness-recovery-and-windows-reboot-acceptance.md`
 
 ## Document Map
 

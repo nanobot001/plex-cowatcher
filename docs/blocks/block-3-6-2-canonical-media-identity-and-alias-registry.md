@@ -1,34 +1,16 @@
 # Block 3-6-2: Canonical Media Identity And Alias Registry
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Preserve archive identity after Plex rating-key churn, title edits, media replacement, or removal.
+> Status: Superseded.
+> Result: Retired as an implementation ticket after its work was split and delivered by Blocks 3-6-2A, 3-6-2B, 3-6-2C, 3-6-4, and 3-6-4A.
 
-## Goal
+## Supersession Note
 
-Give every archived title a durable identity and retain historical aliases so watch evidence remains queryable after the current Plex library changes.
+The repository now has archive-owned media identities, exact alias evidence, bounded identity review, current Plex movie identity correction, and supplemental historical recovery. A second universal identity-registry implementation would duplicate those contracts and risk changing proven resolution semantics.
 
-## Scope
+Future identity defects must be demonstrated with current read-only evidence and scoped as a narrow corrective child under the archive initiative. Missing evidence remains unresolved; title-only similarity must not be promoted to canonical identity.
 
-- Store canonical identity plus exact Plex GUID, historical rating keys, media type, and safe title/year snapshots.
-- Record identity transitions and resolution provenance without fuzzy joins.
-- Update archive queries and detail joins to resolve old and current keys through exact identity evidence.
-- Keep removed media and historical metadata queryable without requiring the item to remain in Plex.
+## Closure Criteria
 
-## Out Of Scope
-
-- Automatic title matching based only on names.
-- External metadata enrichment as a prerequisite for preserving local history.
-- Rewriting existing observations in place.
-
-## Acceptance Criteria
-
-- A Civil War-shaped stale-key/current-key fixture resolves to one canonical identity through exact GUID evidence.
-- A removed Plex item remains visible in archive queries with its historical snapshot.
-- Ambiguous or empty identity evidence remains unresolved and is reported explicitly.
-
-## Verification
-
-- `npm run verify:block`
-- Identity migration, stale-key, removed-media, and ambiguity tests.
-
+- Existing child blocks remain the implementation authority for their delivered identity behavior.
+- No universal replacement block is created.
+- Any new gap names the affected source shape, positive and negative canaries, compatibility boundary, and rollback plan before implementation.

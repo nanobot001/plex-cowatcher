@@ -1,8 +1,8 @@
 # Block 3-6: Historical Watch Archive
 
-> Status: Planned umbrella.
-> Result: Not implemented.
-> Notes: Establish the durable historical-watch product foundation before adding achievements or broad reporting. Do not implement this umbrella directly; implement its children in order.
+> Status: Partially implemented umbrella.
+> Result: Core archive identity, ingestion, and recovery foundation implemented; provenance closure and utility/achievement children remain planned.
+> Notes: Do not implement this umbrella directly. Verify current behavior from delivered children rather than the original sequence assumptions.
 
 ## Goal
 
@@ -10,12 +10,12 @@ Make the household’s durable watch archive more important than the current Ple
 
 ## Child Sequence
 
-1. `block-3-6-1-archive-evidence-and-provenance-contract.md` - define durable evidence, source, confidence, and time semantics.
-2. `block-3-6-2-canonical-media-identity-and-alias-registry.md` - preserve identity across stale keys, migrations, and removed media.
-3. `block-3-6-3-tautulli-ingestion-completeness-and-reconciliation.md` - make detailed source ingestion resumable, observable, and auditable.
-4. `block-3-6-4-plex-supplemental-historical-recovery.md` - extend the existing 6E-3C movie slice to episode-level and broader best-effort recovery.
-5. `block-3-6-5-archive-query-export-and-backup.md` - make the archive portable, inspectable, and recoverable.
-6. `block-3-6-6-achievements-engine-v1.md` - derive versioned achievements without rewriting historical facts.
+1. `block-3-6-1-archive-evidence-and-provenance-contract.md` - planned narrow provenance closure over the existing archive.
+2. `block-3-6-2-canonical-media-identity-and-alias-registry.md` - superseded historical parent; delivered by 3-6-2A/B/C and 3-6-4/4A.
+3. `block-3-6-3-tautulli-ingestion-completeness-and-reconciliation.md` - implemented.
+4. `block-3-6-4-plex-supplemental-historical-recovery.md` and 3-6-4A - implemented with controlled rollout.
+5. `block-3-6-5-archive-query-export-and-backup.md` - split umbrella; implement query, export, and restore children separately.
+6. `block-3-6-6-achievements-engine-v1.md` - split umbrella; implement evidence/engine foundations before eligible rule families.
 
 ## Cross-Block Rules
 
