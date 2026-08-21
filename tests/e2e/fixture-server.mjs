@@ -51,10 +51,27 @@ const addEpisode = ({ user, ratingKey, title, minutesAgo, percent = 100, complet
   percent,
   completed
 });
+const addProgressEpisode = ({ user, ratingKey, title, minutesAgo, percent = 100, completed = 1 }) => addEpisodic({
+  user,
+  ratingKey,
+  grandparentRatingKey: "episode-progress-regression",
+  parentRatingKey: "episode-progress-season-1",
+  libraryName: "TV Shows",
+  title,
+  showTitle: "Episode Progress Regression",
+  minutesAgo,
+  percent,
+  completed
+});
 
 const confirmedWatchedAt = addEpisode({ user: "Tony", ratingKey: "episode-regression-1", title: "Confirmed Episode", minutesAgo: 30, percent: 93, completed: 0 });
 addEpisode({ user: "Alex", ratingKey: "episode-regression-2", title: "Different Episode", minutesAgo: 90 });
 addEpisode({ user: "Hidden", ratingKey: "episode-regression-3", title: "Hidden Episode", minutesAgo: 120 });
+addProgressEpisode({ user: "Hidden", ratingKey: "episode-progress-1", title: "Confirmed Episode", minutesAgo: 30, percent: 93, completed: 0 });
+addProgressEpisode({ user: "Hidden", ratingKey: "episode-progress-1", title: "Confirmed Episode", minutesAgo: 32, percent: 40, completed: 0 });
+addProgressEpisode({ user: "Hidden", ratingKey: "episode-progress-2", title: "Completed Episode", minutesAgo: 25, percent: 100, completed: 1 });
+addProgressEpisode({ user: "Hidden", ratingKey: "episode-progress-3", title: "Unknown Evidence", minutesAgo: 27, percent: null, completed: 0 });
+addProgressEpisode({ user: "Hidden", ratingKey: "episode-progress-4", title: "Source Reports Full", minutesAgo: 28, percent: 100, completed: 0 });
 addEpisodic({ user: "Tony", ratingKey: "classic-regression-1", grandparentRatingKey: "classic-regression", parentRatingKey: "classic-season-1", libraryName: "Classic TV", title: "Episode 1: Analog Start", showTitle: "Classic Regression", minutesAgo: 42, percent: 45, completed: 0, duration: 0 });
 addEpisodic({ user: "Alex", ratingKey: "classic-regression-2", grandparentRatingKey: "classic-regression", parentRatingKey: "classic-season-1", libraryName: "Classic TV", title: "Episode 2: Broadcast Finish", showTitle: "Classic Regression", minutesAgo: 44, percent: 100, completed: 1, duration: 0 });
 addEpisodic({ user: "Tony", ratingKey: "anime-regression-1", grandparentRatingKey: "anime-regression", parentRatingKey: "anime-season-1", libraryName: "Anime", title: "Episode 1: Pilot Light", showTitle: "Anime Regression", minutesAgo: 48, percent: 100, completed: 1, duration: 0 });
@@ -230,6 +247,9 @@ db.prepare(`INSERT INTO content_catalog
   VALUES ('show-regression','show','Regression Show',1800000,'2','TV Shows','[]',3,'fixture',?)`).run(isoMinutesAgo(5));
 db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,leaf_count,source_provenance,refreshed_at)
+  VALUES ('episode-progress-regression','show','Episode Progress Regression',1800000,'6','TV Shows','[]',4,'fixture',?)`).run(isoMinutesAgo(5));
+db.prepare(`INSERT INTO content_catalog
+  (rating_key,media_type,title,duration,library_id,library_title,genres_json,leaf_count,source_provenance,refreshed_at)
   VALUES ('classic-regression','show','Classic Regression',1800000,'3','Classic TV','[]',2,'fixture',?)`).run(isoMinutesAgo(5));
 db.prepare(`INSERT INTO content_catalog
   (rating_key,media_type,title,duration,library_id,library_title,genres_json,leaf_count,source_provenance,refreshed_at)
@@ -238,6 +258,10 @@ for (const [ratingKey, title, libraryTitle, showKey, showTitle, seasonKey] of [
   ["episode-regression-1", "Episode 1: Confirmed Episode", "TV Shows", "show-regression", "Regression Show", "season-regression"],
   ["episode-regression-2", "Episode 2: Different Episode", "TV Shows", "show-regression", "Regression Show", "season-regression"],
   ["episode-regression-3", "Episode 3: Hidden Episode", "TV Shows", "show-regression", "Regression Show", "season-regression"],
+  ["episode-progress-1", "Confirmed Episode", "TV Shows", "episode-progress-regression", "Episode Progress Regression", "episode-progress-season-1"],
+  ["episode-progress-2", "Completed Episode", "TV Shows", "episode-progress-regression", "Episode Progress Regression", "episode-progress-season-1"],
+  ["episode-progress-3", "Unknown Evidence", "TV Shows", "episode-progress-regression", "Episode Progress Regression", "episode-progress-season-1"],
+  ["episode-progress-4", "Source Reports Full", "TV Shows", "episode-progress-regression", "Episode Progress Regression", "episode-progress-season-1"],
   ["classic-regression-1", "Episode 1: Analog Start", "Classic TV", "classic-regression", "Classic Regression", "classic-season-1"],
   ["classic-regression-2", "Episode 2: Broadcast Finish", "Classic TV", "classic-regression", "Classic Regression", "classic-season-1"],
   ["anime-regression-1", "Episode 1: Pilot Light", "Anime", "anime-regression", "Anime Regression", "anime-season-1"],
@@ -433,6 +457,11 @@ const movieProfileAdapter = {
   })
 };
 const app = createApp(db, new MockPlexAdapter(), { skipStartupUserSync: true, discordReviewAvailable: true, movieProfileAdapter });
+app.post("/__test/progress-user-visibility", (req, res) => {
+  const visible = req.body?.visible === true ? 1 : 0;
+  const result = db.prepare("UPDATE users SET dashboard_shown = ? WHERE id = ?").run(visible, userIds.Hidden);
+  res.json({ ok: Number(result.changes) === 1, visible: Boolean(visible) });
+});
 app.post("/__test/artwork/audiobook/:id", (req, res) => {
   const audiobookId = Number(req.params.id);
   const variant = String(req.body?.variant || "two");

@@ -1,9 +1,10 @@
 # Block 3-2n-6F-A: TV And Anime Session Episode Progress
 
-> Status: Planned.
-> Result: Not implemented.
+> Status: Implemented locally; verification blocked.
+> Result: Additive TV, Classic TV, and Anime per-session episode progress is implemented. The mandatory `npm run verify:block` run is blocked by the existing audiobook Timeline regression (`timeline and People retain historical audiobook meaning without raw browser progress`, desktop and narrow); the new episodic checks and the affected People regression pass.
+> Verification: `npm test` passed with 153/153 tests; focused episodic browser checks passed; `node --check src/web/static/dashboard.js` and `npm run verify:tools` passed. Full `npm run verify:block` did not pass because of the unrelated Timeline assertion.
 > Dependency: Block 3-2n-6F established the additive Overview digest and session contracts this block extends.
-> Notes: Corrective Overview follow-up for TV, Anime, and Classic TV only. Keep the completed 6H through 6J-B audiobook sequence closed and unchanged.
+> Notes: Corrective Overview follow-up for TV, Anime, and Classic TV only. Keep the completed 6H through 6J-B audiobook sequence closed and unchanged. Only `plex-cowatch-service` was restarted; `npm run verify:live-dashboard` passed against the deployed dashboard.
 
 ## Goal
 

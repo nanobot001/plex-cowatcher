@@ -3328,9 +3328,9 @@ test("overview playback digests use category-aware daily grouping and episode ar
       (rating_key, media_type, title, library_title, leaf_count, source_provenance, refreshed_at)
       VALUES ('digest-show', 'show', 'Digest Show', 'TV Shows', 2, 'fixture', ?)`).run(refresh);
     for (const [ratingKey, title, episodeNumber] of [["digest-ep-1", "Episode One", 1], ["digest-ep-2", "Episode Two", 2]]) {
-      db.prepare(`INSERT INTO content_catalog
-        (rating_key, media_type, title, library_title, grandparent_rating_key, grandparent_title, parent_title, parent_rating_key, source_provenance, refreshed_at)
-        VALUES (?, 'episode', ?, 'TV Shows', 'digest-show', 'Digest Show', 'Season 1', 'digest-season-1', 'fixture', ?)`).run(ratingKey, title, refresh);
+    db.prepare(`INSERT INTO content_catalog
+      (rating_key, media_type, title, library_title, grandparent_rating_key, grandparent_title, parent_title, parent_rating_key, source_provenance, refreshed_at)
+      VALUES (?, 'episode', ?, 'TV Shows', 'digest-show', 'Digest Show', 'Season 1', 'digest-season-1', 'fixture', ?)`).run(ratingKey, title, refresh);
     }
     const insert = db.prepare(`INSERT INTO playback_observations
       (user_id, rating_key, grandparent_rating_key, parent_rating_key, media_type, library_name, title, show_title, watched_at, percent_complete, duration, completed, created_at, updated_at)
@@ -3339,8 +3339,11 @@ test("overview playback digests use category-aware daily grouping and episode ar
     insert.run(users.Tony, "digest-track", null, null, "track", "Audiobooks", "Digest Track", "Digest Author", "2026-07-25T10:30:00.000Z", 25, 600000, 0, refresh, refresh);
     insert.run(users.Viewer, "digest-track", null, null, "track", "Audiobooks", "Digest Track", "Digest Author", "2026-07-25T10:20:00.000Z", 15, 600000, 0, refresh, refresh);
     insert.run(users.Tony, "digest-track", null, null, "track", "Audiobooks", "Digest Track", "Digest Author", "2026-07-26T10:00:00.000Z", 30, 600000, 0, refresh, refresh);
-    insert.run(users.Tony, "digest-ep-1", "digest-show", "digest-season-1", "episode", "TV Shows", "Episode One", "Digest Show", "2026-07-25T12:00:00.000Z", 100, 1800000, 1, refresh, refresh);
-    insert.run(users.Tony, "digest-ep-2", "digest-show", "digest-season-1", "episode", "TV Shows", "Episode Two", "Digest Show", "2026-07-25T13:00:00.000Z", 50, 1800000, 0, refresh, refresh);
+    insert.run(users.Tony, "digest-ep-2", "digest-show", "digest-season-1", "episode", "TV Shows", "Episode Two", "Digest Show", "2026-07-25T12:00:00.000Z", 25, 1800000, 0, refresh, refresh);
+    insert.run(users.Tony, "digest-ep-2", "digest-show", "digest-season-1", "episode", "TV Shows", "Episode Two", "Digest Show", "2026-07-25T12:30:00.000Z", 50, 1800000, 0, refresh, refresh);
+    insert.run(users.Tony, "digest-ep-3", "digest-show", "digest-season-1", "episode", "TV Shows", "Episode Three", "Digest Show", "2026-07-25T13:00:00.000Z", null, 1800000, 0, refresh, refresh);
+    insert.run(users.Tony, "digest-ep-4", "digest-show", "digest-season-1", "episode", "TV Shows", "Episode Four", "Digest Show", "2026-07-25T13:30:00.000Z", 100, 1800000, 0, refresh, refresh);
+    insert.run(users.Tony, "digest-ep-1", "digest-show", "digest-season-1", "episode", "TV Shows", "Episode One", "Digest Show", "2026-07-25T13:45:00.000Z", 100, 1800000, 1, refresh, refresh);
 
     const overview = new DashboardService(db, { timeZone: "UTC" }).getOverview({});
     const audiobookDigests = overview.recentPlaybackDigests.filter((digest) => digest.category === "audiobook");
@@ -3351,8 +3354,17 @@ test("overview playback digests use category-aware daily grouping and episode ar
     const showDigest = overview.recentPlaybackDigests.find((digest) => digest.category === "tv");
     assert.ok(showDigest);
     assert.equal(showDigest.localDate, "2026-07-25");
-    assert.equal(showDigest.episodes.length, 2);
+    assert.equal(showDigest.episodes.length, 4);
     assert.match(showDigest.episodes[0].posterUrl, /^\/api\/artwork\/digest-ep-/);
+    const session = showDigest.sessions[0];
+    assert.deepEqual(session.episodeKeys, ["digest-ep-1", "digest-ep-4", "digest-ep-3", "digest-ep-2"]);
+    assert.deepEqual(session.episodeProgress.map((episode) => episode.ratingKey), session.episodeKeys);
+    assert.deepEqual(session.episodeProgress.map((episode) => [episode.ratingKey, episode.state, episode.progressPercent, episode.progressSource]), [
+      ["digest-ep-1", "completed", 100, "explicit_completion"],
+      ["digest-ep-4", "partial", 100, "source_percentage"],
+      ["digest-ep-3", "unknown", null, "unavailable"],
+      ["digest-ep-2", "partial", 50, "source_percentage"]
+    ]);
   });
 });
 

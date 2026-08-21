@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Db } from "../db/database.js";
-import type { AudiobookProgressEvidenceSource, AudiobookProgressListenerProjection, AudiobookProgressProjectionSet, AudiobookProgressQuality, AudiobookProgressQualityReason, DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket, ProgressHierarchyExpansion, ProgressNodeState, ProgressNodeStateSource, ProgressWatcherEvidence, DashboardDetailIdentity, DashboardDetailIdentityInput, DashboardDetailResolution, DashboardDetailWorkspaceResult, DashboardDetailWorkspaceHierarchyResult, DashboardMovieHistory, DashboardMovieHistoryRow, DashboardArchiveIdentityReview, DashboardPlaybackDigest, DashboardPlaybackDigestChapter, DashboardPlaybackDigestEpisode, DashboardPlaybackDigestSession } from "../types/api.js";
+import type { AudiobookProgressEvidenceSource, AudiobookProgressListenerProjection, AudiobookProgressProjectionSet, AudiobookProgressQuality, AudiobookProgressQualityReason, DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket, ProgressHierarchyExpansion, ProgressNodeState, ProgressNodeStateSource, ProgressWatcherEvidence, DashboardDetailIdentity, DashboardDetailIdentityInput, DashboardDetailResolution, DashboardDetailWorkspaceResult, DashboardDetailWorkspaceHierarchyResult, DashboardMovieHistory, DashboardMovieHistoryRow, DashboardArchiveIdentityReview, DashboardPlaybackDigest, DashboardPlaybackDigestChapter, DashboardPlaybackDigestEpisode, DashboardPlaybackDigestEpisodeProgress, DashboardPlaybackDigestSession } from "../types/api.js";
 import { CowatchingIntelligenceService } from "./cowatchingIntelligenceService.js";
 import { CowatchAdjudicationService } from "./cowatchAdjudicationService.js";
 import { buildDashboardArtworkDescriptor, type DashboardArtworkDescriptor } from "./artworkService.js";
@@ -4444,6 +4444,7 @@ export class DashboardService {
     const chapterSummary = primary.category === "audiobook" && userId != null
       ? this.buildAudiobookDigestChapterSummary(sorted, userId, displayName)
       : { completedChapters: [], currentChapter: null };
+    const episodic = primary.category === "tv" || primary.category === "classic_tv" || primary.category === "anime";
     return {
       sessionKey,
       userId,
@@ -4460,10 +4461,75 @@ export class DashboardService {
         progressQualityReason: chapterSummary.progressQualityReason,
         audiobookProgress: chapterSummary.audiobookProgress
       } : {}),
-      episodeKeys: primary.category === "tv" || primary.category === "classic_tv" || primary.category === "anime"
+      episodeKeys: episodic
         ? [...new Set(sorted.map((item) => item.ratingKey))]
-        : undefined
+        : undefined,
+      episodeProgress: episodic ? this.buildPlaybackDigestEpisodeProgress(sorted) : undefined
     };
+  }
+
+  private buildPlaybackDigestEpisodeProgress(items: DashboardActivityItem[]): DashboardPlaybackDigestEpisodeProgress[] {
+    type EpisodeProgressAccumulator = {
+      item: DashboardActivityItem;
+      completed: boolean;
+      latestPercent: number | null;
+    };
+    const usablePercent = (value: number | undefined): number | null => {
+      if (value == null || !Number.isFinite(Number(value)) || Number(value) < 0) return null;
+      return Math.max(0, Math.min(100, Number(value)));
+    };
+    const progressByEpisode = new Map<string, EpisodeProgressAccumulator>();
+    const sorted = [...items].sort((a, b) => b.watchedAt.localeCompare(a.watchedAt) || b.id - a.id);
+    for (const item of sorted) {
+      const existing = progressByEpisode.get(item.ratingKey);
+      const percent = usablePercent(item.percentComplete);
+      if (!existing) {
+        progressByEpisode.set(item.ratingKey, {
+          item,
+          completed: item.completed,
+          latestPercent: percent
+        });
+        continue;
+      }
+      existing.completed ||= item.completed;
+      if (existing.latestPercent == null && percent != null) existing.latestPercent = percent;
+    }
+    return [...progressByEpisode.values()].map(({ item, completed, latestPercent }) => {
+      if (completed) {
+        return {
+          ratingKey: item.ratingKey,
+          title: item.title,
+          seasonNumber: item.seasonNumber ?? null,
+          episodeNumber: item.episodeNumber ?? null,
+          watchedAt: item.watchedAt,
+          state: "completed",
+          progressPercent: 100,
+          progressSource: "explicit_completion"
+        } satisfies DashboardPlaybackDigestEpisodeProgress;
+      }
+      if (latestPercent != null) {
+        return {
+          ratingKey: item.ratingKey,
+          title: item.title,
+          seasonNumber: item.seasonNumber ?? null,
+          episodeNumber: item.episodeNumber ?? null,
+          watchedAt: item.watchedAt,
+          state: "partial",
+          progressPercent: latestPercent,
+          progressSource: "source_percentage"
+        } satisfies DashboardPlaybackDigestEpisodeProgress;
+      }
+      return {
+        ratingKey: item.ratingKey,
+        title: item.title,
+        seasonNumber: item.seasonNumber ?? null,
+        episodeNumber: item.episodeNumber ?? null,
+        watchedAt: item.watchedAt,
+        state: "unknown",
+        progressPercent: null,
+        progressSource: "unavailable"
+      } satisfies DashboardPlaybackDigestEpisodeProgress;
+    });
   }
 
   private buildRecentPlaybackDigests(

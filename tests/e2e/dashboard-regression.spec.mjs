@@ -120,6 +120,53 @@ test("overview digests collapse session evidence and expose episode artwork", as
   expect(pageErrors).toEqual([]);
 });
 
+test("episodic session progress stays source-honest and deduplicated", async ({ page }) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const visibilityResponse = await page.request.post("/__test/progress-user-visibility", { data: { visible: true } });
+  expect(visibilityResponse.ok()).toBeTruthy();
+  try {
+    await page.goto("/");
+
+    const showCard = page.getByTestId("recent-playback-card").filter({ hasText: "Episode Progress Regression" }).first();
+    const session = showCard.getByTestId("digest-session").first();
+    await session.locator("summary").click();
+    const progressRows = session.getByTestId("digest-episode-progress-row");
+    await expect(progressRows).toHaveCount(4);
+    const confirmedEpisode = progressRows.filter({ hasText: "S1E1 - Confirmed Episode" });
+    await expect(confirmedEpisode).toContainText("Approximate progress");
+    await expect(confirmedEpisode.getByTestId("digest-episode-progress-meter")).toHaveAttribute("aria-valuenow", "93");
+    const completedEpisode = progressRows.filter({ hasText: "S1E2 - Completed Episode" });
+    await expect(completedEpisode).toContainText("Completed");
+    await expect(completedEpisode.getByTestId("digest-episode-progress-meter")).toHaveAttribute("aria-valuenow", "100");
+    const fullSourceEpisode = progressRows.filter({ hasText: "S1E4 - Source Reports Full" });
+    await expect(fullSourceEpisode).toContainText("Approximate progress");
+    await expect(fullSourceEpisode).not.toContainText("Completed");
+    await expect(fullSourceEpisode.getByTestId("digest-episode-progress-meter")).toHaveAttribute("aria-valuenow", "100");
+    const unknownEpisode = progressRows.filter({ hasText: "S1E3 - Unknown Evidence" });
+    await expect(unknownEpisode).toContainText("Progress unavailable");
+    await expect(unknownEpisode.getByTestId("digest-episode-progress-meter")).toHaveCount(0);
+    await expectNoVisualOverflow(page);
+    expect(pageErrors).toEqual([]);
+  } finally {
+    const resetResponse = await page.request.post("/__test/progress-user-visibility", { data: { visible: false } });
+    expect(resetResponse.ok()).toBeTruthy();
+  }
+});
+
+test("episodic digest progress is exposed for TV, Classic TV, and Anime", async ({ page }) => {
+  const response = await page.request.get("/api/dashboard/overview");
+  const body = await response.json();
+  expect(response.status(), JSON.stringify(body)).toBe(200);
+  expect(body.ok).toBe(true);
+  for (const category of ["tv", "classic_tv", "anime"]) {
+    const digest = body.data.recentPlaybackDigests.find(item => item.category === category);
+    expect(digest, `missing ${category} digest`).toBeTruthy();
+    expect(digest.sessions[0].episodeProgress.length).toBeGreaterThan(0);
+    expect(digest.sessions[0].episodeKeys).toEqual(digest.sessions[0].episodeProgress.map(episode => episode.ratingKey));
+  }
+});
+
 test("audiobook digest sessions use canonical session-as-of progress", async ({ page }) => {
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));

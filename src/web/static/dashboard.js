@@ -206,6 +206,27 @@ const digestEpisodeLabel = episode => {
   const number = episode.episodeNumber == null ? "?" : episode.episodeNumber;
   return `S${season}E${number} - ${episode.title}`;
 };
+const digestEpisodeProgressStateCopy = state => ({
+  completed: "Completed",
+  partial: "Approximate progress",
+  unknown: "Progress unavailable"
+})[state] || "Progress unavailable";
+const digestEpisodeProgressMarkup = progress => {
+  const entries = Array.isArray(progress) ? progress : [];
+  if (!entries.length) return "";
+  return `<div class="digest-episode-progress" data-testid="digest-episode-progress">${entries.map(entry => {
+    const state = entry.state === "completed" || entry.state === "partial" || entry.state === "unknown" ? entry.state : "unknown";
+    const percent = entry.progressPercent == null ? null : Number(entry.progressPercent);
+    const bounded = percent != null && Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : null;
+    const hasMeter = (state === "completed" || state === "partial") && bounded != null;
+    const identity = digestEpisodeLabel(entry);
+    const stateCopy = digestEpisodeProgressStateCopy(state);
+    const meter = hasMeter
+      ? `<span class="digest-progress-track" data-testid="digest-episode-progress-meter" role="progressbar" aria-label="${esc(`${identity}: ${stateCopy} ${bounded}%`)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${bounded}"><i style="width:${bounded}%"></i></span>`
+      : "";
+    return `<div class="digest-episode-progress-row" data-testid="digest-episode-progress-row" data-state="${state}"><span class="digest-episode-progress-title">${esc(identity)}</span><span class="digest-episode-progress-state">${esc(stateCopy)}${state === "partial" && bounded != null ? ` · ${bounded}%` : ""}</span>${meter}</div>`;
+  }).join("")}</div>`;
+};
 const compactChapterIndexes = chapters => {
   const indexes = [...new Set(chapters
     .map(chapter => Number(chapter.chapterIndex))
@@ -376,7 +397,10 @@ const digestSessionBody = (digest, session) => {
   const episodes = Array.isArray(digest.episodes) && Array.isArray(session.episodeKeys)
     ? digest.episodes.filter(episode => session.episodeKeys.includes(episode.ratingKey))
     : [];
-  if (episodes.length) {
+  const episodeProgress = Array.isArray(session.episodeProgress) ? session.episodeProgress : [];
+  if (episodeProgress.length) {
+    sections.push(`<div class="digest-session-section"><span class="digest-session-label">Episodes</span>${digestEpisodeProgressMarkup(episodeProgress)}</div>`);
+  } else if (episodes.length) {
     sections.push(`<div class="digest-session-section"><span class="digest-session-label">Episodes</span><span>${episodes.map(digestEpisodeLabel).map(esc).join(", ")}</span></div>`);
   }
   return sections.length ? `<div class="digest-session-body">${sections.join("")}</div>` : "";
