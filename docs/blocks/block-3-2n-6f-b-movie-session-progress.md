@@ -1,7 +1,8 @@
 # Block 3-2n-6F-B: Movie Session Progress
 
-> Status: Planned.
-> Result: Not implemented.
+> Status: Implemented and verified.
+> Result: Additive Movie per-session progress is fully implemented and verified. Expanded Movie Overview session cards now project per-movie completion states (`Completed`), source-backed approximate progress meters (`Approximate progress · <percent>%`), and honest unknown states (`Progress unavailable`) matching episodic and audiobook styles without modifying historical observations.
+> Verification: `npm run verify:block` passed (154/154 service tests, 79/79 browser regressions, dashboard syntax, tool contracts). `npm run verify:live-dashboard` passed against the live deployment.
 > Dependency: Block 3-2n-6F established the additive Overview digest and session contracts this block extends; Block 3-2n-6F-A established the per-session progress presentation pattern.
 > Notes: Corrective Overview follow-up for Movies only. Aligns movie session progress presentation with episodic and audiobook media without changing ingestion, persistence, or historical observations.
 

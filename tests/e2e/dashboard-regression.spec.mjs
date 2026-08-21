@@ -162,6 +162,32 @@ test("episodic session progress stays source-honest and deduplicated", async ({ 
   }
 });
 
+test("movie session progress stays source-honest and renders progress meter", async ({ page }) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.goto("/");
+
+  const completedMovieCard = page.getByTestId("recent-playback-card").filter({ hasText: "Fixture Movie" }).first();
+  const completedSession = completedMovieCard.getByTestId("digest-session").first();
+  await completedSession.locator("summary").click();
+  const completedProgressRow = completedSession.getByTestId("digest-movie-progress-row");
+  await expect(completedProgressRow).toBeVisible();
+  await expect(completedProgressRow).toContainText("Completed");
+  await expect(completedProgressRow.getByTestId("digest-movie-progress-meter")).toHaveAttribute("aria-valuenow", "100");
+
+  const partialMovieCard = page.getByTestId("recent-playback-card").filter({ hasText: "Session Regression" }).first();
+  const partialSession = partialMovieCard.getByTestId("digest-session").first();
+  await partialSession.locator("summary").click();
+  const partialProgressRow = partialSession.getByTestId("digest-movie-progress-row");
+  await expect(partialProgressRow).toBeVisible();
+  await expect(partialProgressRow).toContainText("Approximate progress");
+  await expect(partialProgressRow).toContainText("65%");
+  await expect(partialProgressRow.getByTestId("digest-movie-progress-meter")).toHaveAttribute("aria-valuenow", "65");
+
+  await expectNoVisualOverflow(page);
+  expect(pageErrors).toEqual([]);
+});
+
 test("episodic digest progress is exposed for TV, Classic TV, and Anime", async ({ page }) => {
   const response = await page.request.get("/api/dashboard/overview");
   const body = await response.json();

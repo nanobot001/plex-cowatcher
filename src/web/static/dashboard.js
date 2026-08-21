@@ -227,6 +227,24 @@ const digestEpisodeProgressMarkup = progress => {
     return `<div class="digest-episode-progress-row" data-testid="digest-episode-progress-row" data-state="${state}"><span class="digest-episode-progress-title">${esc(identity)}</span><span class="digest-episode-progress-state">${esc(stateCopy)}${state === "partial" && bounded != null ? ` · ${bounded}%` : ""}</span>${meter}</div>`;
   }).join("")}</div>`;
 };
+const digestMovieProgressStateCopy = state => ({
+  completed: "Completed",
+  partial: "Approximate progress",
+  unknown: "Progress unavailable"
+})[state] || "Progress unavailable";
+const digestMovieProgressMarkup = progress => {
+  if (!progress) return "";
+  const state = progress.state === "completed" || progress.state === "partial" || progress.state === "unknown" ? progress.state : "unknown";
+  const percent = progress.progressPercent == null ? null : Number(progress.progressPercent);
+  const bounded = percent != null && Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : null;
+  const hasMeter = (state === "completed" || state === "partial") && bounded != null;
+  const identity = progress.title || "Movie";
+  const stateCopy = digestMovieProgressStateCopy(state);
+  const meter = hasMeter
+    ? `<span class="digest-progress-track" data-testid="digest-movie-progress-meter" role="progressbar" aria-label="${esc(`${identity}: ${stateCopy} ${bounded}%`)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${bounded}"><i style="width:${bounded}%"></i></span>`
+    : "";
+  return `<div class="digest-movie-progress" data-testid="digest-movie-progress"><div class="digest-movie-progress-row" data-testid="digest-movie-progress-row" data-state="${state}"><span class="digest-movie-progress-title">${esc(identity)}</span><span class="digest-movie-progress-state">${esc(stateCopy)}${state === "partial" && bounded != null ? ` · ${bounded}%` : ""}</span>${meter}</div></div>`;
+};
 const compactChapterIndexes = chapters => {
   const indexes = [...new Set(chapters
     .map(chapter => Number(chapter.chapterIndex))
@@ -404,6 +422,9 @@ const digestSessionBody = (digest, session) => {
     sections.push(`<div class="digest-session-section"><span class="digest-session-label">Episodes</span>${digestEpisodeProgressMarkup(episodeProgress)}</div>`);
   } else if (episodes.length) {
     sections.push(`<div class="digest-session-section"><span class="digest-session-label">Episodes</span><span>${episodes.map(digestEpisodeLabel).map(esc).join(", ")}</span></div>`);
+  }
+  if (session.movieProgress) {
+    sections.push(`<div class="digest-session-section"><span class="digest-session-label">Progress</span>${digestMovieProgressMarkup(session.movieProgress)}</div>`);
   }
   return sections.length ? `<div class="digest-session-body">${sections.join("")}</div>` : "";
 };

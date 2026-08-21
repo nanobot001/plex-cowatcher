@@ -1071,6 +1071,11 @@ legend { font-size: 0.9rem; font-weight: 600; color: #06B6D4; padding: 0 12px; }
 .digest-episode-progress-title { min-width: 0; overflow-wrap: anywhere; color: var(--text-main); }
 .digest-episode-progress-state { grid-column: 1; min-width: 0; color: var(--text-muted); text-align: left; }
 .digest-episode-progress-row .digest-progress-track { grid-column: 1 / -1; width: 100%; }
+.digest-movie-progress { display: grid; min-width: 0; gap: 8px; }
+.digest-movie-progress-row { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); gap: 2px; align-items: start; }
+.digest-movie-progress-title { min-width: 0; overflow-wrap: anywhere; color: var(--text-main); }
+.digest-movie-progress-state { grid-column: 1; min-width: 0; color: var(--text-muted); text-align: left; }
+.digest-movie-progress-row .digest-progress-track { grid-column: 1 / -1; width: 100%; }
 .audiobook-session-progress,
 .audiobook-session-listener {
   display: grid;

@@ -491,6 +491,18 @@ export interface DashboardPlaybackDigestEpisodeProgress {
   progressSource: DashboardPlaybackDigestEpisodeProgressSource;
 }
 
+export type DashboardPlaybackDigestMovieProgressState = "completed" | "partial" | "unknown";
+export type DashboardPlaybackDigestMovieProgressSource = "explicit_completion" | "source_percentage" | "unavailable";
+
+export interface DashboardPlaybackDigestMovieProgress {
+  ratingKey: string;
+  title: string;
+  watchedAt: string;
+  state: DashboardPlaybackDigestMovieProgressState;
+  progressPercent: number | null;
+  progressSource: DashboardPlaybackDigestMovieProgressSource;
+}
+
 export interface DashboardPlaybackDigestSession {
   sessionKey: string;
   userId: number | null;
@@ -507,6 +519,7 @@ export interface DashboardPlaybackDigestSession {
   audiobookProgress?: AudiobookProgressProjectionSet;
   episodeKeys?: string[];
   episodeProgress?: DashboardPlaybackDigestEpisodeProgress[];
+  movieProgress?: DashboardPlaybackDigestMovieProgress;
 }
 
 export interface DashboardPlaybackDigestEpisode {

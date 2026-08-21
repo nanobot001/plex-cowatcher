@@ -1,5 +1,18 @@
 # Continue Here
 
+## 2026-08-21 — 3-2n-6F-B Movie Session Progress Implemented and Verified
+
+Current state:
+- **Block 3-2n-6F-B** is implemented and verified on `codex/3-2n-6f-b-movie-session-progress`.
+- Expanded Movie Overview session cards now include an additive per-session movie progress projection: explicitly completed movies render a 100% completed gradient bar (`Completed`), source-backed partial sessions render approximate percentage bars (`Approximate progress · <percent>%`), and missing evidence remains visibly unknown (`Progress unavailable`) without fabricating 0% or modifying raw database records.
+- UI presentation matches the shared `.digest-progress-track` design, gradient, accessibility attributes, and responsive layout established for episodic and audiobook media.
+- Verification passed: `npm run verify:block` passed with 154/154 service tests, 79/79 browser regressions (1 intentional skip), syntax checks, and tool contracts.
+- Live verification passed: `npm run verify:live-dashboard` passed against the live deployment.
+
+Next step:
+- Review/publish PR for **3-2n-6F-B**.
+- Follow recommended closure order from modernized planning: **Block 3-6-1: Archive Evidence and Provenance Contract**, then **Block 3-7: Operational Readiness & Recovery**, followed by the **Block 3-2o: Final Dashboard Release Gate**.
+
 ## 2026-08-21 — 3-2n-6F-A TV And Anime Session Episode Progress Implemented and Verified
 
 Current state:

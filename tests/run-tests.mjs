@@ -3403,6 +3403,70 @@ test("audiobook digest sessions expose verified completed and current chapters",
   });
 });
 
+test("movie digest sessions expose source-honest movie progress projection", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const tony = db.prepare("SELECT id FROM users WHERE plex_username = 'Tony'").get();
+    const refresh = "2026-07-25T00:00:00.000Z";
+    const insert = db.prepare(`INSERT INTO playback_observations
+      (user_id, rating_key, grandparent_rating_key, parent_rating_key, media_type, library_name, title, show_title, watched_at, percent_complete, duration, completed, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+
+    insert.run(tony.id, "movie-partial", null, null, "movie", "Movies", "Partial Movie", null, "2026-07-25T10:00:00.000Z", 65, 7200000, 0, refresh, refresh);
+    insert.run(tony.id, "movie-full-incomplete", null, null, "movie", "Movies", "Full Incomplete Movie", null, "2026-07-25T14:00:00.000Z", 100, 7200000, 0, refresh, refresh);
+    insert.run(tony.id, "movie-unknown", null, null, "movie", "Movies", "Unknown Movie", null, "2026-07-25T18:00:00.000Z", null, 7200000, 0, refresh, refresh);
+    insert.run(tony.id, "movie-completed", null, null, "movie", "Movies", "Completed Movie", null, "2026-07-25T20:00:00.000Z", 40, 7200000, 0, refresh, refresh);
+    insert.run(tony.id, "movie-completed", null, null, "movie", "Movies", "Completed Movie", null, "2026-07-25T21:00:00.000Z", 100, 7200000, 1, refresh, refresh);
+
+    const overview = new DashboardService(db, { timeZone: "UTC" }).getOverview({});
+    const movieDigests = overview.recentPlaybackDigests.filter((digest) => digest.category === "movie");
+
+    const partialDigest = movieDigests.find((d) => d.title === "Partial Movie");
+    assert.ok(partialDigest);
+    assert.deepEqual(partialDigest.sessions[0].movieProgress, {
+      ratingKey: "movie-partial",
+      title: "Partial Movie",
+      watchedAt: "2026-07-25T10:00:00.000Z",
+      state: "partial",
+      progressPercent: 65,
+      progressSource: "source_percentage"
+    });
+
+    const fullIncompleteDigest = movieDigests.find((d) => d.title === "Full Incomplete Movie");
+    assert.ok(fullIncompleteDigest);
+    assert.deepEqual(fullIncompleteDigest.sessions[0].movieProgress, {
+      ratingKey: "movie-full-incomplete",
+      title: "Full Incomplete Movie",
+      watchedAt: "2026-07-25T14:00:00.000Z",
+      state: "partial",
+      progressPercent: 100,
+      progressSource: "source_percentage"
+    });
+
+    const unknownDigest = movieDigests.find((d) => d.title === "Unknown Movie");
+    assert.ok(unknownDigest);
+    assert.deepEqual(unknownDigest.sessions[0].movieProgress, {
+      ratingKey: "movie-unknown",
+      title: "Unknown Movie",
+      watchedAt: "2026-07-25T18:00:00.000Z",
+      state: "unknown",
+      progressPercent: null,
+      progressSource: "unavailable"
+    });
+
+    const completedDigest = movieDigests.find((d) => d.title === "Completed Movie");
+    assert.ok(completedDigest);
+    assert.deepEqual(completedDigest.sessions[0].movieProgress, {
+      ratingKey: "movie-completed",
+      title: "Completed Movie",
+      watchedAt: "2026-07-25T21:00:00.000Z",
+      state: "completed",
+      progressPercent: 100,
+      progressSource: "explicit_completion"
+    });
+  });
+});
+
 test("dashboard preferences survive identity resyncs and drive dashboard visibility", () => {
   withTestDb((db) => {
     seedUsers(db);

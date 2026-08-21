@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Db } from "../db/database.js";
-import type { AudiobookProgressEvidenceSource, AudiobookProgressListenerProjection, AudiobookProgressProjectionSet, AudiobookProgressQuality, AudiobookProgressQualityReason, DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket, ProgressHierarchyExpansion, ProgressNodeState, ProgressNodeStateSource, ProgressWatcherEvidence, DashboardDetailIdentity, DashboardDetailIdentityInput, DashboardDetailResolution, DashboardDetailWorkspaceResult, DashboardDetailWorkspaceHierarchyResult, DashboardMovieHistory, DashboardMovieHistoryRow, DashboardArchiveIdentityReview, DashboardPlaybackDigest, DashboardPlaybackDigestChapter, DashboardPlaybackDigestEpisode, DashboardPlaybackDigestEpisodeProgress, DashboardPlaybackDigestSession } from "../types/api.js";
+import type { AudiobookProgressEvidenceSource, AudiobookProgressListenerProjection, AudiobookProgressProjectionSet, AudiobookProgressQuality, AudiobookProgressQualityReason, DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket, ProgressHierarchyExpansion, ProgressNodeState, ProgressNodeStateSource, ProgressWatcherEvidence, DashboardDetailIdentity, DashboardDetailIdentityInput, DashboardDetailResolution, DashboardDetailWorkspaceResult, DashboardDetailWorkspaceHierarchyResult, DashboardMovieHistory, DashboardMovieHistoryRow, DashboardArchiveIdentityReview, DashboardPlaybackDigest, DashboardPlaybackDigestChapter, DashboardPlaybackDigestEpisode, DashboardPlaybackDigestEpisodeProgress, DashboardPlaybackDigestMovieProgress, DashboardPlaybackDigestSession } from "../types/api.js";
 import { CowatchingIntelligenceService } from "./cowatchingIntelligenceService.js";
 import { CowatchAdjudicationService } from "./cowatchAdjudicationService.js";
 import { buildDashboardArtworkDescriptor, type DashboardArtworkDescriptor } from "./artworkService.js";
@@ -4464,7 +4464,50 @@ export class DashboardService {
       episodeKeys: episodic
         ? [...new Set(sorted.map((item) => item.ratingKey))]
         : undefined,
-      episodeProgress: episodic ? this.buildPlaybackDigestEpisodeProgress(sorted) : undefined
+      episodeProgress: episodic ? this.buildPlaybackDigestEpisodeProgress(sorted) : undefined,
+      movieProgress: primary.category === "movie" ? this.buildPlaybackDigestMovieProgress(sorted) : undefined
+    };
+  }
+
+  private buildPlaybackDigestMovieProgress(items: DashboardActivityItem[]): DashboardPlaybackDigestMovieProgress | undefined {
+    if (!items.length) return undefined;
+    const sorted = [...items].sort((a, b) => b.watchedAt.localeCompare(a.watchedAt) || b.id - a.id);
+    const primary = sorted[0];
+    const usablePercent = (value: number | undefined): number | null => {
+      if (value == null || !Number.isFinite(Number(value)) || Number(value) < 0) return null;
+      return Math.max(0, Math.min(100, Number(value)));
+    };
+    const completed = sorted.some((item) => item.completed);
+    if (completed) {
+      return {
+        ratingKey: primary.ratingKey,
+        title: primary.title,
+        watchedAt: primary.watchedAt,
+        state: "completed",
+        progressPercent: 100,
+        progressSource: "explicit_completion"
+      };
+    }
+    const latestPercent = sorted
+      .map((item) => usablePercent(item.percentComplete))
+      .find((val): val is number => val != null);
+    if (latestPercent != null) {
+      return {
+        ratingKey: primary.ratingKey,
+        title: primary.title,
+        watchedAt: primary.watchedAt,
+        state: "partial",
+        progressPercent: latestPercent,
+        progressSource: "source_percentage"
+      };
+    }
+    return {
+      ratingKey: primary.ratingKey,
+      title: primary.title,
+      watchedAt: primary.watchedAt,
+      state: "unknown",
+      progressPercent: null,
+      progressSource: "unavailable"
     };
   }
 
