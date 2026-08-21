@@ -1,71 +1,58 @@
-# Block 3-2o: Dashboard Accessibility And Regression Gate
+# Block 3-2o: Dashboard Accessibility And Regression Release Gate
 
 > Status: Planned.
 > Result: Not implemented.
-> Notes: Final release gate for the corrective dashboard sequence; it may fix integration defects but may not introduce a sixth layout or new product scope.
+> Notes: This is a release audit and acceptance gate, not a container for unrelated dashboard redesign. Block 3-2n-6F-A is its final planned feature dependency; optional 6D resume-context work is excluded.
 
 ## Goal
 
-Prove the redesigned dashboard is coherent, responsive, accessible, performant, privacy-safe, and regression-safe before the series is declared complete.
+Prove that the current dashboard is accessible, responsive, source-honest, privacy-safe, and regression-protected across every supported layout before the corrective dashboard sequence is closed.
 
-## Dependencies And Entry Gate
+## Entry Gate
 
-- Blocks 3-2g through 3-2n individually complete with their recorded exit evidence.
-- No acceptance criterion from an earlier block may be deferred into this block without updating that block’s result and rationale.
+- Block 3-2n-6F-A is implemented and verified.
+- The current deterministic dashboard fixture and `docs/testing/dashboard-regression-contract.md` remain authoritative.
+- Any material defect discovered during the audit is recorded as a separate bounded corrective block and resolved before final signoff; it is not silently absorbed here.
 
 ## Scope
 
-- Run a complete five-layout Playwright journey at 1440x900, 1024x768, and 390x844.
-- Add stable visual snapshots or structural screenshot assertions for shell and first viewport of every layout.
-- Complete keyboard-only navigation, focus order/restoration, dialog/sheet, hierarchy, filter, carousel, pagination, and error recovery checks.
-- Verify color contrast, semantic headings/landmarks, accessible names, reduced-motion behavior, and non-color evidence distinctions.
-- Verify loading, empty, partial failure, stale item, artwork failure, no-results, and offline-adapter states.
-- Verify every media card/detail surface uses the correct canonical poster/cover, including audiobook cases where book, author, artist, series, album, and chapter artwork differ.
-- Verify Dashboard People settings end to end: default shown state, exact-username default label, alias set/reset, hide/show, service-restart persistence, exclusion from every dashboard layout/aggregate, and no effect on ingestion, Discord, copy history, audit, or stored evidence.
-- Verify `Watched by`, `Together`, and `Likely together` semantics end to end, including different episodes, non-overlapping exact-item plays, confirmed, denied, unknown-timing, three-person, hidden-user, and reviewed inference cases.
-- Re-run realistic performance budgets and record payload size, DOM size, and interactive timing for each layout.
-- Verify CSV privacy/content, browser-history restoration, localStorage migration/fallback, and no private paths, tokens, Discord IDs, or authenticated URLs in public responses/markup.
-- Run regression checks for Copy History, Audit, Settings, Discord prompt actions, PM2 single-process behavior, API/CLI contracts, and artwork proxy.
-- Update durable dashboard QA documentation and mark the corrective series complete only after all gates pass.
+- Audit Overview, Activity Timeline, Media Explorer, People, and Progress plus the shared detail workspace and Copy History, Audit, and Settings surfaces.
+- Verify semantic labels, keyboard reachability, focus order/restoration, disclosure state, dialog behavior, reduced-motion compatibility, and non-color-only status meaning.
+- Verify geometry at 320px, 390px, 768px, 1024px, and 1440px: no page-level horizontal overflow, clipped controls, unintended nested scrolling, cramped padding, or excessive empty space.
+- Use semantic and geometry assertions in `tests/e2e/dashboard-regression.spec.mjs`. Preserve the contract prohibition on broad screenshot snapshots.
+- Confirm source-honest unknown, approximate, verified, completed, multi-user, hidden-user, and error states across representative category fixtures.
+- Confirm private data, paths, tokens, upstream URLs, raw errors, and hidden-listener content do not cross public dashboard boundaries.
+- Run the deterministic block gate and the separate deployed read-only live dashboard smoke.
 
 ## Out Of Scope
 
-- New layouts, recommendations, reports, new external services, visual experimentation, or unrelated refactoring.
-- Weakening tests or performance thresholds to obtain a pass.
+- New product features, visual redesign, ingestion, schema, persistence, worker, or integration changes.
+- Optional 6D audiobook transcript/resume context.
+- Broad screenshot baselines or pixel-perfect layout freezing.
+- Fixing a material defect inside this audit when it warrants its own ticket.
 
 ## Likely Files Or Areas
 
-- `tests/run-tests.mjs`
-- `docs/testing/dashboard-redesign-qa.md`
+- `tests/e2e/dashboard-regression.spec.mjs`
+- deterministic dashboard fixture builder/database
 - `src/web/static/dashboard.js`
 - `src/web/static/styles.css`
-- `docs/blocks/block-3-2-richer-browser-ui.md`
-- `docs/blocks/README.md`
-- `docs/roadmap.md`
+- `docs/testing/dashboard-regression-contract.md`
+- one or more new corrective block files only if the audit finds material defects
 
 ## Acceptance Criteria
 
-- All earlier block acceptance criteria are traceable to an automated check or named manual Playwright step.
-- No critical or serious accessibility issue remains in the documented walkthrough.
-- No layout exceeds the agreed response, DOM, or interaction budget.
-- All five layouts are usable at all three target viewports without horizontal page overflow.
-- Public-read dashboard surfaces and CSV contain no secrets or private local data.
-- No audiobook card or detail uses author/artist artwork when a canonical book cover exists, and no media card with an available canonical poster/cover shows a generic play icon.
-- Hidden users and their activity are absent from every dashboard view and aggregate; aliases are consistent, presentation-only, and never alter stable identity or tool-facing records.
-- No title-level participant list, ordinary overlap, synchronized Plex flag, or missing-timing case is presented as confirmed or likely co-watching.
-- Existing non-dashboard workflows and tool contracts pass unchanged.
-- The final browser review demonstrates the redesign contract rather than merely resembling a mockup.
+- All named surfaces pass semantic keyboard and geometry checks at the five required viewport widths.
+- The test suite asserts durable behavior and geometry without adding broad screenshots.
+- Dialogs preserve focus trapping, close restoration, URL/Back/Forward behavior, one intended scroll region, and no horizontal overflow.
+- Source-quality and privacy states remain explicit and do not fabricate certainty from missing evidence.
+- Any material failure has a separate reviewed corrective ticket and is resolved before this block is marked implemented.
+- `npm run verify:block` passes.
+- After the deployed dashboard is rebuilt or restarted, `npm run verify:live-dashboard` passes.
 
-## Verification And Release Gate
+## Verification
 
 - `npm run verify:block`
-- `npm run verify:live-dashboard` after rebuilding or restarting the local service.
-- Complete and attach the documented Playwright matrix results.
-- Restart the PM2 service and perform a live localhost smoke test.
-- Do not move these blocks to `completed/` or resume Block 3-3 until every release criterion passes.
-
-## Drift Guardrails
-
-- This block closes gaps; it cannot absorb new features.
-- Any failed gate must be fixed in the owning earlier block’s scope or explicitly reopen that block.
-- Pixel-perfect mockup copying is not acceptance; correct hierarchy, evidence, responsiveness, and usefulness are.
+- `npm run verify:live-dashboard`
+- Manual keyboard and screen-reader-oriented review of representative desktop and narrow layouts
+- Review against `docs/testing/dashboard-regression-contract.md`

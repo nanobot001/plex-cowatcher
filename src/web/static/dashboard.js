@@ -226,8 +226,8 @@ const compactChapterIndexes = chapters => {
   ranges.push(start === end ? `${start}` : `${start}-${end}`);
   return `Ch. ${ranges.join(", ")}`;
 };
-const digestSessionSummaryLabel = (digest, session, index) => digest.category === "audiobook"
-  ? `Session ${Number(index) + 1}`
+const digestSessionSummaryLabel = (digest, session) => digest.category === "audiobook"
+  ? ""
   : digestSessionViewerLabel(session);
 const digestEpisodeStrip = digest => {
   const episodes = Array.isArray(digest.episodes) ? digest.episodes : [];
@@ -336,9 +336,13 @@ const audiobookProjectionSourceCopy = source => {
 const audiobookSessionText = listener => {
   const session = listener?.sessionMovement;
   if (!session) return audiobookListenerCurrentText(listener);
-  const start = audiobookPositionText({ chapterIndex: session.startChapterIndex, progressPercent: session.startProgressPercent });
-  const end = audiobookPositionText({ chapterIndex: session.endChapterIndex, progressPercent: session.endProgressPercent });
-  const movement = start === "Position unknown" || start === end ? end : `${start} → ${end}`;
+  const start = audiobookPositionText({ chapterIndex: session.startChapterIndex, progressPercent: session.startProgressPercent }, "");
+  const end = audiobookPositionText({ chapterIndex: session.endChapterIndex, progressPercent: session.endProgressPercent }, "");
+  if (!start && !end) {
+    const current = audiobookListenerCurrentText(listener);
+    return current === "Position unknown" ? "No session position captured" : current;
+  }
+  const movement = !start || start === end ? end : end ? `${start} → ${end}` : `Started at ${start}`;
   return audiobookIsRevisiting(listener) || session.revisitDetected || session.direction === "backward" ? `Revisiting · ${movement}` : movement;
 };
 const audiobookSessionMarkup = (source, title) => {
@@ -403,12 +407,15 @@ const playbackDigestCard = digest => {
   const replayText = Number(digest.replayCount || 0) > 0 ? ` - ${digest.replayCount} replay${Number(digest.replayCount) === 1 ? "" : "s"}` : "";
   const listenerText = (digest.displayNames || []).join(", ");
   const sessions = Array.isArray(digest.sessions) ? digest.sessions : [];
-  const sessionRows = sessions.map((session, index) => `
+  const sessionRows = sessions.map(session => {
+    const summaryLabel = digestSessionSummaryLabel(digest, session);
+    return `
     <details class="digest-session" data-testid="digest-session">
-      <summary data-digest-toggle><span>${esc(digestSessionSummaryLabel(digest, session, index))}</span><span>${esc(digestSessionLabel(session))}</span></summary>
+      <summary data-digest-toggle>${summaryLabel ? `<span>${esc(summaryLabel)}</span>` : ""}<span>${esc(digestSessionLabel(session))}</span></summary>
       ${digestSessionBody(digest, session)}
     </details>
-  `).join("");
+  `;
+  }).join("");
   return `<article class="cw-card cw-digest-card" data-cat="${esc(digest.category)}" data-testid="recent-playback-card" data-digest-card="true" tabindex="0" data-select-key="${esc(digest.detailKey || digest.digestKey)}" data-item="${encodeURIComponent(JSON.stringify(digest))}">
     ${libraryArt(digest)}
     ${digestEpisodeStrip(digest)}

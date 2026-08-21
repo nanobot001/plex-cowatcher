@@ -25,7 +25,12 @@ Preserve a clear, source-honest path for the remaining multi-file audiobooks wit
 
 - Re-audit each evidence group read-only against current source data or a verified copy.
 - Decide separately whether the truthful unit is a chapter, chapter part, named section, track/file, or unresolved item.
-- Split multipart grouping, named-section support, and metadata repair into separate bounded blocks if evidence supports them.
+- Create child tickets only after that fresh audit, using these candidate lanes:
+  1. metadata/count/sequence repair for objectively recoverable source defects;
+  2. multipart chapter-part grouping and book-global playback projection;
+  3. named sections, forewords, numbered sections, and credits;
+  4. generic repeated-title fallback only if evidence supports a truthful unit model.
+- Do not create a generic fallback implementation ticket merely to empty the deferred inventory; unknown evidence may remain unresolved.
 - Define playback projection and UI naming without rewriting raw observations or inventing provider labels.
 - Select positive and structurally different negative canaries for each eventual block.
 

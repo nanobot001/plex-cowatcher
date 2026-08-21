@@ -1,35 +1,29 @@
 # Block 3-6-5: Archive Query, Export, And Backup
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Make the historical archive useful outside the dashboard and resilient as a long-term personal record.
+> Status: Planned umbrella.
+> Result: Not implemented directly.
+> Notes: The original archive utility ticket has been split so read contracts, portable exports, and destructive recovery proof do not share one implementation gate.
 
 ## Goal
 
-Provide stable, source-aware archive queries and portable backups so the memory of what was seen is inspectable and recoverable independent of Plex availability.
+Make the historical archive inspectable, portable, and recoverable independently of current Plex availability.
 
-## Scope
+## Child Blocks
 
-- Add bounded CLI/HTTP queries for person, title, date, source, confidence, media type, and evidence status.
-- Add privacy-safe JSON/CSV export with canonical identity and provenance fields.
-- Add verified SQLite backup and restore procedures with schema/version checks.
-- Document retention, export, backup, and restore operations for the Windows/PM2 runtime.
+1. **3-6-5A — Versioned Archive Query Contract:** Bounded, source-aware read contracts for people, media, dates, source, confidence, and evidence status.
+2. **3-6-5B — Canonical JSON/CSV Export:** Privacy-safe portable exports whose schema remains interpretable after Plex identity changes or deletion.
+3. **3-6-5C — Verified Backup, Restore, And Disaster Recovery:** Version-checked backup and isolated restore proof for the complete archive state.
 
-## Out Of Scope
+Implement the children in order. Do not implement this umbrella directly.
 
-- Public hosting or cloud synchronization.
-- Natural-language recommendations.
-- Achievement rules beyond exposing archive data.
+## Shared Constraints
 
-## Acceptance Criteria
+- Preserve raw evidence, canonical identity, aliases, uncertainty, and provenance.
+- Public/read-safe output must not expose tokens, private paths, upstream private URLs, or raw errors.
+- Writes and restore operations remain dry-run or isolated by default and require explicit authorization.
+- Do not fold report delivery, achievement calculation, cloud synchronization, or retention deletion into this umbrella.
 
-- An exported archive remains interpretable when the corresponding Plex item is deleted or renamed.
-- Exported records distinguish Tautulli event time, Plex last-view time, and ingestion time.
-- Backup/restore preserves identity aliases, source evidence, audit state, and achievement inputs.
-- Public-read outputs contain no tokens, private paths, or upstream private URLs.
+## Exit Gate
 
-## Verification
-
-- `npm run verify:block`
-- Export schema, privacy, backup, restore, and round-trip tests.
+The umbrella is complete only after every child passes `npm run verify:block` and 3-6-5C demonstrates a restore into an isolated destination with explicit row, schema, integrity, and representative-query comparison.
 

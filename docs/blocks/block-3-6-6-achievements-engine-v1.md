@@ -1,36 +1,32 @@
 # Block 3-6-6: Achievements Engine v1
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Derive durable, explainable achievements only after the archive and source-confidence foundations are in place.
+> Status: Planned umbrella.
+> Result: Not implemented directly.
+> Notes: The original broad engine-and-rule-pack ticket has been split to keep evidence policy, deterministic infrastructure, and domain rule families independently reviewable.
 
 ## Goal
 
-Turn the historical watch archive into a small, reproducible achievement system whose results can be recalculated as evidence improves without rewriting history.
+Derive small, explainable, reproducible achievements from trustworthy archive evidence without rewriting history or treating missing evidence as failure.
 
-## Scope
+## Child Blocks
 
-- Define versioned achievement rules with stable IDs, display copy, thresholds, and evidence requirements.
-- Start with a bounded first set: first watch, watch-count milestones, completed-series milestones, genre/library milestones, rewatch milestones, and confirmed household co-watch milestones.
-- Require explicit evidence thresholds; unknown or Plex-only evidence must not silently satisfy rules that require detailed Tautulli playback.
-- Return supporting archive records and provenance for every earned or blocked achievement.
-- Add deterministic recalculation and idempotent persistence of achievement results.
+1. **3-6-6A — Achievement Evidence And Versioned Rule Contract**
+2. **3-6-6B — Deterministic Engine, Persistence, And Recalculation**
+3. **3-6-6C — First-Watch And Watch-Count Rules**
+4. **3-6-6D — Rewatch And Confirmed Co-Watch Rules**
+5. **3-6-6E — Series, Genre, And Library Completion Rules**
 
-## Out Of Scope
+Implement 3-6-6A and 3-6-6B first. Rule-family children may proceed only when their required denominator, classification, and provenance evidence is demonstrated.
 
-- Competitive rankings, public profiles, or gamification notifications.
-- Achievements based on inferred co-watching without explicit policy approval.
-- Mutating playback history to make an achievement true.
+## Shared Constraints
 
-## Acceptance Criteria
+- Every earned, blocked, and unknown result is explainable from versioned rules and supporting archive records.
+- Recalculation is deterministic and idempotent.
+- Inferred co-watching cannot satisfy a confirmed co-watch rule.
+- Unknown library membership, genre classification, series denominator, or completion state cannot produce a completion achievement.
+- No rankings, public profiles, notifications, or playback-history mutation.
 
-- The same archive snapshot produces the same achievement results across repeated runs.
-- Every earned achievement includes explainable supporting evidence and source labels.
-- Missing or uncertain evidence produces a blocked/unknown result rather than a false achievement.
-- Adding a newly recovered Plex record can unlock an achievement without changing prior raw observations.
+## Exit Gate
 
-## Verification
-
-- `npm run verify:block`
-- Rule-engine fixtures for milestones, duplicate plays, incomplete series, unknown evidence, Plex-only evidence, and confirmed co-watch evidence.
+The umbrella is complete only when all selected v1 rule children pass `npm run verify:block`. Block 3-6-6E remains deferred until a fresh evidence audit proves trustworthy denominators and classification coverage.
 
