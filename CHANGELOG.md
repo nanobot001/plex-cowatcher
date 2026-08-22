@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added additive TV, Classic TV, and Anime per-session episode progress projections and source-honest meters to expanded Overview sessions. (2026-08-21)
+- Added additive Movie per-session progress projections (`Completed`, `Approximate progress`, and `Progress unavailable`) with accessible meters to expanded Movie Overview sessions. (2026-08-21)
 - Added audiobook folder-path parsing, canonical `audiobook_books` linking, conservative Audnexus/Google enrichment, a dry-run-first resumable `project.audiobook_backfill` CLI workflow, and live rollout cleanup including Wheel of Time series normalization. (2026-06-28)
 - Refined the dashboard overview with collapsible summary cards, a desktop grid plus mobile carousel for in-progress media, and audiobook title normalization so `Cosmere Warbreaker` now displays as `Warbreaker`. (2026-06-30)
 - Polished the dashboard overview with reordered filters, corrected watched-time totals, and compact shared-watch badges that can show multiple people without crowding the cards. (2026-07-01)
