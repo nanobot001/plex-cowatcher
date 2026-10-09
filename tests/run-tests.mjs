@@ -62,6 +62,11 @@ import { ArchivePlexViewRecoveryService } from "../dist/service/archivePlexViewR
 import { TautulliBackfillService } from "../dist/service/tautulliBackfillService.js";
 import { PlexMovieIdentityService } from "../dist/service/plexMovieIdentityService.js";
 import { buildCowatchReviewComponents, buildCowatchReviewEmbed } from "../dist/discord/prompts.js";
+import {
+  AchievementEvidenceReader,
+  evaluateSubjectAchievements,
+  evaluateAllAchievements
+} from "../dist/achievements/index.js";
 
 const tests = [];
 
@@ -6745,6 +6750,327 @@ test("canonical Plex movie identity repair is exact-GUID, dry-run safe, idempote
     const media = dashboard.getMedia({ category: "movie", limit: 50, offset: 0 });
     assert.equal(media.items.filter((item) => item.groupKey.includes("current-panther")).length, 1);
   });
+});
+
+test("3-6-6A catalog expresses all families with badge descriptors and pure evaluator determinism", () => {
+  const rules = [
+    {
+      ruleId: "first_film",
+      version: 1,
+      family: "first_watch",
+      unit: "movie",
+      threshold: 1,
+      scope: { category: "movie" },
+      badge: {
+        badgeKey: "first_film",
+        tier: "bronze",
+        title: "First Film",
+        description: "Watched your first movie"
+      }
+    },
+    {
+      ruleId: "movie_buff_5",
+      version: 1,
+      family: "watch_count",
+      unit: "movie",
+      threshold: 5,
+      scope: { category: "movie" },
+      badge: {
+        badgeKey: "movie_buff",
+        tier: "silver",
+        title: "Movie Buff 5",
+        description: "Watched 5 movies"
+      }
+    },
+    {
+      ruleId: "rewatch_veteran_2",
+      version: 1,
+      family: "rewatch",
+      unit: "movie",
+      threshold: 2,
+      scope: { category: "movie" },
+      badge: {
+        badgeKey: "rewatcher",
+        tier: "gold",
+        title: "Rewatch Veteran",
+        description: "Rewatched 2 movies"
+      }
+    },
+    {
+      ruleId: "cowatch_party_3",
+      version: 1,
+      family: "confirmed_cowatch",
+      unit: "session",
+      threshold: 3,
+      badge: {
+        badgeKey: "cowatch_trio",
+        tier: "gold",
+        title: "Movie Night Trio",
+        description: "Watched 3 movies together"
+      }
+    },
+    {
+      ruleId: "series_finisher",
+      version: 1,
+      family: "completion",
+      unit: "episode",
+      threshold: 10,
+      badge: {
+        badgeKey: "series_complete",
+        tier: "platinum",
+        title: "Series Finisher",
+        description: "Completed an entire series"
+      }
+    }
+  ];
+
+  const subject1 = {
+    userId: 1,
+    username: "Tony",
+    displayName: "Tony",
+    plays: [
+      {
+        id: 10,
+        sourceKind: "playback_observation",
+        userId: 1,
+        ratingKey: "m-1",
+        mediaType: "movie",
+        category: "movie",
+        title: "Movie 1",
+        watchedAt: "2026-08-01T12:00:00Z",
+        completed: true
+      },
+      {
+        id: 11,
+        sourceKind: "playback_observation",
+        userId: 1,
+        ratingKey: "m-2",
+        mediaType: "movie",
+        category: "movie",
+        title: "Movie 2",
+        watchedAt: "2026-08-02T12:00:00Z",
+        completed: true
+      },
+      {
+        id: 12,
+        sourceKind: "playback_observation",
+        userId: 1,
+        ratingKey: "m-3",
+        mediaType: "movie",
+        category: "movie",
+        title: "Movie 3",
+        watchedAt: "2026-08-03T12:00:00Z",
+        completed: true
+      }
+    ],
+    replaysByRatingKey: new Map([["m-1", 2]]),
+    replayEvidenceByRatingKey: new Map([
+      ["m-1", [{ kind: "playback_observation", id: 13, eventTime: "2026-08-05T12:00:00Z", title: "Movie 1 Replay" }]]
+    ]),
+    confirmedCoWatches: [],
+    completedAudiobookCount: 0,
+    hasInferredCoWatchOnly: true,
+    hasUnknownDenominator: true
+  };
+
+  const context = { timezone: "America/New_York", nowIso: "2026-10-09T00:00:00Z" };
+  const results = evaluateSubjectAchievements(rules, subject1, context);
+
+  // 1. First watch: earned with crossing date
+  const firstFilm = results.find((r) => r.ruleId === "first_film");
+  assert.equal(firstFilm.state, "earned");
+  assert.equal(firstFilm.earnedAt, "2026-08-01T12:00:00Z");
+  assert.equal(firstFilm.supportingEvidence.length, 1);
+
+  // 2. Watch count: in_progress with 3 of 5
+  const movieBuff = results.find((r) => r.ruleId === "movie_buff_5");
+  assert.equal(movieBuff.state, "in_progress");
+  assert.equal(movieBuff.progress.current, 3);
+  assert.equal(movieBuff.progress.target, 5);
+
+  // 3. Rewatch: earned with 2 replays
+  const rewatcher = results.find((r) => r.ruleId === "rewatch_veteran_2");
+  assert.equal(rewatcher.state, "earned");
+  assert.equal(rewatcher.progress.current, 2);
+
+  // 4. Confirmed co-watch: blocked because user has only inferred co-watch evidence
+  const cowatch = results.find((r) => r.ruleId === "cowatch_party_3");
+  assert.equal(cowatch.state, "blocked");
+  assert.ok(cowatch.reason.includes("Inferred co-watching cannot satisfy"));
+
+  // 5. Completion: unknown because denominator is unknown
+  const finisher = results.find((r) => r.ruleId === "series_finisher");
+  assert.equal(finisher.state, "unknown");
+  assert.ok(finisher.reason.includes("Unknown denominator"));
+
+  // 6. Determinism: identical input yields byte-identical output
+  const watermark = { maxObservationId: 100, maxArchiveEventId: 50, maxConfirmationId: 10, maxAdjudicationId: 5 };
+  const payload1 = evaluateAllAchievements(rules, [subject1], watermark, context);
+  const payload2 = evaluateAllAchievements(rules, [subject1], watermark, context);
+  assert.deepEqual(payload1, payload2);
+  assert.equal(JSON.stringify(payload1), JSON.stringify(payload2));
+
+  // 7. Missing/null timestamp yields earnedAt = null without failure
+  const nullDateSubject = {
+    ...subject1,
+    plays: [{ ...subject1.plays[0], watchedAt: null }]
+  };
+  const nullDateResults = evaluateSubjectAchievements(rules, nullDateSubject, context);
+  const nullDateFirstFilm = nullDateResults.find((r) => r.ruleId === "first_film");
+  assert.equal(nullDateFirstFilm.state, "earned");
+  assert.equal(nullDateFirstFilm.earnedAt, null);
+});
+
+test("3-6-6A evidence reader extracts canonical merged plays, honors replay semantics, and deduplicates linked archive events", async () => {
+  await withTestDb(async (db) => {
+    // Seed users: Tony (visible) and Secret (hidden)
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+             (2, 'Secret', 'Secret', 0, 0, 1, 0, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // Tony direct observations
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (1, 1, 'movie-1', 'movie', 'Movies', 'Inception', '2026-08-01T10:00:00Z', 1, 7200, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z'),
+             (2, 1, 'movie-1', 'movie', 'Movies', 'Inception', '2026-08-02T10:00:00Z', 1, 7200, '2026-08-02T10:00:00Z', '2026-08-02T10:00:00Z'),
+             (3, 2, 'movie-2', 'movie', 'Movies', 'Interstellar', '2026-08-01T10:00:00Z', 1, 7200, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z')
+    `).run();
+
+    // Archive events
+    db.prepare(`
+      INSERT INTO archive_watch_events (id, user_id, source, source_record_key, title_snapshot, event_time, event_time_precision, completed, resolution_status, captured_at)
+      VALUES (101, 1, 'plex_api_history', 'plex-rec-1', 'Inception', '2026-08-01T10:00:00Z', 'second', 1, 'resolved', '2026-08-01T10:00:00Z'),
+             (102, 1, 'plex_api_history', 'plex-rec-2', 'The Prestige', '2026-08-03T10:00:00Z', 'second', 1, 'resolved', '2026-08-03T10:00:00Z')
+    `).run();
+
+    // Link archive event 101 to observation 1 (duplicate/same_event)
+    db.prepare(`
+      INSERT INTO archive_observation_links (archive_event_id, playback_observation_id, relation, method, confidence, created_at)
+      VALUES (101, 1, 'same_event', 'exact_timestamp', 'high', '2026-08-01T10:00:00Z')
+    `).run();
+
+    const reader = new AchievementEvidenceReader(db);
+    const watermark = reader.getWatermark();
+    assert.equal(watermark.maxObservationId, 3);
+    assert.equal(watermark.maxArchiveEventId, 102);
+
+    const subjects = reader.readAllSubjects();
+
+    // Hidden listener (Secret) must be completely absent from results
+    assert.equal(subjects.length, 1);
+    assert.equal(subjects[0].userId, 1);
+
+    const tony = subjects[0];
+    // Plays: observation 1, observation 2, and unlinked archive event 102.
+    // Archive event 101 MUST NOT be present because it is linked as same_event.
+    assert.equal(tony.plays.length, 3);
+    assert.ok(tony.plays.some((p) => p.title === "The Prestige"));
+    assert.equal(tony.plays.filter((p) => p.title === "Inception").length, 2);
+
+    // Replay semantics: Inception watched on 2 separate days yields 1 replay
+    assert.equal(tony.replaysByRatingKey.get("movie-1"), 1);
+
+    const rule = {
+      ruleId: "rewatch_1",
+      version: 1,
+      family: "rewatch",
+      unit: "movie",
+      threshold: 1,
+      badge: { badgeKey: "rewatch_1", tier: "bronze", title: "Rewatcher", description: "Rewatched 1 movie" }
+    };
+
+    const results = evaluateSubjectAchievements([rule], tony, { timezone: "UTC" });
+    assert.equal(results[0].state, "earned");
+  });
+});
+
+test("3-6-6A evidence reader reconciles Discord and browser co-watch confirmations and supports retraction", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+             (2, 'Viewer', 'Viewer', 0, 1, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 1. Discord confirmation: 1 confirmed co-watch
+    db.prepare(`
+      INSERT INTO watch_events (id, source_user_id, rating_key, media_type, title, watched_at, created_at, updated_at)
+      VALUES (1, 1, 'movie-cowatch-1', 'movie', 'Together 1', '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z')
+    `).run();
+    db.prepare(`
+      INSERT INTO cowatch_confirmations (id, watch_event_id, target_user_id, confirmation_method, status, created_at, updated_at)
+      VALUES (1, 1, 2, 'discord_button', 'confirmed', '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z')
+    `).run();
+
+    const reader = new AchievementEvidenceReader(db);
+    let subjects = reader.readAllSubjects();
+    assert.equal(subjects.find((s) => s.userId === 1).confirmedCoWatches.length, 1);
+    assert.equal(subjects.find((s) => s.userId === 2).confirmedCoWatches.length, 1);
+
+    const cowatchRule = {
+      ruleId: "cowatch_2",
+      version: 1,
+      family: "confirmed_cowatch",
+      unit: "session",
+      threshold: 2,
+      badge: { badgeKey: "cowatch_2", tier: "silver", title: "Double Co-watch", description: "Watched 2 movies together" }
+    };
+
+    // Before second co-watch: in_progress (1/2)
+    let results = evaluateSubjectAchievements([cowatchRule], subjects.find((s) => s.userId === 1), { timezone: "UTC" });
+    assert.equal(results[0].state, "in_progress");
+    assert.equal(results[0].progress.current, 1);
+
+    // 2. Browser adjudication: candidate-A decision='yes'
+    db.prepare(`
+      INSERT INTO cowatch_adjudications (id, candidate_id, source_user_id, target_user_id, rating_key, rule_version, supporting_observation_ids_json, decision, actor_kind, method, request_id, created_at)
+      VALUES (1, 'cand-1', 1, 2, 'movie-cowatch-2', 'v1', '[]', 'yes', 'operator', 'browser', 'req-1', '2026-08-02T10:00:00Z')
+    `).run();
+
+    subjects = reader.readAllSubjects();
+    assert.equal(subjects.find((s) => s.userId === 1).confirmedCoWatches.length, 2);
+    results = evaluateSubjectAchievements([cowatchRule], subjects.find((s) => s.userId === 1), { timezone: "UTC" });
+    assert.equal(results[0].state, "earned");
+    assert.equal(results[0].progress.current, 2);
+
+    // 3. Retraction: browser adjudication decision='clear'
+    db.prepare(`
+      INSERT INTO cowatch_adjudications (id, candidate_id, source_user_id, target_user_id, rating_key, rule_version, supporting_observation_ids_json, decision, actor_kind, method, request_id, created_at)
+      VALUES (2, 'cand-1', 1, 2, 'movie-cowatch-2', 'v1', '[]', 'clear', 'operator', 'browser', 'req-2', '2026-08-03T10:00:00Z')
+    `).run();
+
+    // Next read immediately drops back to 1 confirmed co-watch without sticky persistence
+    subjects = reader.readAllSubjects();
+    assert.equal(subjects.find((s) => s.userId === 1).confirmedCoWatches.length, 1);
+    results = evaluateSubjectAchievements([cowatchRule], subjects.find((s) => s.userId === 1), { timezone: "UTC" });
+    assert.equal(results[0].state, "in_progress");
+    assert.equal(results[0].progress.current, 1);
+  });
+});
+
+test("3-6-6A isolated achievements module has zero imports from dashboard services, server, or web", () => {
+  const dir = path.resolve("src/achievements");
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith(".ts"));
+  assert.ok(files.length >= 3);
+
+  const forbiddenImports = [
+    "dashboardService",
+    "src/server",
+    "src/web",
+    "express"
+  ];
+
+  for (const file of files) {
+    const content = fs.readFileSync(path.join(dir, file), "utf8");
+    for (const forbidden of forbiddenImports) {
+      assert.ok(
+        !content.includes(forbidden),
+        `File src/achievements/${file} must not import from '${forbidden}'`
+      );
+    }
+  }
 });
 
 

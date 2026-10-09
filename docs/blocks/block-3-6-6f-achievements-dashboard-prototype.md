@@ -7,20 +7,24 @@
 
 ## Goal
 
-Make achievements visible in the household dashboard as a **prototype** that consumes only the public achievements contract, proving the contract is sufficient for a later polished badge experience or standalone app.
+Make personal media achievements and identity visible in the household dashboard as an expressive, colorful **Media Passport / Showcase Shelf** on People cards, consuming only the public achievements contract to prove the contract is ready for both the dashboard and a future standalone showcase app.
 
 ## Scope
 
-- Achievements section on People cards (and the person detail view if one exists) showing each result's state, progress, and `earnedAt`.
+- **Four Showcase Facets** on People cards (and Person detail view):
+  1. *Trophy Shelf*: Responsive shelf of completed series/anime/audiobooks using Plex poster artwork (`posterUrl`) with rewatch loyalty ribbons (Bronze/Silver/Gold).
+  2. *Taste & Genre Affinity*: Colorful devotion pills/meters (e.g., hours logged in top genres, shows completed vs. paused/abandoned).
+  3. *Obsession Spotlight*: Prominent card highlighting the listener's #1 most-watched show/franchise by hours.
+  4. *Shared Viewing Bonds*: Chips/badges celebrating series completed 100% together with household co-watch partners.
 - Honest rendering of all five states: `earned`, `in_progress`, `not_earned`, `blocked`, `unknown`. Blocked and unknown are visually distinct from not earned and never look like failure; state meaning is not conveyed by color alone.
-- Explanation affordance per result (why earned, blocked, or unknown) from contract supporting references.
-- Placeholder badge visuals derived from `badgeKey` and `tier` only (for example a neutral token or glyph). No final artwork.
-- Data fetched only through the 3-6-6C HTTP contract route; no direct use of dashboard internals or evaluator code.
+- Explanation affordance per badge (why earned, blocked, or unknown) from contract supporting references.
+- Artwork rendered from contract `posterUrl` with clean glyph/token fallbacks for non-poster milestone badges.
+- Data fetched only through the 3-6-6C HTTP contract route (`GET /api/achievements`); no direct use of dashboard internals or evaluator code.
 - Follows AGENTS.md layout standards: no horizontal overflow from 320px to 1440px, balanced padding, thin scrollbars, content-first sizing.
 
 ## Out Of Scope
 
-- Polished badge artwork, animations, rarity/tier design, notifications, sharing, rankings, standalone app, persistence.
+- Standalone app development, real-time push notifications, DB persistence, external sharing APIs, manual award overrides.
 
 ## Likely Files Or Areas
 
@@ -30,7 +34,9 @@ Make achievements visible in the household dashboard as a **prototype** that con
 
 ## Acceptance Criteria
 
-- The dashboard renders achievements solely from the public contract (verified by a test asserting no other achievement data path).
+- The dashboard renders personal showcase data solely from the public contract (verified by a test asserting no other achievement data path).
+- The four facets (Trophy Shelf, Taste & Genre Affinity, Obsession Spotlight, Shared Viewing Bonds) render cleanly on People cards.
+- Completed show posters render via `posterUrl` with rewatch ribbons; missing poster assets fall back cleanly without breaking layout.
 - All five states render distinctly with accessible labels and keyboard-reachable explanations.
 - Hidden listeners never appear.
 - Geometry passes at 320px, 390px, 768px, 1024px, and 1440px without page-level horizontal overflow.

@@ -150,11 +150,11 @@ The full 3-2m sequence, the 6E shared-detail sequence, 6F/6G, and the canonical 
       1. `block-3-6-5a-versioned-archive-query-contract.md`
       2. `block-3-6-5b-canonical-json-csv-export.md`
       3. `block-3-6-5c-verified-backup-restore-and-disaster-recovery.md`
-   9. `block-3-6-6-achievements-engine-v1.md` - planned umbrella, restructured 2026-10-09. Compute-on-read, portable module, dashboard prototype. Direction: `docs/design/achievements-product-direction.md`. Implement in order:
+   9. `block-3-6-6-achievements-engine-v1.md` - planned umbrella, restructured 2026-10-09 for Personal Media Showcase & Identity Passport. Compute-on-read, portable module, dashboard prototype. Direction: `docs/design/achievements-product-direction.md`. Implement in order:
       1. `block-3-6-6a-achievement-evidence-and-versioned-rule-contract.md` - contract, evidence reader, and pure evaluator.
-      2. `block-3-6-6c-first-watch-and-watch-count-rules.md` - first rule pack plus read-only HTTP/CLI contract surface.
-      3. `block-3-6-6d-rewatch-and-confirmed-cowatch-rules.md` - rewatch and confirmed co-watch rule pack.
-      4. `block-3-6-6f-achievements-dashboard-prototype.md` - People-card prototype over the public contract.
+      2. `block-3-6-6c-first-watch-and-watch-count-rules.md` - volume milestones, genre affinity, obsession spotlight rules + read-only HTTP/CLI contract surface.
+      3. `block-3-6-6d-rewatch-and-confirmed-cowatch-rules.md` - show mastery (Trophy Shelf poster badges), rewatch loyalty ribbons, and shared viewing bonds.
+      4. `block-3-6-6f-achievements-dashboard-prototype.md` - People-card Personal Media Showcase prototype over the public contract.
       - `block-3-6-6b-deterministic-engine-persistence-and-recalculation.md` - deferred optional earned ledger.
       - `block-3-6-6e-series-genre-and-library-completion-rules.md` - deferred pending denominator/classification evidence.
 - `block-3-2n-5d-automatic-audiobook-chapter-proof-handoff.md` - planned umbrella.

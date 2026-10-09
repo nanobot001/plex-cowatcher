@@ -1,7 +1,9 @@
 # Block 3-6-6A: Contract, Evidence Reader, And Pure Evaluator
 
-> Status: Planned (restructured 2026-10-09).
-> Result: Not implemented.
+> Status: Implemented on 2026-10-09.
+> Result: Implemented.
+> Verification: `npm run verify:block` - passed (159/159 unit tests, 79 browser regression specs, tools verified).
+> Notes: Built isolated `src/achievements/` engine with pure evaluator, evidence reader reusing canonical play streams, replay semantics, and People co-watch attribution, and published `docs/data/achievements-contract.md`.
 > Dependency: Block 3-6-1 (timestamp provenance fix). Not dependent on 3-6-5A.
 > Direction: `docs/design/achievements-product-direction.md`.
 

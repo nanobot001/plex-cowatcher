@@ -8,13 +8,27 @@ Current state:
 - **Block 3-2o (Dashboard Accessibility & Release Gate)**: Closed administratively as satisfied. Continuous Playwright browser regressions (80 specs across 320px–1440px) enforce cross-surface responsiveness, modal trapping, focus management, and data boundary protection.
 - Deterministic verification: 155/155 backend unit/service tests pass.
 
-Next step:
-- Implement **Block 3-6-6A: Contract, Evidence Reader, And Pure Evaluator** when ready.
+## 2026-10-09 — Block 3-6-6A Contract, Evaluator, and Media Showcase Architecture Locked
 
-Achievements restructure (2026-10-09, planning only):
-- Architecture review found 3-6-6A depended on unimplemented 3-6-5A and on an eligibility matrix that 3-6-1 closed without; duplicated existing replay semantics and People co-watch attribution; and had no presentation block.
-- Locked decisions: compute-on-read (no result tables), mirror current evidence on retraction, dashboard prototype in v1, portable module and versioned contract because achievements will later become polished badges and possibly a standalone app.
-- Direction recorded in `docs/design/achievements-product-direction.md`. Order: 3-6-6A → 3-6-6C → 3-6-6D → 3-6-6F. 3-6-6B is now a deferred optional earned ledger; 3-6-6E stays deferred.
+Current state:
+- **Block 3-6-6A** is implemented and verified on branch `codex/3-6-6a-achievements-contract-and-evaluator`.
+- Built the isolated achievements engine (`src/achievements/`):
+  - Declarative rule catalog schema with badge descriptors (`badgeKey`, `tier`, `title`, `description`, `posterUrl`, `stats`), `ShowcaseFacet` union (`trophy_shelf`, `taste_affinity`, `obsession_spotlight`, `cowatch_bond`), and result contract (`contractVersion: 1`, `watermark`, `earnedAt`, `supportingEvidence`).
+  - Pure deterministic evaluator function `(rules, evidence, context) => results` with stable sorting and byte-identical determinism.
+  - SQLite evidence reader (`AchievementEvidenceReader`) reconciling canonical merged play streams (deduplicating linked archive rows), replay semantics (`evaluateReplaySemantics`), and People co-watch attribution (reconciling Discord confirmations with browser adjudications).
+  - Mirror-current-evidence retraction policy verified: clearing an adjudication immediately un-earns/reverts co-watch milestones without stored state.
+  - Published public contract and evidence-eligibility matrix in `docs/data/achievements-contract.md`.
+  - Zero imports from Express, dashboard services, or browser code to ensure complete portability for future standalone app clients.
+- Locked **Personal Media Showcase & Identity Passport** product philosophy into architecture and child block docs (`docs/design/achievements-product-direction.md`, `docs/blocks/block-3-6-6*`, `docs/blocks/README.md`):
+  - *The Trophy Shelf*: Completed series/anime/audiobooks using Plex poster artwork (`posterUrl`) with rewatch loyalty ribbons.
+  - *Taste & Genre Affinity*: Devotion metrics (hours logged per genre, started vs completed ratios).
+  - *The Obsession Spotlight*: Superlative highlighting listener's #1 most-watched show/franchise by hours.
+  - *Shared Viewing Bonds*: Badges celebrating series watched 100% together.
+- Verification: `npm run verify:block` passed cleanly (159/159 unit tests, 79 browser regression specs, syntax, tools).
+
+Next step:
+- Commit and push `codex/3-6-6a-achievements-contract-and-evaluator`.
+- Branch to `codex/3-6-6c-first-watch-and-watch-count-rules` and implement **Block 3-6-6C: First-Watch And Watch-Count Rules** (volume milestones, genre affinity, obsession spotlight rules + read-only HTTP/CLI contract surface).
 
 ## 2026-08-21 — 3-2n-6F-B Movie Session Progress Implemented and Verified
 
