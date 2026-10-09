@@ -31,6 +31,7 @@ export class WatcherService {
   insertWatchEvent(row: TautulliHistoryRow): number | undefined {
     const source = this.users.findSourceByUsername(row.user);
     if (!source || !countsAsCompleted(row)) return undefined;
+    if (!row.watchedAt || row.watchedAtProvenance === "unknown") return undefined;
     if (this.hasNearbyDuplicate(source.id, row.ratingKey, row.watchedAt)) return undefined;
 
     const now = nowIso();

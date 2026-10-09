@@ -131,6 +131,9 @@ export class IngestionService {
    * to ensure no duplicate prompts are generated while keeping Phase 1 functionality working.
    */
   ingestRow(userId: number, row: TautulliHistoryRow): { inserted: boolean; watchEventId?: number } {
+    if (!row.ratingKey || !row.watchedAt || row.watchedAtProvenance === "unknown") {
+      return { inserted: false };
+    }
     const now = nowIso();
     const completedVal = (row.completed || countsAsCompleted(row)) ? 1 : 0;
 

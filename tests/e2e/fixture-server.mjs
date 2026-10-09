@@ -9,7 +9,7 @@ const fixtureDir = path.resolve(".tmp/dashboard-e2e");
 fs.rmSync(fixtureDir, { recursive: true, force: true });
 fs.mkdirSync(fixtureDir, { recursive: true });
 const db = openMigratedDatabase(path.join(fixtureDir, "fixture.sqlite"));
-const now = Date.now();
+const now = new Date(new Date().setUTCHours(18, 0, 0, 0)).getTime();
 const isoMinutesAgo = (minutes) => new Date(now - minutes * 60_000).toISOString();
 const artworkDataUrl = (label, color) => "data:image/svg+xml;utf8," + encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900"><rect width="600" height="900" fill="${color}"/><text x="50%" y="50%" text-anchor="middle" fill="white">${label}</text></svg>`

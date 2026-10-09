@@ -231,7 +231,7 @@ export interface TautulliHistoryRow {
   watchedAt: string;
   sessionStartAt?: string;
   sessionEndAt?: string;
-  watchedAtProvenance?: "source" | "fallback";
+  watchedAtProvenance?: "source" | "fallback" | "unknown";
   percentComplete?: number;
   percentCompleteProvenance?: "source" | "unknown";
   viewOffset?: number;

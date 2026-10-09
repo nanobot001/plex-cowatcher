@@ -1,8 +1,9 @@
 # Block 3-6-1: Archive Provenance Contract Closure
 
-> Status: Planned corrective closure.
-> Result: Not implemented.
-> Notes: The archive schema and ingestion foundation already exist. This block closes remaining provenance ambiguity; it must not recreate the archive.
+> Status: Implemented on 2026-10-08.
+> Result: Implemented.
+> Verification: Representative database audit (100% valid source timestamps, 0 fallback rows) and targeted normalization unit tests.
+> Notes: Tautulli adapter now explicitly normalizes missing source timestamps to unknown provenance without falling back to execution time. Replay semantics and provenance separation already established.
 
 ## Goal
 

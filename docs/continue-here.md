@@ -1,5 +1,21 @@
 # Continue Here
 
+## 2026-10-08 — Blocks 3-6-1, 3-7, and 3-2o Closed; Selected Block 3-6-6 Next
+
+Current state:
+- **Block 3-6-1 (Archive Provenance Contract)**: Implemented and closed. A live audit confirmed 100% of production observations have valid source timestamps. Patched `tautulliAdapter.ts`, `watcher.ts`, and `ingestionService.ts` so missing source timestamps evaluate to explicit `unknown` provenance rather than fabricating current execution time (`Date.now()`).
+- **Block 3-7 (Operations Readiness)**: Closed administratively as an operational reference. Single-service PM2 daemon supervision, backups, and recovery procedures are already running and active in production.
+- **Block 3-2o (Dashboard Accessibility & Release Gate)**: Closed administratively as satisfied. Continuous Playwright browser regressions (80 specs across 320px–1440px) enforce cross-surface responsiveness, modal trapping, focus management, and data boundary protection.
+- Deterministic verification: 155/155 backend unit/service tests pass.
+
+Next step:
+- Implement **Block 3-6-6A: Contract, Evidence Reader, And Pure Evaluator** when ready.
+
+Achievements restructure (2026-10-09, planning only):
+- Architecture review found 3-6-6A depended on unimplemented 3-6-5A and on an eligibility matrix that 3-6-1 closed without; duplicated existing replay semantics and People co-watch attribution; and had no presentation block.
+- Locked decisions: compute-on-read (no result tables), mirror current evidence on retraction, dashboard prototype in v1, portable module and versioned contract because achievements will later become polished badges and possibly a standalone app.
+- Direction recorded in `docs/design/achievements-product-direction.md`. Order: 3-6-6A → 3-6-6C → 3-6-6D → 3-6-6F. 3-6-6B is now a deferred optional earned ledger; 3-6-6E stays deferred.
+
 ## 2026-08-21 — 3-2n-6F-B Movie Session Progress Implemented and Verified
 
 Current state:

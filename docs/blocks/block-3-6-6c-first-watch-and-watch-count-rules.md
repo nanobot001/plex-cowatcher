@@ -1,39 +1,42 @@
 # Block 3-6-6C: First-Watch And Watch-Count Rules
 
-> Status: Planned.
+> Status: Planned (restructured 2026-10-09).
 > Result: Not implemented.
-> Dependency: Blocks 3-6-6A and 3-6-6B implemented and verified.
+> Dependency: Block 3-6-6A implemented and verified.
+> Direction: `docs/design/achievements-product-direction.md`.
 
 ## Goal
 
-Deliver the first bounded achievement pack using event evidence that does not require a library-wide denominator.
+Ship the first real achievement pack and the read-only public contract surface that the dashboard prototype and any future client will consume.
 
 ## Scope
 
-- Define reviewed first-watch and watch-count milestone rules for one visible person and canonical media/category scopes.
-- Count only eligible deduplicated archive events under the 3-6-6A evidence matrix.
+- Reviewed first-watch and watch-count rules per visible person and canonical category, each declaring its `unit` (for example distinct movies, distinct episodes, completed audiobook books) and a badge descriptor.
+- Count only eligible, deduplicated evidence through the 3-6-6A reader.
 - Preserve removed-media evidence and explicit source uncertainty.
-- Add deterministic support records and recalculation fixtures.
+- **Read-only contract surface:** one localhost HTTP route and one CLI/tool read command returning the 3-6-6A versioned contract. Update `docs/tool-manifest.yaml`, `docs/tool-surface.md`, and `docs/permissions.md`.
 
 ## Out Of Scope
 
-- Rewatch, co-watch, series/genre/library completion, rankings, or notifications.
+- Rewatch, co-watch, completion families, dashboard UI, persistence, notifications, rankings.
 
 ## Likely Files Or Areas
 
-- versioned achievement rule catalog
-- achievement evaluator fixtures/tests
-- bounded result read documentation
+- `src/achievements/` rule catalog entries
+- `src/server/routes.ts` read route and `src/cli/cli.ts` read command
+- tool manifest, surface, and permissions docs
+- `tests/run-tests.mjs` fixtures
 
 ## Acceptance Criteria
 
-- Duplicate source evidence does not inflate counts.
-- Unknown/ambiguous event identity blocks only the affected result and remains explainable.
+- Duplicate or linked source evidence does not inflate counts.
+- Each rule names its unit; audiobook observations are never counted as books.
+- Unknown or ambiguous event identity blocks only the affected result and stays explainable.
 - Recovered archive evidence can unlock a result without rewriting raw history.
-- Hidden listeners are excluded from public result reads.
-- `npm run verify:block` passes.
+- HTTP and CLI return identical contract payloads; hidden listeners and private fields are absent.
+- `npm run verify:block` passes, including `verify:tools`.
 
 ## Verification
 
 - `npm run verify:block`
-- First-event, threshold, duplicate, removed-media, unknown, hidden-listener, and recalculation tests
+- First-event, threshold, duplicate, removed-media, unknown, hidden-listener, unit, and HTTP/CLI parity tests

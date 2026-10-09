@@ -2,7 +2,7 @@
 
 > Status: Deferred pending evidence audit.
 > Result: Not implemented.
-> Dependency: Blocks 3-6-6A and 3-6-6B plus trustworthy denominator/classification evidence.
+> Dependency: Block 3-6-6A plus trustworthy denominator/classification evidence. Must use the 3-6-6A catalog, contract, and badge descriptors.
 
 ## Goal
 

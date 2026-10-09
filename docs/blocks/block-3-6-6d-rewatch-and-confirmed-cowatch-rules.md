@@ -1,39 +1,42 @@
 # Block 3-6-6D: Rewatch And Confirmed Co-Watch Rules
 
-> Status: Planned.
+> Status: Planned (restructured 2026-10-09).
 > Result: Not implemented.
-> Dependency: Blocks 3-6-6A and 3-6-6B implemented and verified.
+> Dependency: Blocks 3-6-6A and 3-6-6C implemented and verified.
+> Direction: `docs/design/achievements-product-direction.md`.
 
 ## Goal
 
-Add replay and household co-watch achievements only where session/provenance evidence supports the claim.
+Add replay and household co-watch achievements only where existing session and confirmation evidence supports the claim.
 
 ## Scope
 
-- Define bounded rewatch milestones over evidence-backed distinct plays under current replay semantics.
-- Define confirmed co-watch milestones over explicit approved co-watch evidence.
-- Preserve listener attribution, household-local day/session meaning, supporting records, and blocked/unknown states.
-- Add positive and structurally different negative fixtures for duplicate observations, same-day continuation, inferred co-watch, and conflicting evidence.
+- Rewatch rules over distinct replays as defined by `evaluateReplaySemantics`; no separate replay logic.
+- Confirmed co-watch rules over the existing People co-watch attribution, which reconciles Discord `cowatch_confirmations` with the latest non-cleared browser `cowatch_adjudications` decision.
+- Preserve listener attribution, household-local day/session meaning, supporting references, and blocked/unknown states.
+- Badge descriptors for every rule.
+- Positive and structurally different negative fixtures.
 
 ## Out Of Scope
 
-- Inferred/proximity co-watch achievements, first/count rules, completion rules, or changing replay/session reconstruction.
+- Inferred/proximity co-watch achievements, changes to replay or session reconstruction, completion rules, persistence, UI.
 
 ## Likely Files Or Areas
 
-- versioned achievement rule catalog
-- replay/session and confirmed co-watch read contracts
-- achievement evaluator fixtures/tests
+- `src/achievements/` rule catalog entries
+- evidence reader adapters over replay semantics and People attribution
+- `tests/run-tests.mjs` fixtures
 
 ## Acceptance Criteria
 
 - Same-session duplicate observations do not become a rewatch.
 - A supported distinct replay can satisfy a reviewed threshold.
-- Only confirmed co-watch evidence satisfies co-watch rules; inferred/unknown evidence is blocked.
-- Results remain deterministic and explainable after recalculation.
+- Only confirmed co-watch evidence satisfies co-watch rules; inferred or unknown evidence is blocked.
+- Achievement co-watch counts match the People page for the same evidence.
+- Clearing an adjudication updates the result on the next read.
 - `npm run verify:block` passes.
 
 ## Verification
 
 - `npm run verify:block`
-- Replay/session, duplicate, confirmed/inferred co-watch, conflict, and recalculation tests
+- Replay/session, duplicate, confirmed versus inferred co-watch, adjudication clear, People parity, and conflict tests

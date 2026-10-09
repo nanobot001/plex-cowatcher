@@ -551,7 +551,9 @@ test("6J-A service and API consumers share current, furthest, and session-as-of 
       const instance = app.listen(0, "127.0.0.1", () => resolve(instance));
     });
     const base = `http://127.0.0.1:${server.address().port}`;
+    const realDateNow = Date.now;
     try {
+      Date.now = () => new Date("2026-08-20T15:00:00.000Z").getTime();
       const read = async (path) => {
         const response = await fetch(base + path);
         const body = await response.json();
@@ -614,6 +616,7 @@ test("6J-A service and API consumers share current, furthest, and session-as-of 
       assert.equal(tony.completionFacts.completedAudiobookBooks, 0);
       assert.ok(tony.completionFacts.passedAudiobookChapters >= 1);
     } finally {
+      Date.now = realDateNow;
       await new Promise((resolve) => server.close(resolve));
     }
     assert.deepEqual(db.prepare("SELECT * FROM playback_observations ORDER BY id").all(), rawBefore);
@@ -1241,6 +1244,20 @@ test("Tautulli history rows prefer canonical play_duration without altering its 
   assert.equal(row.percentComplete, 17);
   assert.equal(row.duration, 31142);
   assert.equal(row.viewOffset, undefined);
+});
+
+test("Tautulli history rows preserve unknown timestamp when date and stopped are missing", () => {
+  const row = normalizeTautulliHistoryRow({
+    user: "Tony",
+    rating_key: "movie-missing-time",
+    media_type: "movie",
+    title: "No Timestamp Movie"
+  });
+
+  assert.equal(row.watchedAt, "");
+  assert.equal(row.sessionStartAt, undefined);
+  assert.equal(row.sessionEndAt, undefined);
+  assert.equal(row.watchedAtProvenance, "unknown");
 });
 
 test("dedupe builds stable keys", () => {
@@ -2390,7 +2407,7 @@ test("CowatchingIntelligenceService infers co-watching from overlapping play tim
     `).run(viewerId);
 
     const service = new CowatchingIntelligenceService(db);
-    const events = service.getCowatchingEvents({ days: 100 });
+    const events = service.getCowatchingEvents({ days: 365 });
 
     assert.equal(events.length, 1);
     const event = events[0];
@@ -2450,7 +2467,7 @@ test("CowatchingIntelligenceService respects explicit Discord confirmations", as
     `).run(watchEventId, user3Id);
 
     const service = new CowatchingIntelligenceService(db);
-    const events = service.getCowatchingEvents({ days: 100 });
+    const events = service.getCowatchingEvents({ days: 365 });
 
     assert.equal(events.length, 1);
     const event = events[0];
@@ -2502,7 +2519,7 @@ test("CowatchingIntelligenceService handles non-qualifying overlap, missing timi
     `).run(user3Id);
 
     const service = new CowatchingIntelligenceService(db);
-    const events = service.getCowatchingEvents({ days: 100 });
+    const events = service.getCowatchingEvents({ days: 365 });
 
     // There should be 1 event (Tony & User 3). Viewer is not qualifying so they shouldn't be in the participants list.
     assert.equal(events.length, 1);

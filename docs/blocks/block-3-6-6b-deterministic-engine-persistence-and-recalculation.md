@@ -1,41 +1,36 @@
-# Block 3-6-6B: Deterministic Engine, Persistence, And Recalculation
+# Block 3-6-6B: Earned Ledger (Deferred, Optional)
 
-> Status: Planned.
+> Status: Deferred (restructured 2026-10-09).
 > Result: Not implemented.
-> Dependency: Block 3-6-6A implemented and verified.
+> Dependency: Blocks 3-6-6A and 3-6-6F implemented, plus a concrete trigger below.
+> Direction: `docs/design/achievements-product-direction.md`.
 
-## Goal
+## Why Deferred
 
-Build a deterministic engine and idempotent result store before adding domain rule packs.
+v1 is compute-on-read and mirrors current evidence, so persistence is not needed. The original scope (result tables, dry-run/apply recalculation, restart safety, version audit) existed only to manage stored results and has been removed.
 
-## Scope
+## Triggers For Activation
 
-- Evaluate versioned rules over a fixed archive snapshot/query boundary.
-- Persist rule version, subject, result state, safe supporting-record references, calculation revision, and timestamps.
-- Recalculate idempotently, replace only the intended rule/version/subject result set, and preserve auditability.
-- Support dry-run diffs and bounded confirmed apply through existing CLI/tool conventions.
-- Add fixture-only demonstration rules that are not shipped as user-facing achievements.
+Open this block only when one of these is confirmed:
+
+- Sticky awards: earned achievements must survive evidence retraction.
+- "Newly earned" notifications or a change feed.
+- Polished badge app or standalone app needs offline sync or award history.
+- Measured evaluation latency that caching cannot solve.
+
+## Scope (When Activated)
+
+- Additive ledger recording first-earned `ruleId`, `version`, `user_id`, `earnedAt`, and supporting references, written from evaluator output.
+- Never the source of truth for evaluation; the pure evaluator stays authoritative.
+- Explicit retraction display policy (for example "previously earned").
+- Contract fields added additively under a bumped `contractVersion`.
 
 ## Out Of Scope
 
-- Production rule families, scheduled recalculation, dashboard presentation, notifications, or archive mutation.
+- Replacing compute-on-read, mutating playback history, or rankings.
 
-## Likely Files Or Areas
+## Acceptance Criteria (When Activated)
 
-- achievement evaluator/service and types
-- additive result-state migration/database methods
-- CLI/tool dry-run/apply operation and event contract
-- deterministic engine fixtures/tests
-
-## Acceptance Criteria
-
-- Identical snapshot/rules produce identical ordered results and no duplicate persistence.
-- Dry-run shows bounded adds/changes/removals without writing.
-- Apply is confirmed, transactional, restart-safe, and preserves prior rule-version audit evidence.
-- Unknown/blocked results remain distinct from not earned.
+- Ledger writes are idempotent and transactional; re-evaluation adds no duplicates.
+- Ledger and live evaluation disagreements are explicit, never hidden.
 - `npm run verify:block` passes.
-
-## Verification
-
-- `npm run verify:block`
-- Determinism, idempotency, transaction, restart, version, dry-run/apply, and audit tests

@@ -83,7 +83,7 @@ function optionalBoolean(value: unknown): boolean | undefined {
   return undefined;
 }
 
-function watchedAtIso(value: unknown): string {
+function watchedAtIso(value: unknown): string | undefined {
   const numeric = optionalNumber(value);
   if (numeric !== undefined) return new Date(numeric * 1000).toISOString();
   const stringValue = optionalString(value);
@@ -91,7 +91,7 @@ function watchedAtIso(value: unknown): string {
     const parsed = new Date(stringValue);
     if (Number.isFinite(parsed.getTime())) return parsed.toISOString();
   }
-  return new Date().toISOString();
+  return undefined;
 }
 
 function sanitizeTitle(value: unknown): string {
@@ -116,12 +116,13 @@ export function normalizeTautulliHistoryRow(row: Record<string, unknown>): Tautu
 
   const sessionStartAt = hasDate ? watchedAtIso(row.date) : undefined;
   const sessionEndAt = hasStopped ? watchedAtIso(row.stopped) : undefined;
+  const resolvedWatchedAt = watchedAtIso(row.date ?? row.stopped);
   return {
     rowId: optionalString(row.row_id),
     user: String(row.user ?? row.username ?? ""),
     ratingKey: String(row.rating_key ?? ""),
     grandparentRatingKey: optionalString(row.grandparent_rating_key),
-    parentRatingKey: optionalString(row.parent_rating_key),
+    parentRatingKey: optionalString(row.parent_media_index ? row.parent_rating_key : row.parent_rating_key),
     plexGuid: optionalString(row.guid),
     mediaType: String(row.media_type ?? row.media_type_full ?? "unknown"),
     libraryName: optionalString(row.library_name ?? row.section_name),
@@ -129,10 +130,10 @@ export function normalizeTautulliHistoryRow(row: Record<string, unknown>): Tautu
     showTitle: sanitizeShowTitle(row.grandparent_title),
     seasonNumber: optionalNumber(row.parent_media_index),
     episodeNumber: optionalNumber(row.media_index),
-    watchedAt: watchedAtIso(row.date ?? row.stopped),
+    watchedAt: resolvedWatchedAt ?? "",
     sessionStartAt,
     sessionEndAt,
-    watchedAtProvenance: (hasDate || hasStopped) ? "source" : "fallback",
+    watchedAtProvenance: (hasDate || hasStopped) && resolvedWatchedAt ? "source" : "unknown",
     percentComplete: optionalNumber(row.percent_complete),
     percentCompleteProvenance: hasPercentComplete ? "source" : "unknown",
     viewOffset: optionalNumber(row.view_offset),
