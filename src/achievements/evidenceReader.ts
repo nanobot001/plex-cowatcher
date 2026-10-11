@@ -206,6 +206,166 @@ export class AchievementEvidenceReader {
       playsByUser.set(userId, list);
     }
 
+    // 3. Confirmed co-watched plays attributed to co-watching partners
+    // A) Discord confirmations (status='confirmed')
+    const confirmationRows = this.db.prepare(`
+      SELECT
+        cc.id AS confirmation_id,
+        we.id AS event_id,
+        we.source_user_id,
+        cc.target_user_id,
+        we.rating_key,
+        we.grandparent_rating_key AS we_gp_key,
+        we.media_type AS we_media_type,
+        we.library_name AS we_library_name,
+        we.title AS we_title,
+        we.show_title AS we_show_title,
+        we.watched_at,
+        po.id AS observation_id,
+        po.grandparent_rating_key AS po_gp_key,
+        po.media_type AS po_media_type,
+        po.library_name AS po_library_name,
+        po.title AS po_title,
+        po.show_title AS po_show_title,
+        COALESCE(po.completed, 1) AS completed,
+        po.duration,
+        po.view_offset,
+        po.percent_complete,
+        COALESCE(cat.genres_json, gp_cat.genres_json) as genres_json
+      FROM cowatch_confirmations cc
+      JOIN watch_events we ON we.id = cc.watch_event_id
+      LEFT JOIN playback_observations po ON po.id = (
+        SELECT po2.id FROM playback_observations po2
+        WHERE po2.user_id = we.source_user_id AND po2.rating_key = we.rating_key
+          AND po2.watched_at >= strftime('%Y-%m-%dT%H:%M:%fZ', we.watched_at, '-1800 seconds')
+          AND po2.watched_at <= strftime('%Y-%m-%dT%H:%M:%fZ', we.watched_at, '+1800 seconds')
+        ORDER BY po2.watched_at DESC, po2.id DESC
+        LIMIT 1
+      )
+      LEFT JOIN content_catalog cat ON cat.rating_key = we.rating_key
+      LEFT JOIN content_catalog gp_cat ON gp_cat.rating_key = COALESCE(po.grandparent_rating_key, we.grandparent_rating_key)
+      WHERE cc.status = 'confirmed'
+      ORDER BY we.watched_at ASC, cc.id ASC
+    `).all() as any[];
+
+    for (const row of confirmationRows) {
+      const sourceId = Number(row.source_user_id);
+      const targetId = Number(row.target_user_id);
+
+      // Attribute to target if target is visible
+      if (visibleUserIds.has(targetId)) {
+        const targetPlays = playsByUser.get(targetId) ?? [];
+        const alreadyHasDirect = targetPlays.some(
+          (p) =>
+            p.ratingKey === String(row.rating_key) &&
+            Math.abs(new Date(p.watchedAt ?? 0).getTime() - new Date(row.watched_at ?? 0).getTime()) <= 2 * 3600 * 1000
+        );
+
+        if (!alreadyHasDirect) {
+          let genres: string[] | undefined;
+          if (row.genres_json) {
+            try {
+              const parsed = JSON.parse(row.genres_json);
+              if (Array.isArray(parsed)) genres = parsed.map(String);
+            } catch {
+              genres = undefined;
+            }
+          }
+
+          const mediaType = String(row.po_media_type || row.we_media_type || 'movie');
+          const libraryName = row.po_library_name || row.we_library_name;
+          const category = this.normalizeCategory(mediaType, libraryName);
+          const play: CanonicalPlay = {
+            id: Number(row.observation_id || row.event_id),
+            sourceKind: 'cowatch_confirmation',
+            userId: targetId,
+            ratingKey: String(row.rating_key),
+            grandparentRatingKey: (row.po_gp_key || row.we_gp_key) ? String(row.po_gp_key || row.we_gp_key) : null,
+            mediaType,
+            category,
+            title: String(row.po_title || row.we_title || ''),
+            showTitle: (row.po_show_title || row.we_show_title) ? String(row.po_show_title || row.we_show_title) : null,
+            genres,
+            watchedAt: row.watched_at ?? null,
+            completed: Boolean(row.completed),
+            durationSeconds: row.duration != null ? normalizeDurationSeconds(row.duration) : null,
+            viewOffsetSeconds: row.view_offset != null ? Number(row.view_offset) : null,
+            percentComplete: row.percent_complete != null ? Number(row.percent_complete) : null
+          };
+
+          targetPlays.push(play);
+          playsByUser.set(targetId, targetPlays);
+        }
+      }
+    }
+
+    // B) Browser adjudications (decision='yes' latest)
+    const adjudicationRows = this.db.prepare(`
+      SELECT
+        ca.id,
+        ca.candidate_id,
+        ca.source_user_id,
+        ca.target_user_id,
+        ca.rating_key,
+        ca.supporting_observation_ids_json,
+        ca.created_at
+      FROM cowatch_adjudications ca
+      WHERE ca.id = (
+        SELECT MAX(latest.id)
+        FROM cowatch_adjudications latest
+        WHERE latest.candidate_id = ca.candidate_id
+      )
+      AND ca.decision = 'yes'
+      ORDER BY ca.id ASC
+    `).all() as any[];
+
+    for (const row of adjudicationRows) {
+      let observationIds: number[] = [];
+      try {
+        observationIds = JSON.parse(row.supporting_observation_ids_json);
+      } catch {
+        observationIds = [];
+      }
+
+      const sourceId = Number(row.source_user_id);
+      const targetId = Number(row.target_user_id);
+
+      // Attribute from source to target if target is visible
+      if (visibleUserIds.has(targetId)) {
+        const targetPlays = playsByUser.get(targetId) ?? [];
+        const sourcePlays = playsByUser.get(sourceId) ?? [];
+
+        for (const obsId of observationIds) {
+          const sourcePlay = sourcePlays.find((p) => p.id === Number(obsId) && p.sourceKind === 'playback_observation');
+          if (sourcePlay) {
+            const alreadyHasPlay = targetPlays.some(
+              (p) =>
+                p.ratingKey === sourcePlay.ratingKey &&
+                Math.abs(new Date(p.watchedAt ?? 0).getTime() - new Date(sourcePlay.watchedAt ?? 0).getTime()) <= 2 * 3600 * 1000
+            );
+            if (!alreadyHasPlay) {
+              targetPlays.push({
+                ...sourcePlay,
+                userId: targetId,
+                sourceKind: 'cowatch_adjudication'
+              });
+              playsByUser.set(targetId, targetPlays);
+            }
+          }
+        }
+      }
+    }
+
+    // Sort all user play streams by watchedAt ASC, id ASC
+    for (const plays of playsByUser.values()) {
+      plays.sort((a, b) => {
+        if (!a.watchedAt && !b.watchedAt) return a.id - b.id;
+        if (!a.watchedAt) return 1;
+        if (!b.watchedAt) return -1;
+        return a.watchedAt.localeCompare(b.watchedAt) || a.id - b.id;
+      });
+    }
+
     return playsByUser;
   }
 

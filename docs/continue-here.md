@@ -7,9 +7,9 @@ Current state:
 - Implemented **The Trophy Shelf**, **Rewatch Loyalty Ribbons**, and **Shared Viewing Bonds**:
   - *Show Mastery & Trophy Shelf*: Dynamic poster-backed series badges with `/api/artwork/:ratingKey?variant=poster`. 100% completion verified against `content_catalog.leaf_count` / catalog episode count. Partial progress remains `in_progress`; unknown denominator remains `unknown`.
   - *Rewatch Loyalty Ribbons*: Multi-tier rewatch ribbons/badges (Bronze -> Silver for 2x, Gold for 3x, Platinum for 4x+). Evidence reader groups completed plays into distinct sessions (>=2 hours or different viewing day), ensuring same-session duplicate observations never count toward replays.
-  - *Shared Viewing Bonds*: Confirmed co-watch milestones (`cowatch_first`, `cowatch_count_5`, `cowatch_count_25`) reconciled across Discord confirmations and browser adjudications. Inferred-only candidates are strictly blocked from satisfying confirmed rules. Reversible: clearing an adjudication immediately un-earns/revokes the achievement on the next read.
+  - *Shared Viewing Bonds & Co-Watch Playback Attribution*: Confirmed co-watch milestones (`cowatch_first`, `cowatch_count_5`, `cowatch_count_25`) reconciled across Discord confirmations and browser adjudications. Confirmed co-watched plays are attributed to both viewers (deduplicating against existing direct observations), ensuring both viewers earn playback credit for co-watched movies, episodes, show completion trophies, and genre devotion. Inferred-only candidates are strictly blocked. Reversible: clearing an adjudication immediately un-earns/revokes the achievement on the next read.
 - Architecture remains strictly compute-on-read with zero database writes, zero migrations, and zero Express/dashboard dependencies in `src/achievements/`.
-- Deterministic verification: 168/168 tests pass in `tests/run-tests.mjs`. 79 Playwright dashboard regression specs pass. `node --check src/web/static/dashboard.js` and `npm run verify:tools` pass.
+- Deterministic verification: 169/169 tests pass in `tests/run-tests.mjs`. 79 Playwright dashboard regression specs pass. `node --check src/web/static/dashboard.js` and `npm run verify:tools` pass.
 
 Next step:
 - Commit and push `codex/3-6-6d-rewatch-and-confirmed-cowatch-rules`.

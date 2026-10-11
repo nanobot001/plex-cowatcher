@@ -7589,10 +7589,70 @@ test("3-6-6D Shared Viewing Bonds: confirmed co-watches satisfy rules, clearing 
   });
 });
 
+test("3-6-6D Co-watched playback attribution: confirmed co-watching awards playback achievements to both viewers", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+             (2, 'Justin', 'Justin', 0, 1, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+    // 1. Content catalog for mini-series (2 episodes) and movie
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, library_title, title, leaf_count, source_provenance, refreshed_at)
+      VALUES 
+        ('shared-show', 'show', 'Anime', 'Shared Anime', 2, 'plex', '2026-08-01T00:00:00Z'),
+        ('ep-1', 'episode', 'Anime', 'Episode 1', 1, 'plex', '2026-08-01T00:00:00Z'),
+        ('ep-2', 'episode', 'Anime', 'Episode 2', 1, 'plex', '2026-08-01T00:00:00Z'),
+        ('shared-film', 'movie', 'Movies', 'Shared Film', 1, 'plex', '2026-08-01T00:00:00Z')
+    `).run();
 
+    // 2. Playback observations recorded under User 1 (who streamed on TV)
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, duration, completed, created_at, updated_at)
+      VALUES
+        (10, 1, 'ep-1', 'shared-show', 'episode', 'Anime', 'Episode 1', 'Shared Anime', '2026-08-01T10:00:00Z', 1400000, 1, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z'),
+        (11, 1, 'ep-2', 'shared-show', 'episode', 'Anime', 'Episode 2', 'Shared Anime', '2026-08-01T11:00:00Z', 1400000, 1, '2026-08-01T11:00:00Z', '2026-08-01T11:00:00Z'),
+        (12, 1, 'shared-film', NULL, 'movie', 'Movies', 'Shared Film', NULL, '2026-08-02T10:00:00Z', 7200000, 1, '2026-08-02T10:00:00Z', '2026-08-02T10:00:00Z')
+    `).run();
 
+    // 3. Watch events & Cowatch confirmations linking User 1 and User 2 (Justin)
+    db.prepare(`
+      INSERT INTO watch_events (id, source_user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, created_at, updated_at)
+      VALUES
+        (1, 1, 'ep-1', 'shared-show', 'episode', 'Anime', 'Episode 1', 'Shared Anime', '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z'),
+        (2, 1, 'ep-2', 'shared-show', 'episode', 'Anime', 'Episode 2', 'Shared Anime', '2026-08-01T11:00:00Z', '2026-08-01T11:00:00Z', '2026-08-01T11:00:00Z'),
+        (3, 1, 'shared-film', NULL, 'movie', 'Movies', 'Shared Film', NULL, '2026-08-02T10:00:00Z', '2026-08-02T10:00:00Z', '2026-08-02T10:00:00Z')
+    `).run();
 
+    db.prepare(`
+      INSERT INTO cowatch_confirmations (id, watch_event_id, target_user_id, confirmation_method, status, created_at, updated_at)
+      VALUES
+        (1, 1, 2, 'discord_button', 'confirmed', '2026-08-01T10:05:00Z', '2026-08-01T10:05:00Z'),
+        (2, 2, 2, 'discord_button', 'confirmed', '2026-08-01T11:05:00Z', '2026-08-01T11:05:00Z'),
+        (3, 3, 2, 'discord_button', 'confirmed', '2026-08-02T10:05:00Z', '2026-08-02T10:05:00Z')
+    `).run();
 
+    // 4. Evaluate achievements for both User 1 AND User 2
+    const service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    
+    // User 1 (direct viewer)
+    const u1Payload = service.getAchievements({ user: 1 });
+    const u1Movie = u1Payload.results.find((r) => r.ruleId === 'movie_first_watch');
+    const u1Show = u1Payload.results.find((r) => r.ruleId === 'show_mastery_shared-show');
+    assert.equal(u1Movie.state, 'earned', 'Source viewer earns movie achievement');
+    assert.equal(u1Show.state, 'earned', 'Source viewer earns show mastery on Trophy Shelf');
+
+    // User 2 (co-watching partner without direct Plex stream)
+    const u2Payload = service.getAchievements({ user: 2 });
+    const u2Movie = u2Payload.results.find((r) => r.ruleId === 'movie_first_watch');
+    const u2Show = u2Payload.results.find((r) => r.ruleId === 'show_mastery_shared-show');
+    assert.equal(u2Movie.state, 'earned', 'Co-watching partner must earn movie milestone from confirmed co-watch');
+    assert.equal(u2Show.state, 'earned', 'Co-watching partner must earn show mastery on Trophy Shelf from confirmed co-watch');
+    assert.equal(u2Show.badge.posterUrl, '/api/artwork/shared-show?variant=poster');
+    assert.equal(u2Show.supportingEvidence.length, 2);
+    assert.equal(u2Show.supportingEvidence[0].kind, 'cowatch_confirmation');
+  });
+});
 let passed = 0;
 for (const { name, fn } of tests) {
   try {

@@ -129,7 +129,11 @@ export interface AchievementEvaluationPayload {
 
 export interface CanonicalPlay {
   id: number;
-  sourceKind: 'playback_observation' | 'archive_watch_event';
+  sourceKind:
+    | 'playback_observation'
+    | 'archive_watch_event'
+    | 'cowatch_confirmation'
+    | 'cowatch_adjudication';
   userId: number;
   ratingKey: string;
   grandparentRatingKey?: string | null;
