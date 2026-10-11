@@ -15,7 +15,8 @@ import type {
   CanonicalPlay,
   ConfirmedCoWatch,
   EvidenceWatermark,
-  SupportingEvidenceRef
+  SupportingEvidenceRef,
+  ShowProgressEvidence
 } from './types.js';
 
 export interface ReadEvidenceOptions {
@@ -79,6 +80,7 @@ export class AchievementEvidenceReader {
       const { replaysByRatingKey, replayEvidenceByRatingKey } = this.calculateReplays(plays);
       const completedAudiobookCount = audiobookCountsByUser.get(user.id) ?? 0;
       const hasInferredCoWatchOnly = inferredOnlyByUser.has(user.id);
+      const showProgress = this.calculateShowProgress(plays, replaysByRatingKey);
 
       subjects.push({
         userId: user.id,
@@ -89,6 +91,7 @@ export class AchievementEvidenceReader {
         replayEvidenceByRatingKey,
         confirmedCoWatches,
         completedAudiobookCount,
+        showProgress,
         hasInferredCoWatchOnly
       });
     }
@@ -144,6 +147,7 @@ export class AchievementEvidenceReader {
         sourceKind: 'playback_observation',
         userId,
         ratingKey: String(row.rating_key),
+        grandparentRatingKey: row.grandparent_rating_key ? String(row.grandparent_rating_key) : null,
         mediaType: String(row.media_type ?? 'movie'),
         category,
         title: String(row.title ?? ''),
@@ -237,9 +241,32 @@ export class AchievementEvidenceReader {
       if (semantics.replayCount > 0) {
         replaysByRatingKey.set(ratingKey, semantics.replayCount);
 
-        const refs: SupportingEvidenceRef[] = keyPlays
+        const completedPlays = keyPlays
           .filter((p) => p.completed)
-          .slice(1) // Qualifying replays after first completed play
+          .sort((a, b) => {
+            if (!a.watchedAt && !b.watchedAt) return a.id - b.id;
+            if (!a.watchedAt) return 1;
+            if (!b.watchedAt) return -1;
+            return a.watchedAt.localeCompare(b.watchedAt) || a.id - b.id;
+          });
+
+        const sessionFirstPlays: CanonicalPlay[] = [];
+        for (const play of completedPlays) {
+          const lastPlay = sessionFirstPlays[sessionFirstPlays.length - 1];
+          if (!lastPlay) {
+            sessionFirstPlays.push(play);
+            continue;
+          }
+          const lastMs = lastPlay.watchedAt ? new Date(lastPlay.watchedAt).getTime() : 0;
+          const currMs = play.watchedAt ? new Date(play.watchedAt).getTime() : 0;
+          const diffMs = Math.abs(currMs - lastMs);
+          if (diffMs >= 2 * 60 * 60 * 1000) {
+            sessionFirstPlays.push(play);
+          }
+        }
+
+        const refs: SupportingEvidenceRef[] = sessionFirstPlays
+          .slice(1) // Qualifying replays after first completed session
           .map((p) => ({
             kind: p.sourceKind,
             id: p.id,
@@ -367,7 +394,7 @@ export class AchievementEvidenceReader {
   ): Set<number> {
     const inferredOnly = new Set<number>();
 
-    // Check if there are unconfirmed candidates or review prompts
+    // 1. Check if there are candidate adjudications
     const candidateRows = this.db.prepare(`
       SELECT DISTINCT source_user_id, target_user_id
       FROM cowatch_adjudications
@@ -383,7 +410,157 @@ export class AchievementEvidenceReader {
       }
     }
 
+    // 2. Check pending watch events with co-watch review prompts
+    try {
+      const pendingEvents = this.db.prepare(`
+        SELECT DISTINCT source_user_id
+        FROM watch_events
+        WHERE prompt_status IN ('pending', 'delivered')
+      `).all() as Array<{ source_user_id: number }>;
+
+      for (const row of pendingEvents) {
+        const uid = Number(row.source_user_id);
+        if (visibleUserIds.has(uid)) {
+          const confirmed = coWatchesByUser.get(uid) ?? [];
+          if (confirmed.length === 0) {
+            inferredOnly.add(uid);
+          }
+        }
+      }
+    } catch {}
+
+    // 3. Check cowatch_review_prompts table if present
+    try {
+      const reviewPrompts = this.db.prepare(`
+        SELECT 1 FROM sqlite_master WHERE type='table' AND name='cowatch_review_prompts'
+      `).get();
+      if (reviewPrompts) {
+        const promptRows = this.db.prepare(`
+          SELECT DISTINCT ca.source_user_id, ca.target_user_id
+          FROM cowatch_review_prompts crp
+          JOIN cowatch_adjudications ca ON ca.candidate_id = crp.candidate_id
+        `).all() as Array<{ source_user_id: number; target_user_id: number }>;
+        for (const row of promptRows) {
+          for (const uid of [Number(row.source_user_id), Number(row.target_user_id)]) {
+            if (!visibleUserIds.has(uid)) continue;
+            const confirmed = coWatchesByUser.get(uid) ?? [];
+            if (confirmed.length === 0) {
+              inferredOnly.add(uid);
+            }
+          }
+        }
+      }
+    } catch {}
+
     return inferredOnly;
+  }
+
+  private calculateShowProgress(
+    plays: CanonicalPlay[],
+    replaysByRatingKey: Map<string, number>
+  ): Map<string, ShowProgressEvidence> {
+    const showProgress = new Map<string, ShowProgressEvidence>();
+
+    // Group episodic plays by show key
+    const playsByShowKey = new Map<string, CanonicalPlay[]>();
+    for (const play of plays) {
+      if (play.category !== 'tv' && play.category !== 'anime' && play.category !== 'classic_tv') {
+        continue;
+      }
+      const showKey = play.grandparentRatingKey || play.showTitle || play.title;
+      if (!showKey) continue;
+      const list = playsByShowKey.get(showKey) ?? [];
+      list.push(play);
+      playsByShowKey.set(showKey, list);
+    }
+
+    for (const [showKey, showPlays] of playsByShowKey.entries()) {
+      const sample = showPlays[0];
+      let catalogRow: any = null;
+
+      if (sample.grandparentRatingKey) {
+        try {
+          catalogRow = this.db.prepare(`
+            SELECT rating_key, title, leaf_count, media_type
+            FROM content_catalog
+            WHERE rating_key = ?
+          `).get(sample.grandparentRatingKey);
+        } catch {}
+      }
+
+      if (!catalogRow && sample.showTitle) {
+        try {
+          catalogRow = this.db.prepare(`
+            SELECT rating_key, title, leaf_count, media_type
+            FROM content_catalog
+            WHERE media_type = 'show' AND title = ?
+            LIMIT 1
+          `).get(sample.showTitle);
+        } catch {}
+      }
+
+      let totalEpisodes: number | null = null;
+      if (catalogRow?.leaf_count != null && Number(catalogRow.leaf_count) > 0) {
+        totalEpisodes = Number(catalogRow.leaf_count);
+      } else {
+        const lookupKey = catalogRow?.rating_key || sample.grandparentRatingKey;
+        if (lookupKey) {
+          try {
+            const countRow = this.db.prepare(`
+              SELECT COUNT(DISTINCT rating_key) as ep_count
+              FROM content_catalog
+              WHERE grandparent_rating_key = ? AND media_type = 'episode'
+            `).get(lookupKey) as any;
+            if (countRow?.ep_count > 0) {
+              totalEpisodes = Number(countRow.ep_count);
+            }
+          } catch {}
+        }
+      }
+
+      const showRatingKey = catalogRow?.rating_key || sample.grandparentRatingKey || showKey;
+      const showTitle = catalogRow?.title || sample.showTitle || sample.title;
+      const posterUrl = `/api/artwork/${encodeURIComponent(showRatingKey)}?variant=poster`;
+
+      const allCompletedPlays = showPlays
+        .filter((p) => p.completed)
+        .sort((a, b) => {
+          if (!a.watchedAt && !b.watchedAt) return a.id - b.id;
+          if (!a.watchedAt) return 1;
+          if (!b.watchedAt) return -1;
+          return a.watchedAt.localeCompare(b.watchedAt) || a.id - b.id;
+        });
+
+      const completedEpisodeKeys = new Set<string>();
+      for (const p of allCompletedPlays) {
+        completedEpisodeKeys.add(p.ratingKey);
+      }
+
+      const replaysByEpisode = new Map<string, number>();
+      for (const epKey of completedEpisodeKeys) {
+        const rep = replaysByRatingKey.get(epKey);
+        if (rep) replaysByEpisode.set(epKey, rep);
+      }
+
+      let lastCompletedWatchedAt: string | null = null;
+      if (totalEpisodes != null && completedEpisodeKeys.size >= totalEpisodes && allCompletedPlays.length > 0) {
+        lastCompletedWatchedAt = allCompletedPlays[allCompletedPlays.length - 1]?.watchedAt ?? null;
+      }
+
+      showProgress.set(showRatingKey, {
+        grandparentRatingKey: showRatingKey,
+        showTitle,
+        category: sample.category as 'tv' | 'anime' | 'classic_tv',
+        totalEpisodes,
+        completedEpisodeKeys,
+        allCompletedPlays,
+        replaysByEpisode,
+        posterUrl,
+        lastCompletedWatchedAt
+      });
+    }
+
+    return showProgress;
   }
 
   private readCompletedAudiobookCounts(visibleUserIds: Set<number>): Map<number, number> {

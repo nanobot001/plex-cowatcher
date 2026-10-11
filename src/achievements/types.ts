@@ -132,6 +132,7 @@ export interface CanonicalPlay {
   sourceKind: 'playback_observation' | 'archive_watch_event';
   userId: number;
   ratingKey: string;
+  grandparentRatingKey?: string | null;
   mediaType: string;
   category: 'movie' | 'tv' | 'anime' | 'classic_tv' | 'audiobook';
   title: string;
@@ -154,6 +155,18 @@ export interface ConfirmedCoWatch {
   title?: string;
 }
 
+export interface ShowProgressEvidence {
+  grandparentRatingKey: string;
+  showTitle: string;
+  category: 'tv' | 'anime' | 'classic_tv';
+  totalEpisodes: number | null;
+  completedEpisodeKeys: Set<string>;
+  allCompletedPlays: CanonicalPlay[];
+  replaysByEpisode: Map<string, number>;
+  posterUrl: string | null;
+  lastCompletedWatchedAt: string | null;
+}
+
 export interface SubjectEvidence {
   userId: number;
   username: string;
@@ -163,6 +176,7 @@ export interface SubjectEvidence {
   replayEvidenceByRatingKey?: Map<string, SupportingEvidenceRef[]>;
   confirmedCoWatches: ConfirmedCoWatch[];
   completedAudiobookCount: number;
+  showProgress?: Map<string, ShowProgressEvidence>;
   hasInferredCoWatchOnly?: boolean;
   hasUnknownDenominator?: boolean;
 }

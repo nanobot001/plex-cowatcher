@@ -271,5 +271,140 @@ export const DEFAULT_ACHIEVEMENT_RULES: AchievementRule[] = [
       description: 'Dedicated more than 10 hours to a single favorite series.',
       iconHint: 'tv'
     }
+  },
+
+  // --- Show Mastery / Trophy Shelf Rules (Block 3-6-6D) ---
+  {
+    ruleId: 'show_mastery_first',
+    version: 1,
+    family: 'completion',
+    unit: 'episode',
+    threshold: 1,
+    facet: 'trophy_shelf',
+    badge: {
+      badgeKey: 'first_completed_show',
+      tier: 'bronze',
+      title: 'Series Finisher',
+      description: 'Completed 100% of all episodes in a TV or anime series.',
+      iconHint: 'trophy'
+    }
+  },
+  {
+    ruleId: 'show_mastery_5',
+    version: 1,
+    family: 'completion',
+    unit: 'episode',
+    threshold: 5,
+    facet: 'trophy_shelf',
+    badge: {
+      badgeKey: 'completed_shows_5',
+      tier: 'silver',
+      title: 'Series Collector',
+      description: 'Completed 100% of 5 distinct TV or anime series.',
+      iconHint: 'trophy'
+    }
+  },
+
+  // --- Rewatch Loyalty Rules (Block 3-6-6D) ---
+  {
+    ruleId: 'rewatch_first',
+    version: 1,
+    family: 'rewatch',
+    unit: 'play',
+    threshold: 1,
+    facet: 'trophy_shelf',
+    badge: {
+      badgeKey: 'first_rewatch',
+      tier: 'bronze',
+      title: 'Encore Feature',
+      description: 'Rewatched a movie or episode on a distinct viewing session.',
+      iconHint: 'rewatch'
+    }
+  },
+  {
+    ruleId: 'rewatch_count_5',
+    version: 1,
+    family: 'rewatch',
+    unit: 'play',
+    threshold: 5,
+    facet: 'trophy_shelf',
+    badge: {
+      badgeKey: 'rewatch_5',
+      tier: 'silver',
+      title: 'Rewatch Devotee',
+      description: 'Rewatched 5 titles across distinct viewing sessions.',
+      iconHint: 'rewatch'
+    }
+  },
+  {
+    ruleId: 'rewatch_count_20',
+    version: 1,
+    family: 'rewatch',
+    unit: 'play',
+    threshold: 20,
+    facet: 'trophy_shelf',
+    badge: {
+      badgeKey: 'rewatch_20',
+      tier: 'gold',
+      title: 'Master of Replays',
+      description: 'Rewatched 20 titles across distinct viewing sessions.',
+      iconHint: 'rewatch'
+    }
+  },
+
+  // --- Shared Viewing Bonds / Co-Watch Rules (Block 3-6-6D) ---
+  {
+    ruleId: 'cowatch_first',
+    version: 1,
+    family: 'confirmed_cowatch',
+    unit: 'session',
+    threshold: 1,
+    facet: 'cowatch_bond',
+    evidenceRequirements: {
+      requiresConfirmedCoWatch: true
+    },
+    badge: {
+      badgeKey: 'first_cowatch',
+      tier: 'bronze',
+      title: 'Shared Screening',
+      description: 'Watched a movie or episode confirmed together with another household member.',
+      iconHint: 'cowatch'
+    }
+  },
+  {
+    ruleId: 'cowatch_count_5',
+    version: 1,
+    family: 'confirmed_cowatch',
+    unit: 'session',
+    threshold: 5,
+    facet: 'cowatch_bond',
+    evidenceRequirements: {
+      requiresConfirmedCoWatch: true
+    },
+    badge: {
+      badgeKey: 'cowatch_5',
+      tier: 'silver',
+      title: 'Couch Companions',
+      description: 'Watched 5 titles confirmed together with household members.',
+      iconHint: 'cowatch'
+    }
+  },
+  {
+    ruleId: 'cowatch_count_25',
+    version: 1,
+    family: 'confirmed_cowatch',
+    unit: 'session',
+    threshold: 25,
+    facet: 'cowatch_bond',
+    evidenceRequirements: {
+      requiresConfirmedCoWatch: true
+    },
+    badge: {
+      badgeKey: 'cowatch_25',
+      tier: 'gold',
+      title: 'Inseparable Viewers',
+      description: 'Watched 25 titles confirmed together with household members.',
+      iconHint: 'cowatch'
+    }
   }
 ];

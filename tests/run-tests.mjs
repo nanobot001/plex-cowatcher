@@ -7361,6 +7361,234 @@ test("3-6-6C Public contract surface parity: filters hidden listeners and return
   });
 });
 
+test("3-6-6D Show Mastery & Trophy Shelf: 100% completed series earns poster-backed badge while partial or unknown denominator stays in-progress or unknown", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // Show 1: Complete show (5 episodes, leaf_count = 5)
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, leaf_count, source_provenance, refreshed_at)
+      VALUES ('show-1', 'show', 'Great Show', 5, 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+
+    for (let i = 1; i <= 5; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'show-1', 'episode', 'TV Shows', ?, 'Great Show', '2026-08-01T12:00:00Z', 1, 1800, '2026-08-01T12:00:00Z', '2026-08-01T12:00:00Z')
+      `).run(10 + i, `ep-${i}`, `Episode ${i}`);
+    }
+
+    // Show 2: Incomplete show (leaf_count = 10, watched 3)
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, leaf_count, source_provenance, refreshed_at)
+      VALUES ('show-2', 'show', 'Long Show', 10, 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+
+    for (let i = 1; i <= 3; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'show-2', 'episode', 'TV Shows', ?, 'Long Show', '2026-08-02T12:00:00Z', 1, 1800, '2026-08-02T12:00:00Z', '2026-08-02T12:00:00Z')
+      `).run(20 + i, `long-ep-${i}`, `Long Ep ${i}`);
+    }
+
+    // Show 3: Unknown denominator (no leaf_count, watched 2)
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, leaf_count, source_provenance, refreshed_at)
+      VALUES ('show-3', 'show', 'Mystery Show', NULL, 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+
+    for (let i = 1; i <= 2; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'show-3', 'episode', 'TV Shows', ?, 'Mystery Show', '2026-08-03T12:00:00Z', 1, 1800, '2026-08-03T12:00:00Z', '2026-08-03T12:00:00Z')
+      `).run(30 + i, `myst-ep-${i}`, `Mystery Ep ${i}`);
+    }
+
+    const service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const payload = service.getAchievements({ user: 1, facet: 'trophy_shelf' });
+    const results = payload.results;
+
+    // 1. General show completion rule earned
+    const firstMastery = results.find((r) => r.ruleId === 'show_mastery_first');
+    assert.ok(firstMastery, 'show_mastery_first rule must exist');
+    assert.equal(firstMastery.state, 'earned');
+    assert.equal(firstMastery.progress.current, 1);
+
+    // 2. Dynamic Trophy Shelf badge for Great Show
+    const greatShowBadge = results.find((r) => r.ruleId === 'show_mastery_show-1');
+    assert.ok(greatShowBadge, 'Dynamic badge for show-1 must exist on Trophy Shelf');
+    assert.equal(greatShowBadge.state, 'earned');
+    assert.equal(greatShowBadge.progress.current, 5);
+    assert.equal(greatShowBadge.progress.target, 5);
+    assert.ok(greatShowBadge.badge.posterUrl.includes('show-1'), 'Must include show-1 posterUrl');
+    assert.equal(greatShowBadge.badge.tier, 'bronze');
+
+    // 3. Explicit rule for show-2 (in-progress) and show-3 (unknown)
+    const customRules = [
+      ...DEFAULT_ACHIEVEMENT_RULES,
+      {
+        ruleId: 'mastery_long_show',
+        version: 1,
+        family: 'completion',
+        unit: 'episode',
+        threshold: 10,
+        scope: { seriesId: 'show-2' },
+        facet: 'trophy_shelf',
+        badge: { badgeKey: 'long_show', tier: 'bronze', title: 'Long Show Mastery', description: 'Complete Long Show' }
+      },
+      {
+        ruleId: 'mastery_mystery_show',
+        version: 1,
+        family: 'completion',
+        unit: 'episode',
+        threshold: 5,
+        scope: { seriesId: 'show-3' },
+        facet: 'trophy_shelf',
+        badge: { badgeKey: 'mystery_show', tier: 'bronze', title: 'Mystery Show Mastery', description: 'Complete Mystery Show' }
+      }
+    ];
+
+    const customService = new AchievementService(db, customRules);
+    const customPayload = customService.getAchievements({ user: 1 });
+
+    const longShow = customPayload.results.find((r) => r.ruleId === 'mastery_long_show');
+    assert.equal(longShow.state, 'in_progress');
+    assert.equal(longShow.progress.current, 3);
+    assert.equal(longShow.progress.target, 10);
+
+    const mysteryShow = customPayload.results.find((r) => r.ruleId === 'mastery_mystery_show');
+    assert.equal(mysteryShow.state, 'unknown');
+    assert.ok(mysteryShow.reason.includes('Unknown denominator'));
+  });
+});
+
+test("3-6-6D Rewatch Loyalty Ribbons: same-session duplicates never count while distinct replays level up tiers", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 1. Same-session duplicate: Movie watched twice within 20 minutes on same day
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (1, 1, 'movie-dup', 'movie', 'Movies', 'Duplicate Movie', '2026-08-01T10:00:00Z', 1, 7200, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z'),
+             (2, 1, 'movie-dup', 'movie', 'Movies', 'Duplicate Movie', '2026-08-01T10:15:00Z', 1, 7200, '2026-08-01T10:15:00Z', '2026-08-01T10:15:00Z')
+    `).run();
+
+    let service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    let payload = service.getAchievements({ user: 1 });
+    let rewatchFirst = payload.results.find((r) => r.ruleId === 'rewatch_first');
+
+    assert.equal(rewatchFirst.state, 'not_earned', 'Same-session duplicate observations must not count as rewatches');
+    assert.equal(rewatchFirst.progress.current, 0);
+
+    // 2. Distinct replay on a separate viewing day (2026-08-05)
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (3, 1, 'movie-dup', 'movie', 'Movies', 'Duplicate Movie', '2026-08-05T10:00:00Z', 1, 7200, '2026-08-05T10:00:00Z', '2026-08-05T10:00:00Z')
+    `).run();
+
+    service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    payload = service.getAchievements({ user: 1 });
+    rewatchFirst = payload.results.find((r) => r.ruleId === 'rewatch_first');
+
+    assert.equal(rewatchFirst.state, 'earned', 'Distinct replay on separate day must earn rewatch milestone');
+    assert.equal(rewatchFirst.progress.current, 1);
+    assert.equal(rewatchFirst.earnedAt, '2026-08-05T10:00:00Z');
+
+    // 3. Show completed twice (2x rewatch) levels up Trophy Shelf badge to Silver with (2x) ribbon
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, leaf_count, source_provenance, refreshed_at)
+      VALUES ('rewatch-show', 'show', 'Favorite Anime', 2, 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // First completion: 2026-08-01
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (10, 1, 'fav-ep-1', 'rewatch-show', 'episode', 'Anime', 'Ep 1', 'Favorite Anime', '2026-08-01T12:00:00Z', 1, 1440, '2026-08-01T12:00:00Z', '2026-08-01T12:00:00Z'),
+             (11, 1, 'fav-ep-2', 'rewatch-show', 'episode', 'Anime', 'Ep 2', 'Favorite Anime', '2026-08-01T13:00:00Z', 1, 1440, '2026-08-01T13:00:00Z', '2026-08-01T13:00:00Z')
+    `).run();
+
+    // Second completion on distinct days: 2026-08-10 & 2026-08-11
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (12, 1, 'fav-ep-1', 'rewatch-show', 'episode', 'Anime', 'Ep 1', 'Favorite Anime', '2026-08-10T12:00:00Z', 1, 1440, '2026-08-10T12:00:00Z', '2026-08-10T12:00:00Z'),
+             (13, 1, 'fav-ep-2', 'rewatch-show', 'episode', 'Anime', 'Ep 2', 'Favorite Anime', '2026-08-11T13:00:00Z', 1, 1440, '2026-08-11T13:00:00Z', '2026-08-11T13:00:00Z')
+    `).run();
+
+    service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    payload = service.getAchievements({ user: 1, facet: 'trophy_shelf' });
+    const showMastery = payload.results.find((r) => r.ruleId === 'show_mastery_rewatch-show');
+
+    assert.ok(showMastery, 'Show mastery badge must exist');
+    assert.equal(showMastery.state, 'earned');
+    assert.equal(showMastery.badge.tier, 'silver', '2x rewatched show must level up to silver');
+    assert.ok(showMastery.badge.title.includes('(2x)'), 'Title must indicate 2x rewatch ribbon');
+    assert.equal(showMastery.badge.stats.rewatchCount, 1);
+  });
+});
+
+test("3-6-6D Shared Viewing Bonds: confirmed co-watches satisfy rules, clearing revokes immediately, and inferred-only is blocked", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+             (2, 'Justin', 'Justin', 0, 1, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 1. Inferred-only co-watch: prompt is pending, no confirmed co-watch
+    db.prepare(`
+      INSERT INTO watch_events (id, source_user_id, rating_key, media_type, title, watched_at, prompt_status, created_at, updated_at)
+      VALUES (100, 1, 'movie-bond-1', 'movie', 'Bond Movie 1', '2026-08-01T10:00:00Z', 'pending', '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z')
+    `).run();
+
+    let service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    let payload = service.getAchievements({ user: 1, facet: 'cowatch_bond' });
+    let cowatchFirst = payload.results.find((r) => r.ruleId === 'cowatch_first');
+
+    assert.equal(cowatchFirst.state, 'blocked', 'Inferred-only co-watch must block achievement');
+    assert.ok(cowatchFirst.reason.toLowerCase().includes('inferred'));
+
+    // 2. Confirm the co-watch via browser adjudication (decision='yes')
+    db.prepare(`
+      INSERT INTO cowatch_adjudications (id, candidate_id, source_user_id, target_user_id, rating_key, rule_version, supporting_observation_ids_json, decision, actor_kind, method, request_id, created_at)
+      VALUES (1, 'cand-bond-1', 1, 2, 'movie-bond-1', 'v1', '[]', 'yes', 'operator', 'browser', 'req-1', '2026-08-01T11:00:00Z')
+    `).run();
+
+    service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    payload = service.getAchievements({ user: 1, facet: 'cowatch_bond' });
+    cowatchFirst = payload.results.find((r) => r.ruleId === 'cowatch_first');
+
+    assert.equal(cowatchFirst.state, 'earned', 'Confirmed co-watch must satisfy achievement');
+    assert.equal(cowatchFirst.progress.current, 1);
+    assert.equal(cowatchFirst.supportingEvidence[0].kind, 'cowatch_adjudication');
+
+    // Partner (Justin) also earns the co-watch milestone
+    const justinPayload = service.getAchievements({ user: 2, facet: 'cowatch_bond' });
+    const justinFirst = justinPayload.results.find((r) => r.ruleId === 'cowatch_first');
+    assert.equal(justinFirst.state, 'earned');
+    assert.equal(justinFirst.progress.current, 1);
+
+    // 3. Revoke/Clear adjudication (decision='clear')
+    db.prepare(`
+      INSERT INTO cowatch_adjudications (id, candidate_id, source_user_id, target_user_id, rating_key, rule_version, supporting_observation_ids_json, decision, actor_kind, method, request_id, created_at)
+      VALUES (2, 'cand-bond-1', 1, 2, 'movie-bond-1', 'v1', '[]', 'clear', 'operator', 'browser', 'req-2', '2026-08-02T11:00:00Z')
+    `).run();
+
+    // Compute-on-read immediately revokes the achievement on next read without database mutation
+    service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    payload = service.getAchievements({ user: 1, facet: 'cowatch_bond' });
+    cowatchFirst = payload.results.find((r) => r.ruleId === 'cowatch_first');
+
+    assert.equal(cowatchFirst.state, 'blocked', 'Clearing adjudication must immediately revoke achievement on next read');
+    assert.equal(cowatchFirst.progress.current, 0);
+  });
+});
+
 
 
 

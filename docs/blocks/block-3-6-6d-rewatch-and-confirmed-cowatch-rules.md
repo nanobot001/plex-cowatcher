@@ -1,7 +1,7 @@
 # Block 3-6-6D: Rewatch And Confirmed Co-Watch Rules
 
-> Status: Planned (restructured 2026-10-09).
-> Result: Not implemented.
+> Status: Implemented (2026-10-11).
+> Result: Implemented and verified (168/168 tests passed, full block gate passed).
 > Dependency: Blocks 3-6-6A and 3-6-6C implemented and verified.
 > Direction: `docs/design/achievements-product-direction.md`.
 

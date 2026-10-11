@@ -13,7 +13,9 @@ import type {
   EvaluationContext,
   SubjectEvidence,
   SupportingEvidenceRef,
-  CanonicalPlay
+  CanonicalPlay,
+  BadgeTier,
+  ShowProgressEvidence
 } from './types.js';
 
 /**
@@ -67,6 +69,75 @@ export function evaluateSubjectAchievements(
     }
 
     results.push(result);
+  }
+
+  // Dynamic Trophy Shelf: generate show-specific completion badges with poster art & rewatch ribbons
+  if (subject.showProgress) {
+    for (const show of subject.showProgress.values()) {
+      if (show.totalEpisodes !== null && show.completedEpisodeKeys.size >= show.totalEpisodes) {
+        const dynamicRuleId = `show_mastery_${show.grandparentRatingKey}`;
+        if (!results.some((r) => r.ruleId === dynamicRuleId)) {
+          let minReplay = 0;
+          if (show.completedEpisodeKeys.size > 0) {
+            const replays = [...show.completedEpisodeKeys].map((k) => show.replaysByEpisode.get(k) ?? 0);
+            minReplay = Math.min(...replays);
+          }
+          const avgReplay = Math.floor(show.allCompletedPlays.length / show.totalEpisodes) - 1;
+          const rewatchCount = Math.max(0, Math.max(minReplay, avgReplay));
+
+          let tier: BadgeTier = 'bronze';
+          let rewatchSuffix = '';
+          let rewatchDesc = '';
+          if (rewatchCount >= 3) {
+            tier = 'platinum';
+            rewatchSuffix = ' (4x+)';
+            rewatchDesc = ` Rewatched ${rewatchCount} times.`;
+          } else if (rewatchCount === 2) {
+            tier = 'gold';
+            rewatchSuffix = ' (3x)';
+            rewatchDesc = ' Rewatched 2 times.';
+          } else if (rewatchCount === 1) {
+            tier = 'silver';
+            rewatchSuffix = ' (2x)';
+            rewatchDesc = ' Rewatched once.';
+          }
+
+          results.push({
+            userId: subject.userId,
+            ruleId: dynamicRuleId,
+            version: 1,
+            facet: 'trophy_shelf',
+            badge: {
+              badgeKey: `show_mastery_${show.grandparentRatingKey}`,
+              tier,
+              title: `Show Mastery: ${show.showTitle}${rewatchSuffix}`,
+              description: `Completed 100% of ${show.showTitle}.${rewatchDesc}`,
+              posterUrl: show.posterUrl,
+              iconHint: 'series',
+              stats: {
+                totalPlays: show.allCompletedPlays.length,
+                completedItems: show.completedEpisodeKeys.size,
+                rewatchCount
+              }
+            },
+            state: 'earned',
+            progress: {
+              current: show.completedEpisodeKeys.size,
+              target: show.totalEpisodes,
+              unit: 'episode'
+            },
+            earnedAt: show.lastCompletedWatchedAt,
+            supportingEvidence: show.allCompletedPlays.slice(0, 10).map((p) => ({
+              kind: p.sourceKind,
+              id: p.id,
+              eventTime: p.watchedAt,
+              title: p.title
+            })),
+            reason: `Completed all ${show.totalEpisodes} episodes of ${show.showTitle}`
+          });
+        }
+      }
+    }
   }
 
   // Stable sort by ruleId, version
@@ -433,6 +504,170 @@ function evaluateConfirmedCoWatch(rule: AchievementRule, subject: SubjectEvidenc
 
 function evaluateCompletion(rule: AchievementRule, subject: SubjectEvidence): AchievementResult {
   if (subject.hasUnknownDenominator) {
+    return {
+      userId: subject.userId,
+      ruleId: rule.ruleId,
+      version: rule.version,
+      badge: rule.badge,
+      state: 'unknown',
+      progress: { current: 0, target: rule.threshold, unit: rule.unit },
+      earnedAt: null,
+      supportingEvidence: [],
+      reason: 'Unknown denominator or missing classification prevents completion evaluation'
+    };
+  }
+
+  // Case A: specific show requested by rule.scope?.seriesId
+  if (rule.scope?.seriesId) {
+    const show = subject.showProgress?.get(rule.scope.seriesId);
+    if (!show) {
+      return {
+        userId: subject.userId,
+        ruleId: rule.ruleId,
+        version: rule.version,
+        badge: rule.badge,
+        state: 'not_earned',
+        progress: { current: 0, target: rule.threshold, unit: rule.unit },
+        earnedAt: null,
+        supportingEvidence: [],
+        reason: `No activity found for series '${rule.scope.seriesId}'`
+      };
+    }
+
+    if (show.totalEpisodes === null) {
+      return {
+        userId: subject.userId,
+        ruleId: rule.ruleId,
+        version: rule.version,
+        badge: { ...rule.badge, posterUrl: show.posterUrl },
+        state: 'unknown',
+        progress: { current: show.completedEpisodeKeys.size, target: rule.threshold, unit: rule.unit },
+        earnedAt: null,
+        supportingEvidence: [],
+        reason: 'Unknown denominator or missing show catalog prevents completion evaluation'
+      };
+    }
+
+    const current = show.completedEpisodeKeys.size;
+    const target = show.totalEpisodes;
+    const earned = current >= target;
+
+    let minReplay = 0;
+    if (show.completedEpisodeKeys.size > 0) {
+      const replays = [...show.completedEpisodeKeys].map((k) => show.replaysByEpisode.get(k) ?? 0);
+      minReplay = Math.min(...replays);
+    }
+    const avgReplay = Math.floor(show.allCompletedPlays.length / show.totalEpisodes) - 1;
+    const rewatchCount = Math.max(0, Math.max(minReplay, avgReplay));
+
+    let tier: BadgeTier = rule.badge.tier;
+    let rewatchSuffix = '';
+    if (rewatchCount >= 3) {
+      tier = 'platinum';
+      rewatchSuffix = ' (4x+)';
+    } else if (rewatchCount === 2) {
+      tier = 'gold';
+      rewatchSuffix = ' (3x)';
+    } else if (rewatchCount === 1) {
+      tier = 'silver';
+      rewatchSuffix = ' (2x)';
+    }
+
+    return {
+      userId: subject.userId,
+      ruleId: rule.ruleId,
+      version: rule.version,
+      badge: {
+        ...rule.badge,
+        tier,
+        title: `${rule.badge.title}${rewatchSuffix}`,
+        posterUrl: show.posterUrl,
+        stats: {
+          totalPlays: show.allCompletedPlays.length,
+          completedItems: current,
+          rewatchCount
+        }
+      },
+      state: earned ? 'earned' : current > 0 ? 'in_progress' : 'not_earned',
+      progress: { current, target, unit: rule.unit },
+      earnedAt: earned ? show.lastCompletedWatchedAt : null,
+      supportingEvidence: show.allCompletedPlays.slice(0, 10).map((p) => ({
+        kind: p.sourceKind,
+        id: p.id,
+        eventTime: p.watchedAt,
+        title: p.title
+      })),
+      reason: earned
+        ? `Completed all ${show.totalEpisodes} episodes of ${show.showTitle}`
+        : `${current} of ${show.totalEpisodes} episodes completed`
+    };
+  }
+
+  // Case B: General series completion threshold (e.g. show_mastery_first, show_mastery_5)
+  const completedShows: ShowProgressEvidence[] = [];
+  let hasUnknownShow = false;
+
+  if (subject.showProgress) {
+    for (const show of subject.showProgress.values()) {
+      if (show.totalEpisodes === null) {
+        hasUnknownShow = true;
+      } else if (show.completedEpisodeKeys.size >= show.totalEpisodes) {
+        completedShows.push(show);
+      }
+    }
+  }
+
+  const count = completedShows.length;
+  const earned = count >= rule.threshold;
+
+  if (earned) {
+    completedShows.sort((a, b) => {
+      if (!a.lastCompletedWatchedAt && !b.lastCompletedWatchedAt) return 0;
+      if (!a.lastCompletedWatchedAt) return 1;
+      if (!b.lastCompletedWatchedAt) return -1;
+      return a.lastCompletedWatchedAt.localeCompare(b.lastCompletedWatchedAt);
+    });
+
+    const crossing = completedShows[rule.threshold - 1];
+    const earnedAt = crossing?.lastCompletedWatchedAt ?? null;
+    const supporting: SupportingEvidenceRef[] = [];
+    for (const s of completedShows.slice(0, rule.threshold)) {
+      supporting.push(...s.allCompletedPlays.slice(0, 5).map((p: CanonicalPlay) => ({
+        kind: p.sourceKind,
+        id: p.id,
+        eventTime: p.watchedAt,
+        title: p.title
+      })));
+    }
+
+    return {
+      userId: subject.userId,
+      ruleId: rule.ruleId,
+      version: rule.version,
+      badge: rule.badge,
+      state: 'earned',
+      progress: { current: count, target: rule.threshold, unit: rule.unit },
+      earnedAt,
+      supportingEvidence: supporting.slice(0, 10),
+      reason: `Completed ${count} series`
+    };
+  }
+
+  if (count > 0) {
+    return {
+      userId: subject.userId,
+      ruleId: rule.ruleId,
+      version: rule.version,
+      badge: rule.badge,
+      state: 'in_progress',
+      progress: { current: count, target: rule.threshold, unit: rule.unit },
+      earnedAt: null,
+      supportingEvidence: [],
+      reason: `${count} of ${rule.threshold} series completed`
+    };
+  }
+
+  if (hasUnknownShow && (subject.hasUnknownDenominator || rule.evidenceRequirements?.requiresKnownDenominator)) {
     return {
       userId: subject.userId,
       ruleId: rule.ruleId,
