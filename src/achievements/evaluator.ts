@@ -71,70 +71,107 @@ export function evaluateSubjectAchievements(
     results.push(result);
   }
 
-  // Dynamic Trophy Shelf: generate show-specific completion badges with poster art & rewatch ribbons
+  // Dynamic Trophy Shelf: generate show-specific completion and in-progress badges with poster art & rewatch ribbons
   if (subject.showProgress) {
     for (const show of subject.showProgress.values()) {
-      if (show.totalEpisodes !== null && show.completedEpisodeKeys.size >= show.totalEpisodes) {
+      if (show.totalEpisodes !== null && show.completedEpisodeKeys.size > 0) {
         const dynamicRuleId = `show_mastery_${show.grandparentRatingKey}`;
         if (!results.some((r) => r.ruleId === dynamicRuleId)) {
-          let minReplay = 0;
-          if (show.completedEpisodeKeys.size > 0) {
-            const replays = [...show.completedEpisodeKeys].map((k) => show.replaysByEpisode.get(k) ?? 0);
-            minReplay = Math.min(...replays);
-          }
-          const avgReplay = Math.floor(show.allCompletedPlays.length / show.totalEpisodes) - 1;
-          const rewatchCount = Math.max(0, Math.max(minReplay, avgReplay));
+          const isComplete = show.completedEpisodeKeys.size >= show.totalEpisodes;
+          if (isComplete) {
+            let minReplay = 0;
+            if (show.completedEpisodeKeys.size > 0) {
+              const replays = [...show.completedEpisodeKeys].map((k) => show.replaysByEpisode.get(k) ?? 0);
+              minReplay = Math.min(...replays);
+            }
+            const avgReplay = Math.floor(show.allCompletedPlays.length / show.totalEpisodes) - 1;
+            const rewatchCount = Math.max(0, Math.max(minReplay, avgReplay));
 
-          let tier: BadgeTier = 'bronze';
-          let rewatchSuffix = '';
-          let rewatchDesc = '';
-          if (rewatchCount >= 3) {
-            tier = 'platinum';
-            rewatchSuffix = ' (4x+)';
-            rewatchDesc = ` Rewatched ${rewatchCount} times.`;
-          } else if (rewatchCount === 2) {
-            tier = 'gold';
-            rewatchSuffix = ' (3x)';
-            rewatchDesc = ' Rewatched 2 times.';
-          } else if (rewatchCount === 1) {
-            tier = 'silver';
-            rewatchSuffix = ' (2x)';
-            rewatchDesc = ' Rewatched once.';
-          }
+            let tier: BadgeTier = 'bronze';
+            let rewatchSuffix = '';
+            let rewatchDesc = '';
+            if (rewatchCount >= 3) {
+              tier = 'platinum';
+              rewatchSuffix = ' (4x+)';
+              rewatchDesc = ` Rewatched ${rewatchCount} times.`;
+            } else if (rewatchCount === 2) {
+              tier = 'gold';
+              rewatchSuffix = ' (3x)';
+              rewatchDesc = ' Rewatched 2 times.';
+            } else if (rewatchCount === 1) {
+              tier = 'silver';
+              rewatchSuffix = ' (2x)';
+              rewatchDesc = ' Rewatched once.';
+            }
 
-          results.push({
-            userId: subject.userId,
-            ruleId: dynamicRuleId,
-            version: 1,
-            facet: 'trophy_shelf',
-            badge: {
-              badgeKey: `show_mastery_${show.grandparentRatingKey}`,
-              tier,
-              title: `Show Mastery: ${show.showTitle}${rewatchSuffix}`,
-              description: `Completed 100% of ${show.showTitle}.${rewatchDesc}`,
-              posterUrl: show.posterUrl,
-              iconHint: 'series',
-              stats: {
-                totalPlays: show.allCompletedPlays.length,
-                completedItems: show.completedEpisodeKeys.size,
-                rewatchCount
-              }
-            },
-            state: 'earned',
-            progress: {
-              current: show.completedEpisodeKeys.size,
-              target: show.totalEpisodes,
-              unit: 'episode'
-            },
-            earnedAt: show.lastCompletedWatchedAt,
-            supportingEvidence: show.allCompletedPlays.slice(0, 10).map((p) => ({
-              kind: p.sourceKind,
-              id: p.id,
-              eventTime: p.watchedAt,
-              title: p.title
-            })),
-            reason: `Completed all ${show.totalEpisodes} episodes of ${show.showTitle}`
-          });
+            results.push({
+              userId: subject.userId,
+              ruleId: dynamicRuleId,
+              version: 1,
+              facet: 'trophy_shelf',
+              badge: {
+                badgeKey: `show_mastery_${show.grandparentRatingKey}`,
+                tier,
+                title: `Show Mastery: ${show.showTitle}${rewatchSuffix}`,
+                description: `Completed 100% of ${show.showTitle}.${rewatchDesc}`,
+                posterUrl: show.posterUrl,
+                iconHint: show.category === 'anime' ? 'anime' : 'series',
+                stats: {
+                  totalPlays: show.allCompletedPlays.length,
+                  completedItems: show.completedEpisodeKeys.size,
+                  rewatchCount
+                }
+              },
+              state: 'earned',
+              progress: {
+                current: show.completedEpisodeKeys.size,
+                target: show.totalEpisodes,
+                unit: 'episode'
+              },
+              earnedAt: show.lastCompletedWatchedAt,
+              supportingEvidence: show.allCompletedPlays.slice(0, 10).map((p) => ({
+                kind: p.sourceKind,
+                id: p.id,
+                eventTime: p.watchedAt,
+                title: p.title
+              })),
+              reason: `Completed all ${show.totalEpisodes} episodes of ${show.showTitle}`
+            });
+          } else {
+            results.push({
+              userId: subject.userId,
+              ruleId: dynamicRuleId,
+              version: 1,
+              facet: 'trophy_shelf',
+              badge: {
+                badgeKey: `show_mastery_${show.grandparentRatingKey}`,
+                tier: 'bronze',
+                title: `Series Progress: ${show.showTitle}`,
+                description: `Watched ${show.completedEpisodeKeys.size} of ${show.totalEpisodes} episodes of ${show.showTitle} (${Math.round((show.completedEpisodeKeys.size / show.totalEpisodes) * 100)}%).`,
+                posterUrl: show.posterUrl,
+                iconHint: show.category === 'anime' ? 'anime' : 'series',
+                stats: {
+                  totalPlays: show.allCompletedPlays.length,
+                  completedItems: show.completedEpisodeKeys.size,
+                  rewatchCount: 0
+                }
+              },
+              state: 'in_progress',
+              progress: {
+                current: show.completedEpisodeKeys.size,
+                target: show.totalEpisodes,
+                unit: 'episode'
+              },
+              earnedAt: null,
+              supportingEvidence: show.allCompletedPlays.slice(0, 10).map((p) => ({
+                kind: p.sourceKind,
+                id: p.id,
+                eventTime: p.watchedAt,
+                title: p.title
+              })),
+              reason: `${show.completedEpisodeKeys.size} of ${show.totalEpisodes} episodes completed`
+            });
+          }
         }
       }
     }
@@ -724,6 +761,7 @@ function evaluateObsessionSpotlight(
   );
 
   const topShow = shows[0];
+  const runnerUp = shows[1];
   if (!topShow) {
     return {
       userId: subject.userId,
@@ -740,7 +778,12 @@ function evaluateObsessionSpotlight(
   }
 
   const topHours = Math.round((topShow.durationSeconds / 3600) * 10) / 10;
+  const runnerUpHours = runnerUp ? Math.round((runnerUp.durationSeconds / 3600) * 10) / 10 : undefined;
   const earned = topHours >= rule.threshold;
+
+  const runnerUpSuffix = runnerUp
+    ? ` Runner-up: ${runnerUp.title} (${runnerUpHours} hours across ${runnerUp.plays.length} plays).`
+    : '';
 
   return {
     userId: subject.userId,
@@ -750,12 +793,15 @@ function evaluateObsessionSpotlight(
     badge: {
       ...rule.badge,
       title: `Series Obsession: ${topShow.title}`,
-      description: `Logged ${topHours} hours across ${topShow.plays.length} episodes of ${topShow.title}.`,
+      description: `Logged ${topHours} hours across ${topShow.plays.length} episodes of ${topShow.title}.${runnerUpSuffix}`,
       stats: {
         totalHours: topHours,
         totalPlays: topShow.plays.length,
         completedItems: topShow.ratingKeys.size,
-        topTitle: topShow.title
+        topTitle: topShow.title,
+        runnerUpTitle: runnerUp?.title,
+        runnerUpHours,
+        runnerUpPlays: runnerUp?.plays.length
       }
     },
     state: earned ? 'earned' : topHours > 0 ? 'in_progress' : 'not_earned',

@@ -110,7 +110,7 @@ export class AchievementEvidenceReader {
         po.rating_key,
         po.grandparent_rating_key,
         po.media_type,
-        po.library_name,
+        COALESCE(NULLIF(po.library_name, ''), cat.library_title, gp_cat.library_title) as library_name,
         po.title,
         po.show_title,
         po.watched_at,
@@ -141,7 +141,7 @@ export class AchievementEvidenceReader {
         }
       }
 
-      const category = this.normalizeCategory(row.media_type, row.library_name);
+      const category = this.normalizeCategory(row.media_type, row.library_name, genres);
       const play: CanonicalPlay = {
         id: Number(row.id),
         sourceKind: 'playback_observation',
@@ -217,14 +217,13 @@ export class AchievementEvidenceReader {
         we.rating_key,
         we.grandparent_rating_key AS we_gp_key,
         we.media_type AS we_media_type,
-        we.library_name AS we_library_name,
+        COALESCE(NULLIF(po.library_name, ''), NULLIF(we.library_name, ''), cat.library_title, gp_cat.library_title) AS resolved_library_name,
         we.title AS we_title,
         we.show_title AS we_show_title,
         we.watched_at,
         po.id AS observation_id,
         po.grandparent_rating_key AS po_gp_key,
         po.media_type AS po_media_type,
-        po.library_name AS po_library_name,
         po.title AS po_title,
         po.show_title AS po_show_title,
         COALESCE(po.completed, 1) AS completed,
@@ -273,8 +272,8 @@ export class AchievementEvidenceReader {
           }
 
           const mediaType = String(row.po_media_type || row.we_media_type || 'movie');
-          const libraryName = row.po_library_name || row.we_library_name;
-          const category = this.normalizeCategory(mediaType, libraryName);
+          const libraryName = row.resolved_library_name || row.po_library_name || row.we_library_name;
+          const category = this.normalizeCategory(mediaType, libraryName, genres);
           const play: CanonicalPlay = {
             id: Number(row.observation_id || row.event_id),
             sourceKind: 'cowatch_confirmation',
@@ -641,7 +640,7 @@ export class AchievementEvidenceReader {
       if (sample.grandparentRatingKey) {
         try {
           catalogRow = this.db.prepare(`
-            SELECT rating_key, title, leaf_count, media_type
+            SELECT rating_key, title, leaf_count, media_type, library_title, genres_json
             FROM content_catalog
             WHERE rating_key = ?
           `).get(sample.grandparentRatingKey);
@@ -651,7 +650,7 @@ export class AchievementEvidenceReader {
       if (!catalogRow && sample.showTitle) {
         try {
           catalogRow = this.db.prepare(`
-            SELECT rating_key, title, leaf_count, media_type
+            SELECT rating_key, title, leaf_count, media_type, library_title, genres_json
             FROM content_catalog
             WHERE media_type = 'show' AND title = ?
             LIMIT 1
@@ -707,10 +706,22 @@ export class AchievementEvidenceReader {
         lastCompletedWatchedAt = allCompletedPlays[allCompletedPlays.length - 1]?.watchedAt ?? null;
       }
 
+      let resolvedCategory = sample.category;
+      if (catalogRow?.library_title?.toLowerCase().includes('anime')) {
+        resolvedCategory = 'anime';
+      } else if (catalogRow?.genres_json) {
+        try {
+          const g = JSON.parse(catalogRow.genres_json);
+          if (Array.isArray(g) && g.some((x: string) => String(x).toLowerCase() === 'anime')) {
+            resolvedCategory = 'anime';
+          }
+        } catch {}
+      }
+
       showProgress.set(showRatingKey, {
         grandparentRatingKey: showRatingKey,
         showTitle,
-        category: sample.category as 'tv' | 'anime' | 'classic_tv',
+        category: resolvedCategory as 'tv' | 'anime' | 'classic_tv',
         totalEpisodes,
         completedEpisodeKeys,
         allCompletedPlays,
@@ -754,7 +765,8 @@ export class AchievementEvidenceReader {
 
   private normalizeCategory(
     mediaType?: string | null,
-    libraryName?: string | null
+    libraryName?: string | null,
+    genres?: string[] | null
   ): 'movie' | 'tv' | 'anime' | 'classic_tv' | 'audiobook' {
     const m = (mediaType ?? '').toLowerCase();
     const lib = (libraryName ?? '').toLowerCase();
@@ -762,13 +774,13 @@ export class AchievementEvidenceReader {
     if (m === 'track' || m === 'audiobook' || lib.includes('audiobook')) {
       return 'audiobook';
     }
-    if (lib.includes('anime')) {
+    if (lib.includes('anime') || genres?.some((g) => g.toLowerCase() === 'anime')) {
       return 'anime';
     }
     if (lib.includes('classic')) {
       return 'classic_tv';
     }
-    if (m === 'episode' || lib.includes('tv') || lib.includes('show')) {
+    if (m === 'episode' || m === 'show' || m === 'season' || lib.includes('tv') || lib.includes('show') || lib.includes('jdrama') || lib.includes('etv')) {
       return 'tv';
     }
     return 'movie';

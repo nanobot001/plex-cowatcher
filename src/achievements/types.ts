@@ -13,6 +13,9 @@ export interface BadgeFlavorStats {
   completedItems?: number;
   rewatchCount?: number;
   topTitle?: string;
+  runnerUpTitle?: string;
+  runnerUpHours?: number;
+  runnerUpPlays?: number;
 }
 
 export interface BadgeDescriptor {

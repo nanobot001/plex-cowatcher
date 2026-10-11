@@ -7256,6 +7256,10 @@ test("3-6-6C Obsession Spotlight: dynamically identifies #1 most-watched series 
     assert.equal(obsession.badge.stats.totalHours, 10);
     assert.equal(obsession.badge.stats.totalPlays, 20);
     assert.equal(obsession.badge.stats.completedItems, 20);
+    assert.equal(obsession.badge.stats.runnerUpTitle, 'Spy x Family');
+    assert.equal(obsession.badge.stats.runnerUpHours, 2);
+    assert.equal(obsession.badge.stats.runnerUpPlays, 5);
+    assert.ok(obsession.badge.description.includes('Runner-up: Spy x Family'));
   });
 });
 
@@ -7425,6 +7429,14 @@ test("3-6-6D Show Mastery & Trophy Shelf: 100% completed series earns poster-bac
     assert.equal(greatShowBadge.progress.target, 5);
     assert.ok(greatShowBadge.badge.posterUrl.includes('show-1'), 'Must include show-1 posterUrl');
     assert.equal(greatShowBadge.badge.tier, 'bronze');
+
+    // 2b. Dynamic in-progress card for show-2 on Trophy Shelf
+    const show2Dynamic = results.find((r) => r.ruleId === 'show_mastery_show-2');
+    assert.ok(show2Dynamic, 'Dynamic series progress for show-2 must exist on Trophy Shelf');
+    assert.equal(show2Dynamic.state, 'in_progress');
+    assert.equal(show2Dynamic.progress.current, 3);
+    assert.equal(show2Dynamic.progress.target, 10);
+    assert.ok(show2Dynamic.badge.posterUrl.includes('show-2'));
 
     // 3. Explicit rule for show-2 (in-progress) and show-3 (unknown)
     const customRules = [
@@ -7651,6 +7663,47 @@ test("3-6-6D Co-watched playback attribution: confirmed co-watching awards playb
     assert.equal(u2Show.badge.posterUrl, '/api/artwork/shared-show?variant=poster');
     assert.equal(u2Show.supportingEvidence.length, 2);
     assert.equal(u2Show.supportingEvidence[0].kind, 'cowatch_confirmation');
+  });
+});
+
+test("3-6-6D Anime classification & in-progress tracking: catalog library fallback and anime genres classify episodes and surface in-progress series", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Justin', 'Justin', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // Show catalog row with library_title='Anime' and genres_json='["Animation","Anime"]'
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, library_title, genres_json, leaf_count, source_provenance, refreshed_at)
+      VALUES ('show-ace', 'show', 'Ace of the Diamond', 'Anime', '["Animation","Anime"]', 126, 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // Episodes in playback_observations where po.library_name is NULL (simulating real observations)
+    for (let i = 1; i <= 25; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'show-ace', 'episode', NULL, ?, 'Ace of the Diamond', '2026-08-01T12:00:00Z', 1, 1440, '2026-08-01T12:00:00Z', '2026-08-01T12:00:00Z')
+      `).run(500 + i, `ace-ep-${i}`, `Episode ${i}`);
+    }
+
+    const service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const payload = service.getAchievements({ user: 1 });
+
+    // 1. Anime Initiate (25 episodes) must be earned due to catalog library/genres fallback
+    const animeInitiate = payload.results.find((r) => r.ruleId === 'anime_count_25');
+    assert.ok(animeInitiate, 'anime_count_25 rule must exist');
+    assert.equal(animeInitiate.state, 'earned', 'Anime initiate should be earned via library fallback');
+    assert.equal(animeInitiate.progress.current, 25);
+
+    // 2. Dynamic in-progress card for Ace of the Diamond exists on Trophy Shelf
+    const aceShelf = payload.results.find((r) => r.ruleId === 'show_mastery_show-ace');
+    assert.ok(aceShelf, 'Dynamic series progress card for Ace of the Diamond must exist');
+    assert.equal(aceShelf.state, 'in_progress');
+    assert.equal(aceShelf.progress.current, 25);
+    assert.equal(aceShelf.progress.target, 126);
+    assert.equal(aceShelf.badge.iconHint, 'anime');
+    assert.ok(aceShelf.badge.title.includes('Ace of the Diamond'));
   });
 });
 let passed = 0;
