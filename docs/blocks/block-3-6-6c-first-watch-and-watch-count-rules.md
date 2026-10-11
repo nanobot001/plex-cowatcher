@@ -1,7 +1,7 @@
 # Block 3-6-6C: First-Watch And Watch-Count Rules
 
-> Status: Planned (restructured 2026-10-09).
-> Result: Not implemented.
+> Status: Implemented (2026-10-11).
+> Result: Implemented.
 > Dependency: Block 3-6-6A implemented and verified.
 > Direction: `docs/design/achievements-product-direction.md`.
 

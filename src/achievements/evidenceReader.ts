@@ -102,24 +102,41 @@ export class AchievementEvidenceReader {
     // 1. Direct playback observations
     const obsRows = this.db.prepare(`
       SELECT
-        id,
-        user_id,
-        rating_key,
-        media_type,
-        library_name,
-        title,
-        watched_at,
-        completed,
-        duration,
-        view_offset,
-        percent_complete
-      FROM playback_observations
-      ORDER BY watched_at ASC, id ASC
+        po.id,
+        po.user_id,
+        po.rating_key,
+        po.grandparent_rating_key,
+        po.media_type,
+        po.library_name,
+        po.title,
+        po.show_title,
+        po.watched_at,
+        po.completed,
+        po.duration,
+        po.view_offset,
+        po.percent_complete,
+        COALESCE(cat.genres_json, gp_cat.genres_json) as genres_json
+      FROM playback_observations po
+      LEFT JOIN content_catalog cat ON cat.rating_key = po.rating_key
+      LEFT JOIN content_catalog gp_cat ON gp_cat.rating_key = po.grandparent_rating_key
+      ORDER BY po.watched_at ASC, po.id ASC
     `).all() as any[];
 
     for (const row of obsRows) {
       const userId = Number(row.user_id);
       if (!visibleUserIds.has(userId)) continue;
+
+      let genres: string[] | undefined;
+      if (row.genres_json) {
+        try {
+          const parsed = JSON.parse(row.genres_json);
+          if (Array.isArray(parsed)) {
+            genres = parsed.map(String);
+          }
+        } catch {
+          genres = undefined;
+        }
+      }
 
       const category = this.normalizeCategory(row.media_type, row.library_name);
       const play: CanonicalPlay = {
@@ -130,9 +147,11 @@ export class AchievementEvidenceReader {
         mediaType: String(row.media_type ?? 'movie'),
         category,
         title: String(row.title ?? ''),
+        showTitle: row.show_title ? String(row.show_title) : null,
+        genres,
         watchedAt: row.watched_at ?? null,
         completed: Boolean(row.completed),
-        durationSeconds: row.duration != null ? Number(row.duration) : null,
+        durationSeconds: row.duration != null ? normalizeDurationSeconds(row.duration) : null,
         viewOffsetSeconds: row.view_offset != null ? Number(row.view_offset) : null,
         percentComplete: row.percent_complete != null ? Number(row.percent_complete) : null
       };
@@ -370,12 +389,19 @@ export class AchievementEvidenceReader {
   private readCompletedAudiobookCounts(visibleUserIds: Set<number>): Map<number, number> {
     const countsByUser = new Map<number, number>();
 
-    // Check completed audiobook tracks or books in database
+    // Audiobook books milestone: NEVER count individual track observations as books.
+    // Query audiobook_position_evidence for completed books (view_offset_ms >= duration_ms).
+    const tableExists = this.db.prepare(`
+      SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audiobook_position_evidence'
+    `).get();
+    if (!tableExists) {
+      return countsByUser;
+    }
+
     const rows = this.db.prepare(`
-      SELECT user_id, COUNT(DISTINCT rating_key) as count
-      FROM playback_observations
-      WHERE completed = 1
-        AND (media_type IN ('audiobook', 'track') OR library_name LIKE '%Audiobook%')
+      SELECT user_id, COUNT(DISTINCT audiobook_id) as count
+      FROM audiobook_position_evidence
+      WHERE duration_ms > 0 AND view_offset_ms >= duration_ms
       GROUP BY user_id
     `).all() as Array<{ user_id: number; count: number }>;
 
@@ -389,12 +415,21 @@ export class AchievementEvidenceReader {
     return countsByUser;
   }
 
-  private normalizeCategory(mediaType?: string | null, libraryName?: string | null): 'movie' | 'tv' | 'audiobook' {
+  private normalizeCategory(
+    mediaType?: string | null,
+    libraryName?: string | null
+  ): 'movie' | 'tv' | 'anime' | 'classic_tv' | 'audiobook' {
     const m = (mediaType ?? '').toLowerCase();
     const lib = (libraryName ?? '').toLowerCase();
 
     if (m === 'track' || m === 'audiobook' || lib.includes('audiobook')) {
       return 'audiobook';
+    }
+    if (lib.includes('anime')) {
+      return 'anime';
+    }
+    if (lib.includes('classic')) {
+      return 'classic_tv';
     }
     if (m === 'episode' || lib.includes('tv') || lib.includes('show')) {
       return 'tv';
@@ -402,3 +437,10 @@ export class AchievementEvidenceReader {
     return 'movie';
   }
 }
+
+function normalizeDurationSeconds(duration?: number | null): number {
+  const val = Number(duration ?? 0);
+  if (!Number.isFinite(val) || val <= 0) return 0;
+  return val > 100000 ? Math.round(val / 1000) : Math.round(val);
+}
+

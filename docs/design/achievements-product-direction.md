@@ -37,7 +37,16 @@ Rather than a flat list of generic milestones, a person's achievements are struc
 | 4 | Visuals | **Poster-backed show tiles** using Plex artwork plus declarative tier styling (Bronze, Silver, Gold, Platinum). |
 | 5 | Planning | 3-6-6 blocks restructured to deliver this showcase model in order (3-6-6A → 3-6-6C → 3-6-6D → 3-6-6F). |
 
-A persisted earned ledger is deferred (Block 3-6-6B) and activated only when permanent trophy memories, push notifications, or offline sync are required.
+## Deferred Persistence & Push Notifications (Block 3-6-6B)
+
+A persisted earned database ledger (`achievements_ledger`) and background recalculation workers are intentionally **deferred** to Block 3-6-6B:
+
+* **Rationale**: The v1 engine evaluates dynamically on read from canonical Plex history in milliseconds. We avoid adding database migrations, table maintenance, and sync workers before the visual showcase is live.
+* **Product Direction**: As established, permanent trophies and real-time push notifications will definitely be built in a future phase, but they do not need to be stored as permanent memories right away.
+* **Future Activation Triggers**: Block 3-6-6B will be activated when:
+  1. Real-time **Discord push notifications** are requested (*"🎉 Justin just unlocked Anime Devotee!"*).
+  2. **Sticky trophy memories** are desired that stay permanently locked even if watch history is cleaned or modified.
+  3. A standalone mobile/desktop client requires offline award synchronization.
 
 ## Portability Requirements (Prototype → Product)
 

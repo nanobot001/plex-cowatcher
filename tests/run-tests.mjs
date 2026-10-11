@@ -65,7 +65,9 @@ import { buildCowatchReviewComponents, buildCowatchReviewEmbed } from "../dist/d
 import {
   AchievementEvidenceReader,
   evaluateSubjectAchievements,
-  evaluateAllAchievements
+  evaluateAllAchievements,
+  AchievementService,
+  DEFAULT_ACHIEVEMENT_RULES
 } from "../dist/achievements/index.js";
 
 const tests = [];
@@ -7072,6 +7074,293 @@ test("3-6-6A isolated achievements module has zero imports from dashboard servic
     }
   }
 });
+
+test("3-6-6C Volume Milestones: counts distinct items and NEVER counts audiobook observations as books", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 10 distinct movies
+    for (let i = 1; i <= 10; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'movie', 'Movies', ?, '2026-08-01T10:00:00Z', 1, 7200, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z')
+      `).run(i, `movie-${i}`, `Movie ${i}`);
+    }
+
+    // 25 distinct TV episodes
+    for (let i = 1; i <= 25; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'episode', 'TV Shows', ?, 'Breaking Bad', '2026-08-02T10:00:00Z', 1, 3000, '2026-08-02T10:00:00Z', '2026-08-02T10:00:00Z')
+      `).run(10 + i, `tv-ep-${i}`, `Episode ${i}`);
+    }
+
+    // 25 distinct Anime episodes
+    for (let i = 1; i <= 25; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'episode', 'Anime', ?, 'Frieren', '2026-08-03T10:00:00Z', 1, 1440, '2026-08-03T10:00:00Z', '2026-08-03T10:00:00Z')
+      `).run(35 + i, `anime-ep-${i}`, `Anime Episode ${i}`);
+    }
+
+    // 50 audiobook track observations (NO completed books)
+    for (let i = 1; i <= 50; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'track', 'Audiobooks', ?, '2026-08-04T10:00:00Z', 1, 900, '2026-08-04T10:00:00Z', '2026-08-04T10:00:00Z')
+      `).run(60 + i, `ab-track-${i}`, `Track ${i}`);
+    }
+
+    const service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const payload = service.getAchievements({ user: 1 });
+    const results = payload.results;
+
+    // Movie milestones
+    const movieFirst = results.find((r) => r.ruleId === 'movie_first_watch');
+    assert.equal(movieFirst.state, 'earned');
+    assert.equal(movieFirst.progress.unit, 'movie');
+
+    const movie10 = results.find((r) => r.ruleId === 'movie_count_10');
+    assert.equal(movie10.state, 'earned');
+    assert.equal(movie10.progress.current, 10);
+    assert.equal(movie10.progress.unit, 'movie');
+
+    // TV milestones
+    const tvFirst = results.find((r) => r.ruleId === 'tv_first_watch');
+    assert.equal(tvFirst.state, 'earned');
+    assert.equal(tvFirst.progress.unit, 'episode');
+
+    const tv25 = results.find((r) => r.ruleId === 'tv_count_25');
+    assert.equal(tv25.state, 'earned');
+    assert.equal(tv25.progress.current, 25);
+    assert.equal(tv25.progress.unit, 'episode');
+
+    // Anime milestones
+    const animeFirst = results.find((r) => r.ruleId === 'anime_first_watch');
+    assert.equal(animeFirst.state, 'earned');
+    assert.equal(animeFirst.progress.unit, 'episode');
+
+    const anime25 = results.find((r) => r.ruleId === 'anime_count_25');
+    assert.equal(anime25.state, 'earned');
+    assert.equal(anime25.progress.current, 25);
+    assert.equal(anime25.progress.unit, 'episode');
+
+    // Audiobook milestones: observations are plays, NEVER books
+    const abFirst = results.find((r) => r.ruleId === 'audiobook_first_watch');
+    assert.equal(abFirst.state, 'earned');
+    assert.equal(abFirst.progress.unit, 'play');
+
+    const abBook1 = results.find((r) => r.ruleId === 'audiobook_count_1');
+    assert.equal(abBook1.state, 'not_earned');
+    assert.equal(abBook1.progress.current, 0, 'Audiobook track observations must not be counted as completed books');
+    assert.equal(abBook1.progress.unit, 'audiobook_book');
+
+    const abBook5 = results.find((r) => r.ruleId === 'audiobook_count_5');
+    assert.equal(abBook5.state, 'not_earned');
+    assert.equal(abBook5.progress.current, 0);
+  });
+});
+
+test("3-6-6C Taste & Genre Affinity: calculates hours, plays, and distinct items for Anime Devotee and Sci-Fi Explorer", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (2, 'Justin', 'Justin', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 5 Sci-Fi movies in content_catalog (2 hours each = 7200s)
+    for (let i = 1; i <= 5; i++) {
+      db.prepare(`
+        INSERT INTO content_catalog (rating_key, media_type, title, genres_json, source_provenance, refreshed_at)
+        VALUES (?, 'movie', ?, '["Science Fiction", "Action"]', 'tautulli_stream', '2026-08-01T00:00:00Z')
+      `).run(`scifi-${i}`, `Sci-Fi Film ${i}`);
+
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 2, ?, 'movie', 'Movies', ?, '2026-08-01T10:00:00Z', 1, 7200, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z')
+      `).run(100 + i, `scifi-${i}`, `Sci-Fi Film ${i}`);
+    }
+
+    // 50 Anime episodes (24 mins each = 1440s -> 20 hours total)
+    for (let i = 1; i <= 50; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 2, ?, 'episode', 'Anime', ?, 'Frieren', '2026-08-02T10:00:00Z', 1, 1440, '2026-08-02T10:00:00Z', '2026-08-02T10:00:00Z')
+      `).run(200 + i, `anime-${i}`, `Frieren Ep ${i}`);
+    }
+
+    const service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const payload = service.getAchievements({ user: 2, facet: 'taste_affinity' });
+    const results = payload.results;
+
+    // Anime Devotee
+    const animeDevotee = results.find((r) => r.ruleId === 'taste_anime_devotee');
+    assert.equal(animeDevotee.state, 'earned');
+    assert.equal(animeDevotee.progress.current, 50);
+    assert.equal(animeDevotee.progress.target, 50);
+    assert.equal(animeDevotee.badge.stats.totalHours, 20);
+    assert.equal(animeDevotee.badge.stats.totalPlays, 50);
+    assert.equal(animeDevotee.badge.stats.completedItems, 50);
+
+    // Sci-Fi Explorer
+    const scifi = results.find((r) => r.ruleId === 'taste_scifi_explorer');
+    assert.equal(scifi.state, 'earned');
+    assert.equal(scifi.progress.current, 5);
+    assert.equal(scifi.progress.target, 5);
+    assert.equal(scifi.badge.stats.totalHours, 10);
+    assert.equal(scifi.badge.stats.completedItems, 5);
+
+    // Cinephile (requires 25, has 5)
+    const cinephile = results.find((r) => r.ruleId === 'taste_cinephile');
+    assert.equal(cinephile.state, 'in_progress');
+    assert.equal(cinephile.progress.current, 5);
+    assert.equal(cinephile.progress.target, 25);
+  });
+});
+
+test("3-6-6C Obsession Spotlight: dynamically identifies #1 most-watched series and hours", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 20 episodes of One Piece (1800s each = 10 hours)
+    for (let i = 1; i <= 20; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'episode', 'Anime', ?, 'One Piece', '2026-08-01T10:00:00Z', 1, 1800, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z')
+      `).run(100 + i, `op-${i}`, `One Piece Ep ${i}`);
+    }
+
+    // 5 episodes of Spy x Family (1440s each = 2 hours)
+    for (let i = 1; i <= 5; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'episode', 'Anime', ?, 'Spy x Family', '2026-08-02T10:00:00Z', 1, 1440, '2026-08-02T10:00:00Z', '2026-08-02T10:00:00Z')
+      `).run(200 + i, `sxf-${i}`, `Spy x Family Ep ${i}`);
+    }
+
+    const service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const payload = service.getAchievements({ user: 1, facet: 'obsession_spotlight' });
+    const results = payload.results;
+
+    const obsession = results.find((r) => r.ruleId === 'obsession_top_series');
+    assert.equal(obsession.state, 'earned');
+    assert.equal(obsession.progress.current, 10);
+    assert.equal(obsession.badge.title, 'Series Obsession: One Piece');
+    assert.equal(obsession.badge.stats.topTitle, 'One Piece');
+    assert.equal(obsession.badge.stats.totalHours, 10);
+    assert.equal(obsession.badge.stats.totalPlays, 20);
+    assert.equal(obsession.badge.stats.completedItems, 20);
+  });
+});
+
+test("3-6-6C Ambiguous media identity blocks affected result and stays explainable", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // Insert 5 movies, one having ambiguous rating key
+    for (let i = 1; i <= 4; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'movie', 'Movies', ?, '2026-08-01T10:00:00Z', 1, 7200, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z')
+      `).run(10 + i, `movie-${i}`, `Movie ${i}`);
+    }
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (15, 1, 'ambiguous-movie-99', 'movie', 'Movies', 'Unresolved Movie', '2026-08-01T10:00:00Z', 1, 7200, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z')
+    `).run();
+
+    const service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const payload = service.getAchievements({ user: 1 });
+    const results = payload.results;
+
+    const movie10 = results.find((r) => r.ruleId === 'movie_count_10');
+    assert.equal(movie10.state, 'blocked');
+    assert.ok(movie10.reason.includes('ambiguous'));
+
+    // TV achievements for Tony remain unblocked
+    const tv25 = results.find((r) => r.ruleId === 'tv_count_25');
+    assert.equal(tv25.state, 'not_earned');
+  });
+});
+
+test("3-6-6C Recovered archive evidence unlocks result with historical provenance without rewriting history", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 2021 recovered archive event
+    db.prepare(`
+      INSERT INTO archive_watch_events (id, user_id, source, source_record_key, title_snapshot, event_time, event_time_precision, completed, resolution_status, captured_at)
+      VALUES (101, 1, 'plex_api_history', 'plex-rec-1', 'The Matrix', '2021-05-20T14:00:00Z', 'second', 1, 'resolved', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 2024 direct playback observation
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (1, 1, 'movie-2024', 'movie', 'Movies', 'Dune Part Two', '2024-03-01T10:00:00Z', 1, 7200, '2024-03-01T10:00:00Z', '2024-03-01T10:00:00Z')
+    `).run();
+
+    const service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const payload = service.getAchievements({ user: 1 });
+    const movieFirst = payload.results.find((r) => r.ruleId === 'movie_first_watch');
+
+    assert.equal(movieFirst.state, 'earned');
+    assert.equal(movieFirst.earnedAt, '2021-05-20T14:00:00Z', 'Earliest earnedAt must come from recovered 2021 archive event');
+    assert.equal(movieFirst.supportingEvidence[0].kind, 'archive_watch_event');
+    assert.equal(movieFirst.supportingEvidence[0].id, 101);
+  });
+});
+
+test("3-6-6C Public contract surface parity: filters hidden listeners and returns clean versioned contract", async () => {
+  await withTestDb(async (db) => {
+    // Seed visible user and hidden user
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+             (2, 'HiddenUser', 'Ghost', 0, 0, 1, 0, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (1, 1, 'movie-1', 'movie', 'Movies', 'Inception', '2026-08-01T10:00:00Z', 1, 7200, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z'),
+             (2, 2, 'movie-2', 'movie', 'Movies', 'Secret Movie', '2026-08-01T10:00:00Z', 1, 7200, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z')
+    `).run();
+
+    const service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const payload = service.getAchievements();
+
+    assert.equal(payload.contractVersion, 1);
+    assert.ok(payload.watermark != null);
+    assert.ok(payload.evaluatedAt != null);
+    assert.ok(Array.isArray(payload.results));
+
+    // Hidden listener MUST NOT appear in results
+    const hiddenResults = payload.results.filter((r) => r.userId === 2);
+    assert.equal(hiddenResults.length, 0, 'Hidden listener must be completely absent from results');
+
+    // Visible listener appears
+    const visibleResults = payload.results.filter((r) => r.userId === 1);
+    assert.ok(visibleResults.length > 0);
+
+    // Private fields verification
+    const jsonString = JSON.stringify(payload);
+    assert.ok(!jsonString.includes('discord_user_id'));
+    assert.ok(!jsonString.includes('plex_token'));
+    assert.ok(!jsonString.includes('file_path'));
+  });
+});
+
 
 
 

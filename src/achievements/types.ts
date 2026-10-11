@@ -12,6 +12,7 @@ export interface BadgeFlavorStats {
   totalPlays?: number;
   completedItems?: number;
   rewatchCount?: number;
+  topTitle?: string;
 }
 
 export interface BadgeDescriptor {
@@ -35,7 +36,8 @@ export type AchievementFamily =
   | 'watch_count'
   | 'rewatch'
   | 'confirmed_cowatch'
-  | 'completion';
+  | 'completion'
+  | 'obsession_spotlight';
 
 export type AchievementUnit =
   | 'movie'
@@ -43,10 +45,11 @@ export type AchievementUnit =
   | 'audiobook_book'
   | 'play'
   | 'session'
-  | 'day';
+  | 'day'
+  | 'hour';
 
 export interface AchievementScope {
-  category?: 'movie' | 'tv' | 'audiobook';
+  category?: 'movie' | 'tv' | 'anime' | 'classic_tv' | 'audiobook';
   genre?: string;
   seriesId?: string;
   librarySection?: string;
@@ -130,8 +133,10 @@ export interface CanonicalPlay {
   userId: number;
   ratingKey: string;
   mediaType: string;
-  category: 'movie' | 'tv' | 'audiobook';
+  category: 'movie' | 'tv' | 'anime' | 'classic_tv' | 'audiobook';
   title: string;
+  showTitle?: string | null;
+  genres?: string[];
   watchedAt: string | null;
   completed: boolean;
   durationSeconds?: number | null;

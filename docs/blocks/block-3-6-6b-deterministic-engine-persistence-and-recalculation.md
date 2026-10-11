@@ -7,7 +7,9 @@
 
 ## Why Deferred
 
-v1 is compute-on-read and mirrors current evidence, so persistence is not needed. The original scope (result tables, dry-run/apply recalculation, restart safety, version audit) existed only to manage stored results and has been removed.
+v1 is compute-on-read and mirrors current evidence, so database persistence is not needed. The original scope (result tables, dry-run/apply recalculation, restart safety, version audit) existed only to manage stored results and has been removed.
+
+**User Direction Note**: Permanent trophies and push notifications will definitely be built in a future phase, but they do not need to be stored as permanent memories right away. Prioritizing compute-on-read allows the project to deliver the colorful Personal Media Showcase (3-6-6C, 3-6-6D, 3-6-6F) without premature database bloat.
 
 ## Triggers For Activation
 

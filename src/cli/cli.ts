@@ -201,6 +201,22 @@ async function main(): Promise<void> {
         }
       }
       break;
+    case "achievements":
+      {
+        const { AchievementService } = await import("../achievements/service.js");
+        const service = new AchievementService(db);
+        try {
+          const payload = service.getAchievements({
+            user: arg("user"),
+            facet: arg("facet") as any,
+            timezone: arg("timezone") ?? "America/New_York"
+          });
+          print({ ok: true, ...payload });
+        } catch (error) {
+          print({ ok: false, message: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      break;
     case "audiobook-backfill":
       {
         const { AudiobookBackfillService } = await import("../service/audiobookBackfillService.js");

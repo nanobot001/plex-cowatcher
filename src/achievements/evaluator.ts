@@ -12,7 +12,8 @@ import type {
   EvidenceWatermark,
   EvaluationContext,
   SubjectEvidence,
-  SupportingEvidenceRef
+  SupportingEvidenceRef,
+  CanonicalPlay
 } from './types.js';
 
 /**
@@ -43,6 +44,9 @@ export function evaluateSubjectAchievements(
         break;
       case 'completion':
         result = evaluateCompletion(rule, subject);
+        break;
+      case 'obsession_spotlight':
+        result = evaluateObsessionSpotlight(rule, subject);
         break;
       default:
         result = {
@@ -103,9 +107,15 @@ export function evaluateAllAchievements(
 }
 
 function evaluateFirstWatch(rule: AchievementRule, subject: SubjectEvidence): AchievementResult {
+  const isAudiobookPlay = rule.scope?.category === 'audiobook' && rule.unit === 'play';
   const matchingPlays = subject.plays
-    .filter((play) => play.completed)
+    .filter((play) => (isAudiobookPlay ? play.category === 'audiobook' : play.completed))
     .filter((play) => !rule.scope?.category || play.category === rule.scope.category)
+    .filter(
+      (play) =>
+        !rule.scope?.genre ||
+        (play.genres && play.genres.some((g) => g.toLowerCase() === rule.scope!.genre!.toLowerCase()))
+    )
     .sort((a, b) => {
       if (!a.watchedAt && !b.watchedAt) return a.id - b.id;
       if (!a.watchedAt) return 1;
@@ -150,6 +160,42 @@ function evaluateFirstWatch(rule: AchievementRule, subject: SubjectEvidence): Ac
 }
 
 function evaluateWatchCount(rule: AchievementRule, subject: SubjectEvidence): AchievementResult {
+  // 1. Evidence requirements check: unknown denominator
+  if (rule.evidenceRequirements?.requiresKnownDenominator && subject.hasUnknownDenominator) {
+    return {
+      userId: subject.userId,
+      ruleId: rule.ruleId,
+      version: rule.version,
+      badge: rule.badge,
+      state: 'unknown',
+      progress: { current: 0, target: rule.threshold, unit: rule.unit },
+      earnedAt: null,
+      supportingEvidence: [],
+      reason: 'Denominator is unverified or unknown'
+    };
+  }
+
+  // 2. Ambiguous identity check
+  const ambiguousPlay = subject.plays.find(
+    (p) =>
+      (!rule.scope?.category || p.category === rule.scope.category) &&
+      (!p.ratingKey || p.ratingKey.includes('ambiguous'))
+  );
+  if (ambiguousPlay) {
+    return {
+      userId: subject.userId,
+      ruleId: rule.ruleId,
+      version: rule.version,
+      badge: rule.badge,
+      state: 'blocked',
+      progress: { current: 0, target: rule.threshold, unit: rule.unit },
+      earnedAt: null,
+      supportingEvidence: [],
+      reason: 'Blocked by ambiguous or unverified media identity'
+    };
+  }
+
+  // 3. Audiobook books milestone: NEVER count individual track observations as books
   if (rule.unit === 'audiobook_book') {
     const count = subject.completedAudiobookCount;
     const earned = count >= rule.threshold;
@@ -168,11 +214,59 @@ function evaluateWatchCount(rule: AchievementRule, subject: SubjectEvidence): Ac
     };
   }
 
-  // For movie and tv watch counts, count distinct completed items to reward distinct titles
+  // Filter matching plays for this rule
+  const matchingPlays = subject.plays.filter((play) => {
+    if (!play.completed) return false;
+    if (rule.scope?.category && play.category !== rule.scope.category) return false;
+    if (
+      rule.scope?.genre &&
+      (!play.genres || !play.genres.some((g) => g.toLowerCase() === rule.scope!.genre!.toLowerCase()))
+    ) {
+      return false;
+    }
+    return true;
+  });
+
+  // Calculate duration and flavor stats
+  let totalDurationSec = 0;
+  for (const play of matchingPlays) {
+    totalDurationSec += play.durationSeconds ?? 0;
+  }
+  const totalHours = Math.round((totalDurationSec / 3600) * 10) / 10;
+
+  // 4. Hour-based milestones
+  if (rule.unit === 'hour') {
+    const earned = totalHours >= rule.threshold;
+    return {
+      userId: subject.userId,
+      ruleId: rule.ruleId,
+      version: rule.version,
+      badge: {
+        ...rule.badge,
+        stats: {
+          totalHours,
+          totalPlays: matchingPlays.length,
+          completedItems: new Set(matchingPlays.map((p) => p.ratingKey)).size
+        }
+      },
+      state: earned ? 'earned' : totalHours > 0 ? 'in_progress' : 'not_earned',
+      progress: { current: totalHours, target: rule.threshold, unit: rule.unit },
+      earnedAt: earned ? matchingPlays[matchingPlays.length - 1]?.watchedAt ?? null : null,
+      supportingEvidence: matchingPlays.slice(0, 10).map((p) => ({
+        kind: p.sourceKind,
+        id: p.id,
+        eventTime: p.watchedAt,
+        title: p.title
+      })),
+      reason: earned
+        ? `Logged ${totalHours} hours`
+        : `${totalHours} of ${rule.threshold} hours logged`
+    };
+  }
+
+  // 5. Distinct item milestones (movies, episodes, etc.)
   const distinctPlaysByRatingKey = new Map<string, typeof subject.plays[0]>();
-  for (const play of subject.plays) {
-    if (!play.completed) continue;
-    if (rule.scope?.category && play.category !== rule.scope.category) continue;
+  for (const play of matchingPlays) {
     if (!distinctPlaysByRatingKey.has(play.ratingKey)) {
       distinctPlaysByRatingKey.set(play.ratingKey, play);
     }
@@ -201,11 +295,20 @@ function evaluateWatchCount(rule: AchievementRule, subject: SubjectEvidence): Ac
     title: p.title
   }));
 
+  const badgeWithStats = {
+    ...rule.badge,
+    stats: {
+      totalHours,
+      totalPlays: matchingPlays.length,
+      completedItems: count
+    }
+  };
+
   return {
     userId: subject.userId,
     ruleId: rule.ruleId,
     version: rule.version,
-    badge: rule.badge,
+    badge: badgeWithStats,
     state: earned ? 'earned' : count > 0 ? 'in_progress' : 'not_earned',
     progress: { current: count, target: rule.threshold, unit: rule.unit },
     earnedAt,
@@ -355,3 +458,83 @@ function evaluateCompletion(rule: AchievementRule, subject: SubjectEvidence): Ac
     reason: 'Completion criteria not yet met'
   };
 }
+
+function evaluateObsessionSpotlight(
+  rule: AchievementRule,
+  subject: SubjectEvidence
+): AchievementResult {
+  const showMap = new Map<
+    string,
+    { title: string; durationSeconds: number; plays: CanonicalPlay[]; ratingKeys: Set<string> }
+  >();
+
+  for (const play of subject.plays) {
+    if (play.category === 'movie' || play.category === 'audiobook') continue;
+    const showTitle = play.showTitle || play.title;
+    if (!showTitle) continue;
+    const entry = showMap.get(showTitle) ?? {
+      title: showTitle,
+      durationSeconds: 0,
+      plays: [],
+      ratingKeys: new Set<string>()
+    };
+    entry.durationSeconds += play.durationSeconds ?? 0;
+    entry.plays.push(play);
+    entry.ratingKeys.add(play.ratingKey);
+    showMap.set(showTitle, entry);
+  }
+
+  const shows = [...showMap.values()].sort(
+    (a, b) => b.durationSeconds - a.durationSeconds || b.plays.length - a.plays.length
+  );
+
+  const topShow = shows[0];
+  if (!topShow) {
+    return {
+      userId: subject.userId,
+      ruleId: rule.ruleId,
+      version: rule.version,
+      facet: 'obsession_spotlight',
+      badge: rule.badge,
+      state: 'not_earned',
+      progress: { current: 0, target: rule.threshold, unit: 'hour' },
+      earnedAt: null,
+      supportingEvidence: [],
+      reason: 'No series playback recorded'
+    };
+  }
+
+  const topHours = Math.round((topShow.durationSeconds / 3600) * 10) / 10;
+  const earned = topHours >= rule.threshold;
+
+  return {
+    userId: subject.userId,
+    ruleId: rule.ruleId,
+    version: rule.version,
+    facet: 'obsession_spotlight',
+    badge: {
+      ...rule.badge,
+      title: `Series Obsession: ${topShow.title}`,
+      description: `Logged ${topHours} hours across ${topShow.plays.length} episodes of ${topShow.title}.`,
+      stats: {
+        totalHours: topHours,
+        totalPlays: topShow.plays.length,
+        completedItems: topShow.ratingKeys.size,
+        topTitle: topShow.title
+      }
+    },
+    state: earned ? 'earned' : topHours > 0 ? 'in_progress' : 'not_earned',
+    progress: { current: topHours, target: rule.threshold, unit: 'hour' },
+    earnedAt: earned ? topShow.plays[topShow.plays.length - 1]?.watchedAt ?? null : null,
+    supportingEvidence: topShow.plays.slice(0, 10).map((p) => ({
+      kind: p.sourceKind,
+      id: p.id,
+      eventTime: p.watchedAt,
+      title: p.title
+    })),
+    reason: earned
+      ? `Most watched series is ${topShow.title} with ${topHours} hours logged`
+      : `${topShow.title} has ${topHours} of ${rule.threshold} hours logged`
+  };
+}
+

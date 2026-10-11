@@ -24,6 +24,7 @@ import {
   AudiobookPositionCaptureService,
   type AudiobookPositionCaptureConfig
 } from "../service/audiobookPositionCaptureService.js";
+import { AchievementService } from "../achievements/service.js";
 import { appConfig } from "../utils/config.js";
 import { parseDays } from "../utils/time.js";
 
@@ -67,6 +68,7 @@ export function buildRouter(
   const dashboardDetailRefresh = new DashboardDetailRefreshService(db, dashboardService, plex, audit);
   const cowatchAdjudications = new CowatchAdjudicationService(db);
   const audiobookDiscovery = new AudiobookDiscoveryService(db, plex);
+  const achievements = new AchievementService(db);
   const handleDashboardReadError = (error: unknown, res: express.Response, next: express.NextFunction) => {
     if (error instanceof Error && error.message.startsWith("Validation Error:")) {
       res.status(400).json({ ok: false, errorCode: "VALIDATION_ERROR", message: error.message });
@@ -535,6 +537,18 @@ export function buildRouter(
       } else {
         next(error);
       }
+    }
+  });
+
+  router.get("/api/achievements", (req, res, next) => {
+    try {
+      const facet = typeof req.query.facet === "string" ? (req.query.facet as any) : undefined;
+      const user = typeof req.query.user === "string" ? req.query.user : undefined;
+      const timezone = typeof req.query.timezone === "string" ? req.query.timezone : "America/New_York";
+      const payload = achievements.getAchievements({ user, facet, timezone });
+      res.json({ ok: true, ...payload });
+    } catch (error) {
+      next(error);
     }
   });
 

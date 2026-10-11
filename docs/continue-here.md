@@ -1,6 +1,26 @@
 # Continue Here
 
-## 2026-10-08 — Blocks 3-6-1, 3-7, and 3-2o Closed; Selected Block 3-6-6 Next
+## 2026-10-11 — Block 3-6-6C Implemented and Verified; Ready for Block 3-6-6D
+
+Current state:
+- **Block 3-6-6C (First-Watch and Watch-Count Rules)** is fully implemented and verified on branch `codex/3-6-6c-first-watch-and-watch-count-rules`.
+- Rule catalog (`src/achievements/ruleCatalog.ts`) and evaluator (`src/achievements/evaluator.ts`) expanded:
+  - **Volume Milestones**: First-watch and threshold rules for movies, TV, anime, and audiobooks. Unit tracking ensures tracks are never counted as books (`audiobook_position_evidence` evaluated for completed books).
+  - **Taste & Genre Affinity**: Devotion rules (`taste_anime_devotee`, `taste_scifi_explorer`, `taste_cinephile`) dynamically calculate hours logged, completed items, and total plays.
+  - **Obsession Spotlight**: Dynamically identifies the #1 series/show per listener by duration logged (hours, plays, completed count).
+  - **Explainability & Identity**: Ambiguous rating keys block only the affected achievement rule and explain why. Recovered archive evidence accurately unlocks historical achievements with original event timestamps.
+- Contract parity surface:
+  - Read-only HTTP route `GET /api/achievements` registered in `src/server/routes.ts`.
+  - CLI subcommand `plex-cowatch achievements` registered in `src/cli/cli.ts`.
+  - Both filter hidden users, strip private fields, and provide identical payload structure.
+  - Tool contracts registered in `docs/tool-manifest.yaml`, `docs/tool-surface.md`, `docs/permissions.md`, verified by `scripts/verify-tools.js`.
+- Deterministic verification: 165/165 tests pass in `tests/run-tests.mjs`. `node --check src/web/static/dashboard.js` and `npm run verify:tools` pass.
+
+Next step:
+- Commit and push `codex/3-6-6c-first-watch-and-watch-count-rules`.
+- Proceed to **Block 3-6-6D: The Trophy Shelf, Rewatch Loyalty Ribbons, and Co-Watching Bonds**.
+
+## 2026-10-09 — Block 3-6-6A Contract, Evaluator, and Media Showcase Architecture Locked
 
 Current state:
 - **Block 3-6-1 (Archive Provenance Contract)**: Implemented and closed. A live audit confirmed 100% of production observations have valid source timestamps. Patched `tautulliAdapter.ts`, `watcher.ts`, and `ingestionService.ts` so missing source timestamps evaluate to explicit `unknown` provenance rather than fabricating current execution time (`Date.now()`).

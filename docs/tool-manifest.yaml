@@ -133,6 +133,22 @@ tools:
     output_schema:
       type: object
 
+  - name: project.achievements
+    risk: public_read
+    description: Evaluate and return versioned personal media achievements and showcase contract.
+    input_schema:
+      type: object
+      properties:
+        user:
+          type: string
+        facet:
+          type: string
+          enum: [trophy_shelf, taste_affinity, obsession_spotlight, cowatch_bond]
+        timezone:
+          type: string
+    output_schema:
+      type: object
+
   - name: project.audiobook_backfill
     risk: write_action
     description: Preview or apply resumable audiobook metadata linking and enrichment.
