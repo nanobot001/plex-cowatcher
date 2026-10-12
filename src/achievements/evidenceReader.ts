@@ -173,7 +173,8 @@ export class AchievementEvidenceReader {
         awe.source_rating_key,
         awe.title_snapshot,
         awe.event_time,
-        awe.completed
+        awe.completed,
+        awe.metadata_json
       FROM archive_watch_events awe
       WHERE awe.user_id IS NOT NULL
         AND awe.completed = 1
@@ -189,19 +190,46 @@ export class AchievementEvidenceReader {
       const userId = Number(row.user_id);
       if (!visibleUserIds.has(userId)) continue;
 
+      const list = playsByUser.get(userId) ?? [];
+
+      if (row.source_rating_key) {
+        const alreadyHasDirect = list.some(
+          (p) =>
+            p.ratingKey === String(row.source_rating_key) &&
+            Math.abs(new Date(p.watchedAt ?? 0).getTime() - new Date(row.event_time ?? 0).getTime()) <= 2 * 3600 * 1000
+        );
+        if (alreadyHasDirect) continue;
+      }
+
+      let mediaType = 'movie';
+      let showTitle: string | null = null;
+      let grandparentRatingKey: string | null = null;
+      let libraryName: string | null = null;
+      if (row.metadata_json) {
+        try {
+          const meta = JSON.parse(row.metadata_json);
+          if (meta.mediaType) mediaType = String(meta.mediaType);
+          if (meta.showTitle || meta.grandparentTitle) showTitle = String(meta.showTitle || meta.grandparentTitle);
+          if (meta.grandparentRatingKey) grandparentRatingKey = String(meta.grandparentRatingKey);
+          if (meta.librarySectionTitle) libraryName = String(meta.librarySectionTitle);
+        } catch {}
+      }
+
+      const category = this.normalizeCategory(mediaType, libraryName);
       const play: CanonicalPlay = {
         id: Number(row.id),
         sourceKind: 'archive_watch_event',
         userId,
         ratingKey: String(row.source_rating_key || `archive-${row.id}`),
-        mediaType: 'movie',
-        category: 'movie',
+        grandparentRatingKey,
+        mediaType,
+        category,
         title: String(row.title_snapshot ?? ''),
+        showTitle,
         watchedAt: row.event_time ?? null,
         completed: Boolean(row.completed)
       };
 
-      const list = playsByUser.get(userId) ?? [];
       list.push(play);
       playsByUser.set(userId, list);
     }
