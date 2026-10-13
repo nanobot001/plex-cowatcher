@@ -31,6 +31,8 @@ export interface CatalogEntry {
   artworkBackdropFingerprint: string | null;
   filePath?: string | null;
   audiobookId?: number | null;
+  canonicalTotalEpisodes?: number | null;
+  seriesStatus?: string | null;
 }
 
 export type ExplicitMetadataRefreshResult =
@@ -382,7 +384,9 @@ export class MetadataService {
       artworkPosterFingerprint: row.artwork_poster_fingerprint ?? null,
       artworkBackdropFingerprint: row.artwork_backdrop_fingerprint ?? null,
       filePath: row.file_path,
-      audiobookId: row.audiobook_id
+      audiobookId: row.audiobook_id,
+      canonicalTotalEpisodes: row.canonical_total_episodes != null ? Number(row.canonical_total_episodes) : null,
+      seriesStatus: row.series_status ?? null
     };
   }
 }

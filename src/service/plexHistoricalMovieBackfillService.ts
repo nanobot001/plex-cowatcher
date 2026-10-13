@@ -307,10 +307,11 @@ export class PlexHistoricalMovieBackfillService {
         sourceStatus = reconciled ? "reconciled" : "plex_only";
         const existing = this.db.prepare(`
           SELECT id FROM playback_observations
-          WHERE user_id = ? AND media_type = ? AND watched_at = ?
+          WHERE user_id = ? AND media_type = ?
             AND (rating_key = ? OR (plex_guid = ? AND plex_guid IS NOT NULL))
+            AND (watched_at = ? OR abs(strftime('%s', watched_at) - strftime('%s', ?)) <= 86400)
           LIMIT 1
-        `).get(user.id, state.mediaType, timestamp.toISOString(), ratingKey, state.guid) as { id: number } | undefined;
+        `).get(user.id, state.mediaType, ratingKey, state.guid, timestamp.toISOString(), timestamp.toISOString()) as { id: number } | undefined;
         if (existing) {
           outcome = "already_covered";
           importedObservationId = existing.id;

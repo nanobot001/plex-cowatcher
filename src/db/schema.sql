@@ -302,7 +302,9 @@ CREATE TABLE IF NOT EXISTS content_catalog (
   file_path TEXT,
   audiobook_id INTEGER REFERENCES audiobook_books(id),
   last_seen_at TEXT,
-  last_seen_scan_id INTEGER
+  last_seen_scan_id INTEGER,
+  canonical_total_episodes INTEGER,
+  series_status TEXT
 );
 
 INSERT OR IGNORE INTO schema_migrations (version, name)

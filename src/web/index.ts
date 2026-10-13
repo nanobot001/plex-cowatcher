@@ -15,6 +15,8 @@ export function registerWebRoutes(router: Router): void {
             <button class="nav-btn" data-layout="explorer">Media Explorer</button>
             <button class="nav-btn" data-layout="people">People</button>
             <button class="nav-btn" data-layout="progress">Progress</button>
+            <a href="/prompts" class="nav-btn" style="text-decoration:none; display:flex; align-items:center;">Review Prompts</a>
+            <a href="/achievements" class="nav-btn" style="text-decoration:none; display:flex; align-items:center;">Achievements</a>
           </nav>
           <div class="sidebar-section dashboard-members">
             <h3>Household Members</h3>
@@ -39,7 +41,7 @@ export function registerWebRoutes(router: Router): void {
               <option value="anime">Anime</option>
               <option value="audiobook">Audiobooks</option>
             </select>
-            <select name="user"><option value="">All Users</option></select>
+            <select name="user"><option value="">Everyone (All Users)</option></select>
             <input type="search" name="search" placeholder="Search title...">
             <button type="submit" class="btn">Apply</button>
             <a id="csv-export" href="/api/dashboard/export.csv" class="btn" download>CSV</a>
@@ -65,7 +67,7 @@ export function registerWebRoutes(router: Router): void {
           </section>
         </dialog>
       </div>
-      <script src="/static/dashboard.js?v=3-6-2b-archive-identity-review"></script>
+      <script src="/static/dashboard.js?v=3-6-6d-caught-up"></script>
     `));
   });
 
@@ -586,6 +588,1292 @@ export function registerWebRoutes(router: Router): void {
     `));
   });
 
+  router.get("/prompts", (_req, res) => {
+    res.type("html").send(renderPage("Review Prompts", `
+      <div class="prompts-container copy-container">
+        <!-- Header Banner -->
+        <section class="card" style="padding:20px 24px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px;">
+            <div>
+              <h2 style="margin:0 0 6px 0; font-size:1.4rem;">Review Unaddressed Prompts</h2>
+              <p style="margin:0; color:var(--text-muted); font-size:0.95rem;">
+                Browse co-watch prompts, filter by source streamer or show title, and confirm co-watch credit in bulk or one-by-one.
+              </p>
+            </div>
+            <div id="prompts-stats-bar" style="display:flex; gap:12px; align-items:center;">
+              <span class="badge badge-eligible" id="unaddressed-count-badge" style="font-size:0.85rem; padding:8px 16px;">Loading count...</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Filters Form -->
+        <section class="card" style="padding:20px 24px;">
+          <form id="prompts-filter-form" class="grid-form">
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:16px;">
+              <div class="form-col">
+                <label for="filterSourceUser">Source Streamer</label>
+                <select id="filterSourceUser" name="user">
+                  <option value="">All Source Streamers</option>
+                </select>
+              </div>
+              <div class="form-col">
+                <label for="filterShowSearch">Show / Title Search</label>
+                <input type="search" id="filterShowSearch" name="search" placeholder="e.g. Daemons, One Piece...">
+              </div>
+              <div class="form-col">
+                <label for="filterSort">Order</label>
+                <select id="filterSort" name="sort">
+                  <option value="desc" selected>Newest First (Reverse Chronological)</option>
+                  <option value="asc">Oldest First</option>
+                </select>
+              </div>
+              <div class="form-col">
+                <label for="filterStatus">Prompt Status</label>
+                <select id="filterStatus" name="status">
+                  <option value="unaddressed" selected>Unaddressed (Pending &amp; Prompted)</option>
+                  <option value="prompted">Prompted Only (Sent to Discord)</option>
+                  <option value="pending">Pending Only</option>
+                  <option value="confirmed">Confirmed</option>
+                  <option value="none">No One (Solo)</option>
+                  <option value="dismissed">Dismissed</option>
+                  <option value="all">All Statuses</option>
+                </select>
+              </div>
+              <div class="form-col">
+                <label for="filterGrouping">Grouping</label>
+                <select id="filterGrouping" name="grouping">
+                  <option value="show" selected>Group by Show &amp; Streamer</option>
+                  <option value="none">Flat (No Grouping)</option>
+                </select>
+              </div>
+              <div class="form-col">
+                <label for="filterLimit">Page Size</label>
+                <select id="filterLimit" name="limit">
+                  <option value="50" selected>50 per page</option>
+                  <option value="100">100 per page</option>
+                  <option value="200">200 per page</option>
+                </select>
+              </div>
+            </div>
+            <div style="display:flex; gap:12px; align-items:center; margin-top:8px;">
+              <button type="submit" class="btn btn-primary" id="prompts-filter-btn" style="min-width:120px;">Apply Filters</button>
+              <button type="button" class="btn" id="prompts-filter-reset">Reset</button>
+            </div>
+          </form>
+        </section>
+
+        <!-- Bulk Action Bar (Sticky on Scroll) -->
+        <section class="card sticky-bulk-bar" id="bulk-action-section" style="padding:16px 24px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px;">
+            <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+              <label style="display:inline-flex; align-items:center; gap:8px; cursor:pointer; font-weight:600; text-transform:none; font-size:0.95rem; color:var(--text-main);">
+                <input type="checkbox" id="master-select-checkbox" style="width:18px; height:18px; accent-color:#06B6D4; cursor:pointer;">
+                Select All on Page
+              </label>
+              <span id="selected-items-count" style="color:var(--text-muted); font-size:0.9rem;">(0 selected)</span>
+              <button type="button" class="btn" id="btn-clear-selection" style="display:none; padding:4px 10px; font-size:0.8rem; background:transparent; border:1px solid var(--panel-border); color:var(--text-muted); border-radius:4px; cursor:pointer;">
+                Clear Selection
+              </button>
+            </div>
+
+            <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+              <label style="margin:0; font-size:0.85rem; font-weight:600;">Watched With:</label>
+
+              <div class="watched-with-control" style="position:relative; display:inline-block;">
+                <button type="button" id="btn-cowatchers-toggle" class="btn" style="display:inline-flex; align-items:center; justify-content:space-between; gap:12px; background:rgba(0,0,0,0.4); border:1px solid var(--panel-border); color:var(--text-main); padding:10px 14px; border-radius:8px; min-width:220px; font-size:0.9rem; cursor:pointer; text-align:left;">
+                  <span id="cowatchers-label" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:180px;">Select Co-Watcher(s)...</span>
+                  <span style="font-size:0.75rem; opacity:0.7;">▼</span>
+                </button>
+
+                <div id="cowatchers-dropdown" class="cowatchers-dropdown hidden">
+                  <div style="padding:6px 10px 8px; border-bottom:1px solid rgba(255,255,255,0.08); display:flex; gap:6px;">
+                    <button type="button" id="btn-select-nobody" class="btn" style="flex:1; padding:5px 8px; font-size:0.75rem; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:6px; cursor:pointer; color:var(--text-main);">Nobody (Solo)</button>
+                    <button type="button" id="btn-select-everyone" class="btn" style="flex:1; padding:5px 8px; font-size:0.75rem; background:rgba(6,182,212,0.15); border:1px solid rgba(6,182,212,0.3); border-radius:6px; cursor:pointer; color:#06B6D4;">Everyone</button>
+                    <button type="button" id="btn-clear-cowatchers" class="btn" style="padding:5px 8px; font-size:0.75rem; background:transparent; border:1px solid rgba(255,255,255,0.1); border-radius:6px; cursor:pointer; color:var(--text-muted);" title="Clear selection">Clear</button>
+                  </div>
+                  <div id="cowatchers-list" style="padding:4px 0;">
+                    <!-- User checkboxes populated dynamically -->
+                  </div>
+                </div>
+              </div>
+
+              <!-- Hidden select for compatibility -->
+              <select id="targetCoWatcher" style="display:none;">
+                <option value="">Select Co-Watcher...</option>
+                <option value="none">Nobody (Watched Alone)</option>
+              </select>
+
+              <button type="button" class="btn btn-success" id="btn-bulk-confirm" disabled style="background:#10B981; color:#fff; border:none; padding:10px 18px; border-radius:8px; font-weight:600; cursor:pointer;">
+                Confirm Selected
+              </button>
+              <button type="button" class="btn" id="btn-bulk-dismiss" disabled style="background:rgba(244,63,94,0.15); color:#F43F5E; border:1px solid rgba(244,63,94,0.3); padding:10px 18px; border-radius:8px; font-weight:600; cursor:pointer;">
+                Dismiss Selected
+              </button>
+
+              <!-- Bulk Change Streamer Control -->
+              <div class="streamer-action-control" style="display:flex; align-items:center; gap:8px; border-left:1px solid rgba(255,255,255,0.1); padding-left:12px; margin-left:4px;">
+                <label style="margin:0; font-size:0.85rem; font-weight:600; white-space:nowrap; color:var(--text-muted);">Change Streamer:</label>
+                <select id="bulkChangeStreamerSelect" style="background:rgba(0,0,0,0.4); border:1px solid var(--panel-border); color:var(--text-main); padding:9px 12px; border-radius:8px; font-size:0.85rem; cursor:pointer; max-width:180px;">
+                  <option value="">Select Streamer...</option>
+                </select>
+                <button type="button" class="btn" id="btn-bulk-change-streamer" disabled style="background:rgba(99,102,241,0.2); color:#a5b4fc; border:1px solid rgba(99,102,241,0.4); padding:10px 14px; border-radius:8px; font-weight:600; cursor:pointer;">
+                  Apply
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Status / Feedback Alert -->
+        <div id="prompts-feedback" class="status-feedback alert hidden"></div>
+
+        <!-- Change Streamer Modal Dialog -->
+        <dialog id="change-streamer-dialog" style="background:#161b22; border:1px solid #30363d; border-radius:12px; padding:24px; color:var(--text-main); max-width:420px; width:100%; box-shadow:0 20px 25px -5px rgba(0,0,0,0.7);">
+          <form method="dialog" id="change-streamer-form">
+            <h3 style="margin:0 0 8px 0; font-size:1.15rem; color:#fff;">Change Source Streamer</h3>
+            <p id="streamer-dialog-subtitle" style="margin:0 0 16px 0; font-size:0.85rem; color:var(--text-muted); line-height:1.4;">
+              Select which household member streamed this media on Plex.
+            </p>
+            <div style="margin-bottom:20px;">
+              <label for="streamer-dialog-select" style="display:block; margin-bottom:6px; font-size:0.85rem; font-weight:600;">New Streamer:</label>
+              <select id="streamer-dialog-select" style="width:100%; padding:10px 12px; background:rgba(0,0,0,0.5); border:1px solid var(--panel-border); color:var(--text-main); border-radius:8px; font-size:0.9rem;" required>
+                <option value="">Select household user...</option>
+              </select>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:10px;">
+              <button type="button" class="btn" id="streamer-dialog-cancel" style="padding:8px 16px;">Cancel</button>
+              <button type="submit" class="btn btn-primary" id="streamer-dialog-submit" style="padding:8px 18px; background:#6366f1; border-color:#6366f1; font-weight:600; color:#fff;">Confirm Change</button>
+            </div>
+          </form>
+        </dialog>
+
+        <!-- Prompts Table Card -->
+        <section class="card" style="padding:0; overflow:hidden;">
+          <div style="padding:16px 24px; border-bottom:1px solid var(--panel-border); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; background:rgba(0,0,0,0.2);">
+            <span id="pagination-info" style="font-weight:600; font-size:0.9rem; color:var(--text-muted);">Showing 0 items</span>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <button type="button" class="btn" id="btn-page-prev" disabled style="padding:6px 12px; font-size:0.85rem;">&larr; Previous</button>
+              <span id="current-page-label" style="font-size:0.85rem; color:var(--text-muted); padding:0 8px;">Page 1</span>
+              <button type="button" class="btn" id="btn-page-next" disabled style="padding:6px 12px; font-size:0.85rem;">Next &rarr;</button>
+            </div>
+          </div>
+
+          <div class="items-table-container" style="overflow-x:auto;">
+            <table class="preview-table" style="margin:0;">
+              <thead>
+                <tr>
+                  <th style="width:48px; text-align:center;">Select</th>
+                  <th style="width:140px;">Streamer</th>
+                  <th>Show / Title</th>
+                  <th style="width:100px;">Season / Ep</th>
+                  <th style="width:170px;">Watched At</th>
+                  <th style="width:120px;">Status</th>
+                  <th>Co-Watchers</th>
+                  <th style="width:180px; text-align:right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="prompts-table-body">
+                <tr><td colspan="8" style="text-align:center; padding:40px; color:var(--text-muted);">Loading prompts...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <script>
+        let usersList = [];
+        let currentItems = [];
+        let currentGroups = [];
+        let selectedIds = new Set();
+        let lastClickedIndex = -1;
+        let currentPage = 1;
+        let pageSize = 50;
+        let selectedCoWatcherIds = new Set();
+        let isSoloSelected = false;
+
+        function updateCoWatcherUI() {
+          const labelEl = document.getElementById('cowatchers-label');
+          const btnBulkConfirm = document.getElementById('btn-bulk-confirm');
+          const targetSelect = document.getElementById('targetCoWatcher');
+
+          if (isSoloSelected) {
+            if (labelEl) labelEl.textContent = 'Nobody (Watched Alone)';
+            if (targetSelect) targetSelect.value = 'none';
+            if (btnBulkConfirm) btnBulkConfirm.textContent = 'Resolve (Watched Alone)';
+            document.querySelectorAll('.cowatcher-checkbox').forEach(cb => cb.checked = false);
+            return;
+          }
+
+          if (selectedCoWatcherIds.size === 0) {
+            if (labelEl) labelEl.textContent = 'Select Co-Watcher(s)...';
+            if (targetSelect) targetSelect.value = '';
+            if (btnBulkConfirm) btnBulkConfirm.textContent = 'Confirm Selected';
+            document.querySelectorAll('.cowatcher-checkbox').forEach(cb => cb.checked = false);
+            return;
+          }
+
+          const selectedNames = [];
+          usersList.forEach(u => {
+            if (selectedCoWatcherIds.has(Number(u.id))) {
+              selectedNames.push(userLabel(u));
+            }
+          });
+
+          if (selectedCoWatcherIds.size === usersList.length && usersList.length > 1) {
+            if (labelEl) labelEl.textContent = 'Everyone (' + selectedCoWatcherIds.size + ')';
+            if (btnBulkConfirm) btnBulkConfirm.textContent = 'Confirm with Everyone';
+          } else if (selectedNames.length === 1) {
+            if (labelEl) labelEl.textContent = selectedNames[0];
+            if (btnBulkConfirm) btnBulkConfirm.textContent = 'Confirm with ' + selectedNames[0];
+          } else {
+            if (labelEl) labelEl.textContent = selectedNames.join(', ');
+            if (btnBulkConfirm) btnBulkConfirm.textContent = 'Confirm with ' + selectedCoWatcherIds.size + ' people';
+          }
+
+          if (targetSelect) {
+            targetSelect.value = selectedCoWatcherIds.size === 1 ? String(Array.from(selectedCoWatcherIds)[0]) : '';
+          }
+
+          document.querySelectorAll('.cowatcher-checkbox').forEach(cb => {
+            cb.checked = selectedCoWatcherIds.has(Number(cb.value));
+          });
+        }
+
+        function getSelectedCoWatcherNames() {
+          if (isSoloSelected) return 'Nobody (Solo)';
+          const names = [];
+          usersList.forEach(u => {
+            if (selectedCoWatcherIds.has(Number(u.id))) {
+              names.push(userLabel(u));
+            }
+          });
+          return names.join(', ');
+        }
+
+        function userLabel(user) {
+          return (user && (user.alias || user.display_name || user.plex_username)) || '';
+        }
+
+        function escapeHtml(str) {
+          if (!str) return '';
+          return String(str).replace(/&/g, '&amp;')
+                            .replace(/</g, '&lt;')
+                            .replace(/>/g, '&gt;')
+                            .replace(/"/g, '&quot;')
+                            .replace(/'/g, '&#039;');
+        }
+
+        function formatDate(isoStr) {
+          if (!isoStr) return '-';
+          try {
+            const d = new Date(isoStr);
+            return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' +
+                   d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+          } catch {
+            return isoStr;
+          }
+        }
+
+        function formatStatusBadge(status) {
+          if (status === 'confirmed') return '<span class="badge badge-success">Confirmed</span>';
+          if (status === 'dismissed') return '<span class="badge badge-failed">Dismissed</span>';
+          if (status === 'prompted') return '<span class="badge badge-copied">Prompted</span>';
+          if (status === 'pending') return '<span class="badge badge-eligible">Pending</span>';
+          if (status === 'none') return '<span class="badge badge-eligible" title="Answered in Discord as watched alone">No One (Solo)</span>';
+          if (status === 'resolved') return '<span class="badge badge-success">Resolved</span>';
+          return '<span class="badge">' + escapeHtml(status) + '</span>';
+        }
+
+        function buildGroups(items) {
+          const map = new Map();
+          items.forEach(item => {
+            const streamerKey = String(item.source_user_id || item.source_username || 'unknown');
+            const streamerName = item.source_display_name || item.source_username || 'Unknown';
+            const showTitle = item.show_title || item.title || 'Untitled';
+            const groupKey = streamerKey + ':::' + showTitle;
+
+            if (!map.has(groupKey)) {
+              map.set(groupKey, {
+                groupKey: groupKey,
+                streamerKey: streamerKey,
+                streamerName: streamerName,
+                showTitle: showTitle,
+                mediaType: item.media_type,
+                items: []
+              });
+            }
+            map.get(groupKey).items.push(item);
+          });
+          return Array.from(map.values());
+        }
+
+        function updateSelectionUI() {
+          const count = selectedIds.size;
+          document.getElementById('selected-items-count').textContent = '(' + count + ' selected)';
+          document.getElementById('btn-bulk-confirm').disabled = count === 0;
+          document.getElementById('btn-bulk-dismiss').disabled = count === 0;
+
+          const btnBulkChangeStreamer = document.getElementById('btn-bulk-change-streamer');
+          const bulkStreamerSelect = document.getElementById('bulkChangeStreamerSelect');
+          if (btnBulkChangeStreamer && bulkStreamerSelect) {
+            btnBulkChangeStreamer.disabled = count === 0 || !bulkStreamerSelect.value;
+          }
+
+          const btnClear = document.getElementById('btn-clear-selection');
+          if (btnClear) btnClear.style.display = count > 0 ? 'inline-block' : 'none';
+
+          const masterCheckbox = document.getElementById('master-select-checkbox');
+          const pageCheckboxes = document.querySelectorAll('.prompt-row-select');
+          if (pageCheckboxes.length > 0 && Array.from(pageCheckboxes).every(cb => cb.checked)) {
+            masterCheckbox.checked = true;
+            masterCheckbox.indeterminate = false;
+          } else if (count > 0 && Array.from(pageCheckboxes).some(cb => cb.checked)) {
+            masterCheckbox.checked = false;
+            masterCheckbox.indeterminate = true;
+          } else {
+            masterCheckbox.checked = false;
+            masterCheckbox.indeterminate = false;
+          }
+
+          // Update Group Checkboxes
+          document.querySelectorAll('.prompt-group-select').forEach(groupCb => {
+            const groupKey = groupCb.getAttribute('data-group-key');
+            const groupRows = document.querySelectorAll('.prompt-row[data-group-key="' + groupKey + '"]');
+            if (groupRows.length === 0) return;
+            let checkedCount = 0;
+            groupRows.forEach(r => {
+              const id = Number(r.getAttribute('data-id'));
+              if (selectedIds.has(id)) checkedCount++;
+            });
+            if (checkedCount === groupRows.length) {
+              groupCb.checked = true;
+              groupCb.indeterminate = false;
+            } else if (checkedCount > 0) {
+              groupCb.checked = false;
+              groupCb.indeterminate = true;
+            } else {
+              groupCb.checked = false;
+              groupCb.indeterminate = false;
+            }
+          });
+        }
+
+        function showFeedback(type, text) {
+          const el = document.getElementById('prompts-feedback');
+          el.className = 'status-feedback alert alert-' + type;
+          el.textContent = text;
+          el.classList.remove('hidden');
+        }
+
+        function hideFeedback() {
+          const el = document.getElementById('prompts-feedback');
+          el.className = 'status-feedback alert hidden';
+          el.textContent = '';
+        }
+
+        async function loadPrompts() {
+          const form = document.getElementById('prompts-filter-form');
+          const user = form.user.value;
+          const search = form.search.value.trim();
+          const sort = form.sort.value;
+          const status = form.status.value;
+          const grouping = form.grouping ? form.grouping.value : 'show';
+          if (form.limit) pageSize = Number(form.limit.value) || 50;
+
+          const offset = (currentPage - 1) * pageSize;
+
+          const params = new URLSearchParams({
+            status: status,
+            sort: sort,
+            limit: String(pageSize),
+            offset: String(offset)
+          });
+          if (user) params.set('user', user);
+          if (search) params.set('search', search);
+
+          const tbody = document.getElementById('prompts-table-body');
+          tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:40px; color:var(--text-muted);">Loading prompts...</td></tr>';
+
+          try {
+            const res = await fetch('/api/dashboard/prompts?' + params.toString());
+            const data = await res.json();
+            if (!data.ok) {
+              tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:40px; color:#F43F5E;">Error: ' + escapeHtml(data.error || 'Failed to load') + '</td></tr>';
+              return;
+            }
+
+            currentItems = data.items || [];
+            currentGroups = buildGroups(currentItems);
+            const total = data.total || 0;
+
+            document.getElementById('unaddressed-count-badge').textContent = total.toLocaleString() + ' prompts found';
+
+            const startIdx = total === 0 ? 0 : offset + 1;
+            const endIdx = Math.min(offset + currentItems.length, total);
+            document.getElementById('pagination-info').textContent = 'Showing ' + startIdx + '–' + endIdx + ' of ' + total.toLocaleString() + ' prompts';
+            document.getElementById('current-page-label').textContent = 'Page ' + currentPage + ' of ' + (Math.ceil(total / pageSize) || 1);
+            document.getElementById('btn-page-prev').disabled = currentPage <= 1;
+            document.getElementById('btn-page-next').disabled = endIdx >= total;
+
+            if (currentItems.length === 0) {
+              tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:40px; color:var(--text-muted);">No prompts match the current filters.</td></tr>';
+              updateSelectionUI();
+              return;
+            }
+
+            let rowsHtml = '';
+            let globalIdx = 0;
+
+            if (grouping === 'show') {
+              currentGroups.forEach(group => {
+                const totalInGroup = group.items.length;
+                let checkedInGroup = 0;
+                group.items.forEach(i => { if (selectedIds.has(i.id)) checkedInGroup++; });
+                const isGroupChecked = totalInGroup > 0 && checkedInGroup === totalInGroup;
+
+                // Group Header Row
+                rowsHtml += '<tr class="prompt-group-header-row" data-group-key="' + escapeHtml(group.groupKey) + '" style="background:rgba(255,255,255,0.04); border-top:2px solid rgba(255,255,255,0.08); border-bottom:1px solid rgba(255,255,255,0.06);">' +
+                  '<td colspan="8" style="padding:10px 16px;">' +
+                    '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">' +
+                      '<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">' +
+                        '<label style="display:inline-flex; align-items:center; gap:8px; cursor:pointer; margin:0; font-weight:600;">' +
+                          '<input type="checkbox" class="prompt-group-select" data-group-key="' + escapeHtml(group.groupKey) + '" ' +
+                            (isGroupChecked ? 'checked ' : '') +
+                            'style="width:18px; height:18px; accent-color:#06B6D4; cursor:pointer;">' +
+                          '<span style="font-size:0.85rem; color:var(--text-muted);">Select group</span>' +
+                        '</label>' +
+                        '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">' +
+                          '<span class="badge badge-copied" style="font-size:0.75rem; padding:3px 8px;">' + escapeHtml(group.streamerName) + '</span>' +
+                          '<button type="button" class="btn btn-group-streamer" data-group-key="' + escapeHtml(group.groupKey) + '" style="padding:2px 8px; font-size:0.75rem; background:rgba(99,102,241,0.15); color:#a5b4fc; border:1px solid rgba(99,102,241,0.3); border-radius:4px; cursor:pointer;" title="Change streamer for all ' + totalInGroup + ' items in this group">Change Streamer</button>' +
+                          '<strong style="font-size:0.95rem; color:var(--text-main);">' + escapeHtml(group.showTitle) + '</strong>' +
+                          '<span class="badge badge-eligible" style="font-size:0.75rem; padding:3px 8px;">' + totalInGroup + ' ' + (totalInGroup === 1 ? 'item' : 'episodes') + '</span>' +
+                        '</div>' +
+                      '</div>' +
+                      '<div style="display:flex; align-items:center; gap:8px;">' +
+                        '<button type="button" class="btn btn-group-confirm" data-group-key="' + escapeHtml(group.groupKey) + '" style="padding:4px 12px; font-size:0.8rem; background:#10B981; color:#fff; border:none; border-radius:4px; font-weight:600; cursor:pointer;">Confirm Group (' + totalInGroup + ')</button>' +
+                        '<button type="button" class="btn btn-group-dismiss" data-group-key="' + escapeHtml(group.groupKey) + '" style="padding:4px 12px; font-size:0.8rem; background:rgba(244,63,94,0.15); color:#F43F5E; border:1px solid rgba(244,63,94,0.3); border-radius:4px; cursor:pointer;">Dismiss Group</button>' +
+                      '</div>' +
+                    '</div>' +
+                  '</td>' +
+                '</tr>';
+
+                group.items.forEach(item => {
+                  const isChecked = selectedIds.has(item.id);
+                  const seasonEp = item.media_type === 'episode'
+                    ? 'S' + String(item.season_number ?? 0).padStart(2, '0') + 'E' + String(item.episode_number ?? 0).padStart(2, '0')
+                    : '-';
+                  const displayTitle = item.show_title
+                    ? '<strong>' + escapeHtml(item.show_title) + '</strong><br><small style="color:var(--text-muted);">' + escapeHtml(item.title) + '</small>'
+                    : '<strong>' + escapeHtml(item.title) + '</strong>';
+
+                  const confirmations = (item.confirmations || []).map(c => {
+                    return '<span class="badge badge-success" style="font-size:0.7rem; padding:3px 8px; margin:2px;">' +
+                      escapeHtml(c.targetDisplayName || c.targetUsername) + '</span>';
+                  }).join('');
+
+                  const selectGroupBtn = totalInGroup > 1
+                    ? ' <button type="button" class="btn-select-group" data-group-key="' + escapeHtml(group.groupKey) + '" style="padding:2px 8px; font-size:0.7rem; background:rgba(6,182,212,0.12); color:#06B6D4; border:1px solid rgba(6,182,212,0.3); border-radius:4px; cursor:pointer; vertical-align:middle;" title="Select all ' + totalInGroup + ' of this show">Select Show (' + totalInGroup + ')</button>'
+                    : '';
+
+                  rowsHtml += '<tr class="prompt-row ' + (isChecked ? 'selected' : '') + '" data-id="' + item.id + '" data-idx="' + globalIdx + '" data-group-key="' + escapeHtml(group.groupKey) + '" style="cursor:pointer;">' +
+                    '<td style="text-align:center;"><input type="checkbox" class="prompt-row-select" data-id="' + item.id + '" ' + (isChecked ? 'checked' : '') + ' style="width:18px; height:18px; accent-color:#06B6D4; cursor:pointer;"></td>' +
+                    '<td><div style="display:flex; align-items:center; gap:6px;"><strong>' + escapeHtml(item.source_display_name || item.source_username) + '</strong><button type="button" class="btn btn-row-streamer" data-id="' + item.id + '" data-current="' + item.source_user_id + '" style="padding:1px 6px; font-size:0.7rem; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:4px; cursor:pointer; color:var(--text-muted);" title="Change streamer for this prompt">✎</button></div></td>' +
+                    '<td>' + displayTitle + selectGroupBtn + '</td>' +
+                    '<td>' + escapeHtml(seasonEp) + '</td>' +
+                    '<td style="white-space:nowrap; font-size:0.85rem;">' + formatDate(item.watched_at) + '</td>' +
+                    '<td>' + formatStatusBadge(item.prompt_status) + '</td>' +
+                    '<td>' + (confirmations || '<span style="color:var(--text-muted); font-size:0.8rem;">None</span>') + '</td>' +
+                    '<td style="text-align:right; white-space:nowrap;">' +
+                      '<button type="button" class="btn btn-row-confirm" data-id="' + item.id + '" style="padding:4px 10px; font-size:0.8rem; background:#10B981; color:#fff; border:none; border-radius:4px; margin-right:6px; cursor:pointer;">Confirm</button>' +
+                      '<button type="button" class="btn btn-row-dismiss" data-id="' + item.id + '" style="padding:4px 10px; font-size:0.8rem; background:rgba(244,63,94,0.15); color:#F43F5E; border:1px solid rgba(244,63,94,0.3); border-radius:4px; cursor:pointer;">Dismiss</button>' +
+                    '</td>' +
+                  '</tr>';
+                  globalIdx++;
+                });
+              });
+            } else {
+              // Flat View (grouping === 'none')
+              currentItems.forEach((item, idx) => {
+                const streamerKey = String(item.source_user_id || item.source_username || 'unknown');
+                const showTitle = item.show_title || item.title || 'Untitled';
+                const groupKey = streamerKey + ':::' + showTitle;
+                const group = currentGroups.find(g => g.groupKey === groupKey);
+                const totalInGroup = group ? group.items.length : 1;
+                const isChecked = selectedIds.has(item.id);
+                const seasonEp = item.media_type === 'episode'
+                  ? 'S' + String(item.season_number ?? 0).padStart(2, '0') + 'E' + String(item.episode_number ?? 0).padStart(2, '0')
+                  : '-';
+                const displayTitle = item.show_title
+                  ? '<strong>' + escapeHtml(item.show_title) + '</strong><br><small style="color:var(--text-muted);">' + escapeHtml(item.title) + '</small>'
+                  : '<strong>' + escapeHtml(item.title) + '</strong>';
+
+                  const confirmations = (item.confirmations || []).map(c => {
+                    return '<span class="badge badge-success" style="font-size:0.7rem; padding:3px 8px; margin:2px;">' +
+                      escapeHtml(c.targetDisplayName || c.targetUsername) + '</span>';
+                  }).join('');
+
+                  const selectGroupBtn = totalInGroup > 1
+                    ? ' <button type="button" class="btn-select-group" data-group-key="' + escapeHtml(groupKey) + '" style="padding:2px 8px; font-size:0.7rem; background:rgba(6,182,212,0.12); color:#06B6D4; border:1px solid rgba(6,182,212,0.3); border-radius:4px; cursor:pointer; vertical-align:middle;" title="Select all ' + totalInGroup + ' of this show">Select Show (' + totalInGroup + ')</button>'
+                    : '';
+
+                  rowsHtml += '<tr class="prompt-row ' + (isChecked ? 'selected' : '') + '" data-id="' + item.id + '" data-idx="' + idx + '" data-group-key="' + escapeHtml(groupKey) + '" style="cursor:pointer;">' +
+                    '<td style="text-align:center;"><input type="checkbox" class="prompt-row-select" data-id="' + item.id + '" ' + (isChecked ? 'checked' : '') + ' style="width:18px; height:18px; accent-color:#06B6D4; cursor:pointer;"></td>' +
+                    '<td><div style="display:flex; align-items:center; gap:6px;"><strong>' + escapeHtml(item.source_display_name || item.source_username) + '</strong><button type="button" class="btn btn-row-streamer" data-id="' + item.id + '" data-current="' + item.source_user_id + '" style="padding:1px 6px; font-size:0.7rem; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:4px; cursor:pointer; color:var(--text-muted);" title="Change streamer for this prompt">✎</button></div></td>' +
+                    '<td>' + displayTitle + selectGroupBtn + '</td>' +
+                    '<td>' + escapeHtml(seasonEp) + '</td>' +
+                    '<td style="white-space:nowrap; font-size:0.85rem;">' + formatDate(item.watched_at) + '</td>' +
+                    '<td>' + formatStatusBadge(item.prompt_status) + '</td>' +
+                    '<td>' + (confirmations || '<span style="color:var(--text-muted); font-size:0.8rem;">None</span>') + '</td>' +
+                  '<td style="text-align:right; white-space:nowrap;">' +
+                    '<button type="button" class="btn btn-row-confirm" data-id="' + item.id + '" style="padding:4px 10px; font-size:0.8rem; background:#10B981; color:#fff; border:none; border-radius:4px; margin-right:6px; cursor:pointer;">Confirm</button>' +
+                    '<button type="button" class="btn btn-row-dismiss" data-id="' + item.id + '" style="padding:4px 10px; font-size:0.8rem; background:rgba(244,63,94,0.15); color:#F43F5E; border:1px solid rgba(244,63,94,0.3); border-radius:4px; cursor:pointer;">Dismiss</button>' +
+                  '</td>' +
+                '</tr>';
+              });
+            }
+
+            tbody.innerHTML = rowsHtml;
+            updateSelectionUI();
+          } catch (err) {
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:40px; color:#F43F5E;">Failed to fetch prompts: ' + escapeHtml(err.message) + '</td></tr>';
+          }
+        }
+
+        // Initialize Users
+        fetch('/api/dashboard/users')
+          .then(r => r.json())
+          .then(data => {
+            if (data.ok && data.users) {
+              usersList = data.users;
+              const sourceSelect = document.getElementById('filterSourceUser');
+              const targetSelect = document.getElementById('targetCoWatcher');
+              const listContainer = document.getElementById('cowatchers-list');
+              const bulkStreamerSelect = document.getElementById('bulkChangeStreamerSelect');
+              const dialogStreamerSelect = document.getElementById('streamer-dialog-select');
+
+              if (targetSelect) targetSelect.innerHTML = '<option value="">Select Co-Watcher...</option><option value="none">Nobody (Watched Alone)</option>';
+              if (listContainer) listContainer.innerHTML = '';
+              if (bulkStreamerSelect) bulkStreamerSelect.innerHTML = '<option value="">Select Streamer...</option>';
+              if (dialogStreamerSelect) dialogStreamerSelect.innerHTML = '<option value="">Select household user...</option>';
+
+              usersList.forEach(u => {
+                const opt1 = document.createElement('option');
+                opt1.value = u.plex_username;
+                opt1.textContent = userLabel(u);
+                sourceSelect.appendChild(opt1);
+
+                if (targetSelect) {
+                  const opt2 = document.createElement('option');
+                  opt2.value = String(u.id);
+                  opt2.textContent = userLabel(u);
+                  targetSelect.appendChild(opt2);
+                }
+
+                if (bulkStreamerSelect) {
+                  const optB = document.createElement('option');
+                  optB.value = String(u.id);
+                  optB.textContent = userLabel(u);
+                  bulkStreamerSelect.appendChild(optB);
+                }
+
+                if (dialogStreamerSelect) {
+                  const optD = document.createElement('option');
+                  optD.value = String(u.id);
+                  optD.textContent = userLabel(u);
+                  dialogStreamerSelect.appendChild(optD);
+                }
+
+                if (listContainer) {
+                  const itemLabel = document.createElement('label');
+                  itemLabel.className = 'cowatcher-item';
+                  itemLabel.innerHTML = '<input type="checkbox" class="cowatcher-checkbox" value="' + u.id + '"> <span>' + escapeHtml(userLabel(u)) + '</span>';
+                  listContainer.appendChild(itemLabel);
+                }
+              });
+            }
+            loadPrompts();
+          })
+          .catch(() => loadPrompts());
+
+        // Dropdown toggle & outside-click close
+        const toggleBtn = document.getElementById('btn-cowatchers-toggle');
+        const cowatchersDropdown = document.getElementById('cowatchers-dropdown');
+        if (toggleBtn && cowatchersDropdown) {
+          toggleBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            cowatchersDropdown.classList.toggle('hidden');
+          });
+
+          document.addEventListener('click', (e) => {
+            if (!e.target.closest('.watched-with-control')) {
+              cowatchersDropdown.classList.add('hidden');
+            }
+          });
+        }
+
+        // Quick action buttons in dropdown: Nobody, Everyone, Clear
+        document.getElementById('btn-select-nobody')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          isSoloSelected = true;
+          selectedCoWatcherIds.clear();
+          updateCoWatcherUI();
+          cowatchersDropdown?.classList.add('hidden');
+        });
+
+        document.getElementById('btn-select-everyone')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          isSoloSelected = false;
+          selectedCoWatcherIds.clear();
+          usersList.forEach(u => selectedCoWatcherIds.add(Number(u.id)));
+          updateCoWatcherUI();
+          cowatchersDropdown?.classList.add('hidden');
+        });
+
+        document.getElementById('btn-clear-cowatchers')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          isSoloSelected = false;
+          selectedCoWatcherIds.clear();
+          updateCoWatcherUI();
+        });
+
+        // Checkbox selection in co-watchers list
+        document.getElementById('cowatchers-list')?.addEventListener('change', (e) => {
+          const cb = e.target.closest('.cowatcher-checkbox');
+          if (!cb) return;
+          const uId = Number(cb.value);
+          if (cb.checked) {
+            isSoloSelected = false;
+            selectedCoWatcherIds.add(uId);
+          } else {
+            selectedCoWatcherIds.delete(uId);
+          }
+          updateCoWatcherUI();
+        });
+
+        // Filter Form Events
+        document.getElementById('prompts-filter-form').addEventListener('submit', (e) => {
+          e.preventDefault();
+          currentPage = 1;
+          selectedIds.clear();
+          hideFeedback();
+          loadPrompts();
+        });
+
+        document.getElementById('prompts-filter-reset').addEventListener('click', () => {
+          const form = document.getElementById('prompts-filter-form');
+          form.reset();
+          currentPage = 1;
+          selectedIds.clear();
+          hideFeedback();
+          loadPrompts();
+        });
+
+        // Pagination Events
+        document.getElementById('btn-page-prev').addEventListener('click', () => {
+          if (currentPage > 1) {
+            currentPage--;
+            loadPrompts();
+          }
+        });
+
+        document.getElementById('btn-page-next').addEventListener('click', () => {
+          currentPage++;
+          loadPrompts();
+        });
+
+        // Clear Selection Button
+        document.getElementById('btn-clear-selection').addEventListener('click', () => {
+          selectedIds.clear();
+          document.querySelectorAll('.prompt-row-select').forEach(cb => cb.checked = false);
+          document.querySelectorAll('.prompt-row').forEach(r => r.classList.remove('selected'));
+          document.querySelectorAll('.prompt-group-select').forEach(cb => { cb.checked = false; cb.indeterminate = false; });
+          updateSelectionUI();
+        });
+
+        // Master Select Checkbox
+        document.getElementById('master-select-checkbox').addEventListener('change', (e) => {
+          const checked = e.target.checked;
+          const rows = document.querySelectorAll('.prompt-row');
+          rows.forEach(row => {
+            const id = Number(row.getAttribute('data-id'));
+            const cb = row.querySelector('.prompt-row-select');
+            if (checked) {
+              selectedIds.add(id);
+              if (cb) cb.checked = true;
+              row.classList.add('selected');
+            } else {
+              selectedIds.delete(id);
+              if (cb) cb.checked = false;
+              row.classList.remove('selected');
+            }
+          });
+          updateSelectionUI();
+        });
+
+        // Table Body Delegated Events: Group Checkbox, Select Group, Group Confirm/Dismiss, Row Actions, Row Click
+        document.getElementById('prompts-table-body').addEventListener('click', async (e) => {
+          // 1. Group Checkbox
+          const groupCb = e.target.closest('.prompt-group-select');
+          if (groupCb) {
+            const groupKey = groupCb.getAttribute('data-group-key');
+            const shouldCheck = groupCb.checked;
+            const groupRows = document.querySelectorAll('.prompt-row[data-group-key="' + groupKey + '"]');
+            groupRows.forEach(row => {
+              const id = Number(row.getAttribute('data-id'));
+              const cb = row.querySelector('.prompt-row-select');
+              if (shouldCheck) {
+                selectedIds.add(id);
+                if (cb) cb.checked = true;
+                row.classList.add('selected');
+              } else {
+                selectedIds.delete(id);
+                if (cb) cb.checked = false;
+                row.classList.remove('selected');
+              }
+            });
+            updateSelectionUI();
+            return;
+          }
+
+          // 2. Select Group Button
+          const btnSelectGroup = e.target.closest('.btn-select-group');
+          if (btnSelectGroup) {
+            const groupKey = btnSelectGroup.getAttribute('data-group-key');
+            const groupRows = document.querySelectorAll('.prompt-row[data-group-key="' + groupKey + '"]');
+            groupRows.forEach(row => {
+              const id = Number(row.getAttribute('data-id'));
+              const cb = row.querySelector('.prompt-row-select');
+              selectedIds.add(id);
+              if (cb) cb.checked = true;
+              row.classList.add('selected');
+            });
+            updateSelectionUI();
+            return;
+          }
+
+          // 2b. Change Streamer for Group
+          const btnGroupStreamer = e.target.closest('.btn-group-streamer');
+          if (btnGroupStreamer) {
+            const groupKey = btnGroupStreamer.getAttribute('data-group-key');
+            const group = currentGroups.find(g => g.groupKey === groupKey);
+            if (!group || group.items.length === 0) return;
+            openChangeStreamerDialog(
+              group.items.map(i => i.id),
+              group.items[0]?.source_user_id,
+              'Change streamer for all ' + group.items.length + ' item(s) of "' + group.showTitle + '"'
+            );
+            return;
+          }
+
+          // 3. Confirm Group Button
+          const btnGroupConfirm = e.target.closest('.btn-group-confirm');
+          if (btnGroupConfirm) {
+            const groupKey = btnGroupConfirm.getAttribute('data-group-key');
+            const group = currentGroups.find(g => g.groupKey === groupKey);
+            if (!group || group.items.length === 0) return;
+
+            if (!isSoloSelected && selectedCoWatcherIds.size === 0) {
+              alert('Please select who watched in the "Watched With" dropdown above first (choose household member(s) or "Nobody (Watched Alone)").');
+              document.getElementById('btn-cowatchers-toggle')?.focus();
+              return;
+            }
+
+            if (isSoloSelected) {
+              const resolvableItems = group.items.filter(i => i.prompt_status !== 'none');
+              if (resolvableItems.length === 0) {
+                alert('All items in this group are already marked as watched alone.');
+                return;
+              }
+              const count = resolvableItems.length;
+              if (!confirm('Mark ' + count + ' prompt(s) for "' + group.showTitle + '" as watched alone (nobody)?')) {
+                return;
+              }
+              btnGroupConfirm.disabled = true;
+              showFeedback('info', 'Resolving ' + count + ' prompt(s) as watched alone...');
+              try {
+                const res = await fetch('/api/dashboard/prompts/bulk-resolve', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    watchEventIds: resolvableItems.map(i => i.id),
+                    action: 'none'
+                  })
+                });
+                const result = await res.json();
+                if (result.ok) {
+                  showFeedback('success', 'Successfully marked ' + result.data.successCount + ' item(s) as watched alone.');
+                  resolvableItems.forEach(i => selectedIds.delete(i.id));
+                  loadPrompts();
+                } else {
+                  showFeedback('danger', 'Error: ' + (result.message || 'Resolution failed.'));
+                }
+              } catch (err) {
+                showFeedback('danger', 'Server request failed: ' + err.message);
+              } finally {
+                btnGroupConfirm.disabled = false;
+              }
+              return;
+            }
+
+            const targetNames = getSelectedCoWatcherNames();
+            const targetIdsArray = Array.from(selectedCoWatcherIds);
+            const unconfirmedItems = group.items.filter(i => i.prompt_status !== 'confirmed');
+            if (unconfirmedItems.length === 0) {
+              alert('All items in this group are already confirmed.');
+              return;
+            }
+
+            const count = unconfirmedItems.length;
+            if (!confirm('Confirm ' + count + ' prompt(s) for "' + group.showTitle + '" as co-watched with ' + targetNames + '? This will synchronize watched states to Plex.')) {
+              return;
+            }
+
+            btnGroupConfirm.disabled = true;
+            showFeedback('info', 'Synchronizing ' + count + ' co-watch session(s)...');
+
+            try {
+              const res = await fetch('/api/dashboard/prompts/bulk-resolve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  watchEventIds: unconfirmedItems.map(i => i.id),
+                  action: 'confirm',
+                  targetUserIds: targetIdsArray
+                })
+              });
+              const result = await res.json();
+              if (result.ok) {
+                showFeedback('success', 'Successfully confirmed ' + result.data.successCount + ' item(s) for ' + targetNames + '!');
+                unconfirmedItems.forEach(i => selectedIds.delete(i.id));
+                loadPrompts();
+              } else {
+                showFeedback('danger', 'Error: ' + (result.message || 'Group confirmation failed.'));
+              }
+            } catch (err) {
+              showFeedback('danger', 'Server request failed: ' + err.message);
+            } finally {
+              btnGroupConfirm.disabled = false;
+            }
+            return;
+          }
+
+          // 4. Dismiss Group Button
+          const btnGroupDismiss = e.target.closest('.btn-group-dismiss');
+          if (btnGroupDismiss) {
+            const groupKey = btnGroupDismiss.getAttribute('data-group-key');
+            const group = currentGroups.find(g => g.groupKey === groupKey);
+            if (!group || group.items.length === 0) return;
+
+            const dismissableItems = group.items.filter(i => i.prompt_status !== 'dismissed');
+            if (dismissableItems.length === 0) {
+              alert('All items in this group are already dismissed.');
+              return;
+            }
+
+            const count = dismissableItems.length;
+            if (!confirm('Dismiss ' + count + ' prompt(s) for "' + group.showTitle + '"?')) {
+              return;
+            }
+
+            btnGroupDismiss.disabled = true;
+            showFeedback('info', 'Dismissing ' + count + ' prompt(s)...');
+
+            try {
+              const res = await fetch('/api/dashboard/prompts/bulk-resolve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  watchEventIds: dismissableItems.map(i => i.id),
+                  action: 'dismiss'
+                })
+              });
+              const result = await res.json();
+              if (result.ok) {
+                showFeedback('success', 'Successfully dismissed ' + result.data.successCount + ' prompt(s).');
+                dismissableItems.forEach(i => selectedIds.delete(i.id));
+                loadPrompts();
+              } else {
+                showFeedback('danger', 'Error: ' + (result.message || 'Group dismissal failed.'));
+              }
+            } catch (err) {
+              showFeedback('danger', 'Server request failed: ' + err.message);
+            } finally {
+              btnGroupDismiss.disabled = false;
+            }
+            return;
+          }
+
+          // 5. Single Row Confirm
+          const btnConfirm = e.target.closest('.btn-row-confirm');
+          if (btnConfirm) {
+            const id = Number(btnConfirm.getAttribute('data-id'));
+            if (!isSoloSelected && selectedCoWatcherIds.size === 0) {
+              alert('Please select who watched in the "Watched With" dropdown above first (choose household member(s) or "Nobody (Watched Alone)").');
+              document.getElementById('btn-cowatchers-toggle')?.focus();
+              return;
+            }
+
+            if (isSoloSelected) {
+              btnConfirm.disabled = true;
+              try {
+                const res = await fetch('/api/dashboard/prompts/' + id + '/none', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ confirm: true })
+                });
+                const r = await res.json();
+                if (r.ok) {
+                  showFeedback('success', 'Marked prompt #' + id + ' as watched alone.');
+                  selectedIds.delete(id);
+                  loadPrompts();
+                } else {
+                  alert('Action failed: ' + (r.message || 'Unknown error'));
+                }
+              } catch (err) {
+                alert('Error: ' + err.message);
+              } finally {
+                btnConfirm.disabled = false;
+              }
+              return;
+            }
+
+            const targetNames = getSelectedCoWatcherNames();
+            const targetIdsArray = Array.from(selectedCoWatcherIds);
+            btnConfirm.disabled = true;
+            try {
+              const res = await fetch('/api/prompts/resolve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  watchEventId: id,
+                  selectedTargetUserIds: targetIdsArray
+                })
+              });
+              const r = await res.json();
+              if (r.ok) {
+                showFeedback('success', 'Confirmed watch event #' + id + ' for ' + targetNames + '.');
+                selectedIds.delete(id);
+                loadPrompts();
+              } else {
+                alert('Confirmation failed: ' + (r.message || 'Unknown error'));
+              }
+            } catch (err) {
+              alert('Error: ' + err.message);
+            } finally {
+              btnConfirm.disabled = false;
+            }
+            return;
+          }
+
+          // 6. Single Row Dismiss
+          const btnDismiss = e.target.closest('.btn-row-dismiss');
+          if (btnDismiss) {
+            const id = Number(btnDismiss.getAttribute('data-id'));
+            if (!confirm('Dismiss prompt #' + id + '?')) return;
+            btnDismiss.disabled = true;
+            try {
+              const res = await fetch('/api/dashboard/prompts/' + id + '/dismiss', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ confirm: true })
+              });
+              const r = await res.json();
+              if (r.ok) {
+                showFeedback('success', 'Dismissed prompt #' + id + '.');
+                selectedIds.delete(id);
+                loadPrompts();
+              } else {
+                alert('Dismiss failed: ' + (r.message || 'Unknown error'));
+              }
+            } catch (err) {
+              alert('Error: ' + err.message);
+            } finally {
+              btnDismiss.disabled = false;
+            }
+            return;
+          }
+
+          // 6b. Single Row Change Streamer
+          const btnRowStreamer = e.target.closest('.btn-row-streamer');
+          if (btnRowStreamer) {
+            const id = Number(btnRowStreamer.getAttribute('data-id'));
+            const currentUserId = Number(btnRowStreamer.getAttribute('data-current'));
+            const item = currentItems.find(i => i.id === id);
+            const title = item ? (item.show_title ? item.show_title + ' - ' + item.title : item.title) : ('prompt #' + id);
+            openChangeStreamerDialog([id], currentUserId, 'Change streamer for "' + title + '"');
+            return;
+          }
+
+          // 7. Row Click & Shift+Click Selection
+          const row = e.target.closest('.prompt-row');
+          if (!row) return;
+
+          const idx = Number(row.getAttribute('data-idx'));
+          const id = Number(row.getAttribute('data-id'));
+          const checkbox = row.querySelector('.prompt-row-select');
+
+          if (e.shiftKey && lastClickedIndex !== -1 && lastClickedIndex !== idx) {
+            const start = Math.min(lastClickedIndex, idx);
+            const end = Math.max(lastClickedIndex, idx);
+            const allRows = document.querySelectorAll('.prompt-row');
+            const targetState = !selectedIds.has(id);
+
+            for (let i = start; i <= end; i++) {
+              const r = allRows[i];
+              if (!r) continue;
+              const rId = Number(r.getAttribute('data-id'));
+              const rCb = r.querySelector('.prompt-row-select');
+              if (targetState) {
+                selectedIds.add(rId);
+                if (rCb) rCb.checked = true;
+                r.classList.add('selected');
+              } else {
+                selectedIds.delete(rId);
+                if (rCb) rCb.checked = false;
+                r.classList.remove('selected');
+              }
+            }
+          } else {
+            if (e.target !== checkbox) {
+              checkbox.checked = !checkbox.checked;
+            }
+            if (checkbox.checked) {
+              selectedIds.add(id);
+              row.classList.add('selected');
+            } else {
+              selectedIds.delete(id);
+              row.classList.remove('selected');
+            }
+          }
+
+          lastClickedIndex = idx;
+          updateSelectionUI();
+        });
+
+        // Bulk Confirm Action
+        document.getElementById('btn-bulk-confirm').addEventListener('click', async () => {
+          if (!isSoloSelected && selectedCoWatcherIds.size === 0) {
+            alert('Please select who watched in the "Watched With" dropdown (choose household member(s) or "Nobody (Watched Alone)").');
+            document.getElementById('btn-cowatchers-toggle')?.focus();
+            return;
+          }
+          if (selectedIds.size === 0) return;
+
+          const btn = document.getElementById('btn-bulk-confirm');
+
+          if (isSoloSelected) {
+            if (!confirm('Mark ' + selectedIds.size + ' prompt(s) as watched alone (nobody)? This will remove them from the unaddressed queue.')) {
+              return;
+            }
+            btn.disabled = true;
+            showFeedback('info', 'Resolving ' + selectedIds.size + ' prompt(s) as watched alone...');
+            try {
+              const res = await fetch('/api/dashboard/prompts/bulk-resolve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  watchEventIds: Array.from(selectedIds),
+                  action: 'none'
+                })
+              });
+              const result = await res.json();
+              if (result.ok) {
+                showFeedback('success', 'Successfully marked ' + result.data.successCount + ' prompt(s) as watched alone.');
+                selectedIds.clear();
+                loadPrompts();
+              } else {
+                showFeedback('danger', 'Error: ' + (result.message || 'Bulk resolution failed.'));
+              }
+            } catch (err) {
+              showFeedback('danger', 'Server request failed: ' + err.message);
+            } finally {
+              btn.disabled = false;
+            }
+            return;
+          }
+
+          const targetNames = getSelectedCoWatcherNames();
+          const targetIdsArray = Array.from(selectedCoWatcherIds);
+          if (!confirm('Confirm ' + selectedIds.size + ' prompt(s) as co-watched with ' + targetNames + '? This will synchronize watched states to Plex.')) {
+            return;
+          }
+
+          btn.disabled = true;
+          showFeedback('info', 'Synchronizing ' + selectedIds.size + ' co-watch session(s)...');
+
+          try {
+            const res = await fetch('/api/dashboard/prompts/bulk-resolve', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                watchEventIds: Array.from(selectedIds),
+                action: 'confirm',
+                targetUserIds: targetIdsArray
+              })
+            });
+            const result = await res.json();
+            if (result.ok) {
+              showFeedback('success', 'Successfully confirmed ' + result.data.successCount + ' prompt(s) for ' + targetNames + '!');
+              selectedIds.clear();
+              loadPrompts();
+            } else {
+              showFeedback('danger', 'Error: ' + (result.message || 'Bulk confirmation failed.'));
+            }
+          } catch (err) {
+            showFeedback('danger', 'Server request failed: ' + err.message);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+
+        // Bulk Dismiss Action
+        document.getElementById('btn-bulk-dismiss').addEventListener('click', async () => {
+          if (selectedIds.size === 0) return;
+          if (!confirm('Dismiss ' + selectedIds.size + ' prompt(s)? They will no longer appear in the unaddressed queue.')) {
+            return;
+          }
+
+          const btn = document.getElementById('btn-bulk-dismiss');
+          btn.disabled = true;
+          showFeedback('info', 'Dismissing ' + selectedIds.size + ' prompt(s)...');
+
+          try {
+            const res = await fetch('/api/dashboard/prompts/bulk-resolve', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                watchEventIds: Array.from(selectedIds),
+                action: 'dismiss'
+              })
+            });
+            const result = await res.json();
+            if (result.ok) {
+              showFeedback('success', 'Successfully dismissed ' + result.data.successCount + ' prompt(s).');
+              selectedIds.clear();
+              loadPrompts();
+            } else {
+              showFeedback('danger', 'Error: ' + (result.message || 'Bulk dismissal failed.'));
+            }
+          } catch (err) {
+            showFeedback('danger', 'Server request failed: ' + err.message);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+
+        // Streamer Change Dialog and Actions
+        let pendingStreamerEventIds = [];
+
+        function openChangeStreamerDialog(eventIds, currentUserId, subtitleText) {
+          pendingStreamerEventIds = eventIds;
+          const dialog = document.getElementById('change-streamer-dialog');
+          const select = document.getElementById('streamer-dialog-select');
+          const subtitle = document.getElementById('streamer-dialog-subtitle');
+          if (subtitle && subtitleText) subtitle.textContent = subtitleText;
+          if (select) {
+            select.value = currentUserId ? String(currentUserId) : '';
+          }
+          if (dialog && typeof dialog.showModal === 'function') {
+            dialog.showModal();
+          }
+        }
+
+        document.getElementById('streamer-dialog-cancel')?.addEventListener('click', () => {
+          document.getElementById('change-streamer-dialog')?.close();
+          pendingStreamerEventIds = [];
+        });
+
+        document.getElementById('change-streamer-form')?.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const select = document.getElementById('streamer-dialog-select');
+          const newUserId = Number(select?.value);
+          const dialog = document.getElementById('change-streamer-dialog');
+          if (!newUserId || pendingStreamerEventIds.length === 0) {
+            dialog?.close();
+            return;
+          }
+
+          const targetUserObj = usersList.find(u => Number(u.id) === newUserId);
+          const targetName = targetUserObj ? userLabel(targetUserObj) : 'User #' + newUserId;
+          const submitBtn = document.getElementById('streamer-dialog-submit');
+          if (submitBtn) submitBtn.disabled = true;
+
+          try {
+            const res = await fetch('/api/dashboard/prompts/change-streamer', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                watchEventIds: pendingStreamerEventIds,
+                newSourceUserId: newUserId
+              })
+            });
+            const result = await res.json();
+            dialog?.close();
+            if (result.ok) {
+              showFeedback('success', 'Successfully changed streamer to ' + targetName + ' for ' + result.data.updatedCount + ' prompt(s)!');
+              pendingStreamerEventIds.forEach(id => selectedIds.delete(id));
+              loadPrompts();
+            } else {
+              showFeedback('danger', 'Error: ' + (result.message || 'Streamer update failed.'));
+            }
+          } catch (err) {
+            dialog?.close();
+            showFeedback('danger', 'Server request failed: ' + err.message);
+          } finally {
+            if (submitBtn) submitBtn.disabled = false;
+            pendingStreamerEventIds = [];
+          }
+        });
+
+        // Bulk Change Streamer Select Change & Button Click
+        document.getElementById('bulkChangeStreamerSelect')?.addEventListener('change', () => {
+          updateSelectionUI();
+        });
+
+        document.getElementById('btn-bulk-change-streamer')?.addEventListener('click', async () => {
+          const bulkStreamerSelect = document.getElementById('bulkChangeStreamerSelect');
+          const newUserId = Number(bulkStreamerSelect?.value);
+          if (!newUserId || selectedIds.size === 0) return;
+
+          const targetUserObj = usersList.find(u => Number(u.id) === newUserId);
+          const targetName = targetUserObj ? userLabel(targetUserObj) : 'User #' + newUserId;
+
+          if (!confirm('Change source streamer to "' + targetName + '" for ' + selectedIds.size + ' selected prompt(s)?')) {
+            return;
+          }
+
+          const btn = document.getElementById('btn-bulk-change-streamer');
+          btn.disabled = true;
+          showFeedback('info', 'Updating streamer for ' + selectedIds.size + ' prompt(s)...');
+
+          try {
+            const res = await fetch('/api/dashboard/prompts/change-streamer', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                watchEventIds: Array.from(selectedIds),
+                newSourceUserId: newUserId
+              })
+            });
+            const result = await res.json();
+            if (result.ok) {
+              showFeedback('success', 'Successfully changed streamer to ' + targetName + ' for ' + result.data.updatedCount + ' prompt(s)!');
+              selectedIds.clear();
+              bulkStreamerSelect.value = '';
+              loadPrompts();
+            } else {
+              showFeedback('danger', 'Error: ' + (result.message || 'Streamer update failed.'));
+            }
+          } catch (err) {
+            showFeedback('danger', 'Server request failed: ' + err.message);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      </script>
+    `));
+  });
+
   router.get("/audit", (_req, res) => {
     res.type("html").send(renderPage("Audit Log", `
       <pre id="audit">Loading...</pre>
@@ -714,6 +2002,1076 @@ export function registerWebRoutes(router: Router): void {
       </script>
     `));
   });
+
+  router.get("/achievements", (_req, res) => {
+    res.type("html").send(renderPage("Achievements", `
+      <style>
+        .achievements-container {
+          max-width: 1400px;
+          margin: 0 auto;
+          display: flex;
+          flex-direction: column;
+          gap: 24px;
+        }
+        .user-tab {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 18px;
+          border-radius: 999px;
+          border: 1px solid var(--border-color, #30363d);
+          background: var(--bg-card, #161b22);
+          color: var(--text-muted, #8b949e);
+          cursor: grab;
+          transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+          white-space: nowrap;
+          user-select: none;
+        }
+        .user-tab:active {
+          cursor: grabbing;
+        }
+        .user-tab.dragging {
+          opacity: 0.35;
+          cursor: grabbing;
+          border-style: dashed;
+        }
+        .user-tab.drag-over {
+          border-color: #58a6ff;
+          box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.4);
+          transform: translateY(-2px);
+        }
+        .user-tab:hover {
+          color: var(--text-primary, #f0f6fc);
+          border-color: #58a6ff;
+        }
+        .user-tab.active {
+          background: #1f6feb;
+          color: #fff;
+          border-color: #58a6ff;
+          box-shadow: 0 4px 12px rgba(31, 111, 235, 0.35);
+        }
+        .btn-facet, .btn-state {
+          padding: 6px 14px;
+          border-radius: 8px;
+          font-size: 0.8rem;
+          font-weight: 600;
+          border: none;
+          background: transparent;
+          color: var(--text-muted, #8b949e);
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .btn-facet:hover, .btn-state:hover {
+          color: var(--text-primary, #f0f6fc);
+        }
+        .btn-facet.active {
+          background: #1f6feb;
+          color: #fff;
+        }
+        .btn-state.active {
+          background: #238636;
+          color: #fff;
+        }
+        #sort-controls {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          background: rgba(22, 27, 34, 0.85);
+          padding: 6px 12px;
+          border-radius: 10px;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+        }
+        #sort-badges-select {
+          background-color: #0d1117;
+          color: #f0f6fc;
+          border: 1px solid #30363d;
+          border-radius: 8px;
+          padding: 6px 12px;
+          font-size: 0.82rem;
+          font-weight: 600;
+          cursor: pointer;
+          outline: none;
+          color-scheme: dark;
+          transition: border-color 0.15s ease;
+        }
+        #sort-badges-select:hover, #sort-badges-select:focus {
+          border-color: #58a6ff;
+        }
+        #sort-badges-select option {
+          background-color: #0d1117;
+          color: #f0f6fc;
+          padding: 8px 12px;
+        }
+        .trophy-card {
+          display: flex;
+          flex-direction: column;
+          border-radius: 12px;
+          background: var(--bg-card, #161b22);
+          border: 1px solid var(--border-color, #30363d);
+          overflow: hidden;
+          cursor: pointer;
+          transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+          position: relative;
+        }
+        .trophy-card:hover {
+          transform: translateY(-4px);
+          border-color: #58a6ff;
+          box-shadow: 0 12px 24px -6px rgba(0, 0, 0, 0.6);
+        }
+        .trophy-poster-frame {
+          position: relative;
+          aspect-ratio: 2/3;
+          background: #0d1117;
+          overflow: hidden;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .trophy-poster-frame img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          transition: transform 0.3s ease;
+        }
+        .trophy-card:hover .trophy-poster-frame img {
+          transform: scale(1.05);
+        }
+        .trophy-overlay {
+          position: absolute;
+          inset: 0;
+          background: linear-gradient(to top, rgba(13, 17, 23, 0.95) 0%, rgba(13, 17, 23, 0.6) 40%, transparent 100%);
+          display: flex;
+          flex-direction: column;
+          justify-content: flex-end;
+          padding: 12px;
+          z-index: 2;
+        }
+        .badge-card {
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          padding: 16px;
+          border-radius: 12px;
+          background: var(--bg-card, #161b22);
+          border: 1px solid var(--border-color, #30363d);
+          cursor: pointer;
+          transition: all 0.2s ease;
+          gap: 12px;
+        }
+        .badge-card:hover {
+          transform: translateY(-2px);
+          border-color: #58a6ff;
+          background: #1c2128;
+        }
+        .tier-ribbon {
+          position: absolute;
+          top: 8px;
+          right: 8px;
+          padding: 3px 8px;
+          border-radius: 6px;
+          font-size: 0.65rem;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          z-index: 3;
+          box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+        }
+        .tier-pill {
+          position: absolute;
+          top: 8px;
+          left: 8px;
+          padding: 3px 6px;
+          border-radius: 4px;
+          font-size: 0.65rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          z-index: 3;
+          background: rgba(0, 0, 0, 0.7);
+          backdrop-filter: blur(4px);
+        }
+        .ribbon-bronze { background: #d97706; color: #fff; }
+        .ribbon-silver { background: #94a3b8; color: #0f172a; }
+        .ribbon-gold { background: #eab308; color: #422006; }
+        .ribbon-platinum { background: #38bdf8; color: #082f49; }
+      </style>
+
+      <div class="achievements-container">
+        <!-- Header Banner -->
+        <section class="card" style="padding: 20px 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">
+          <div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 1.8rem;">🏆</span>
+              <div>
+                <h2 style="margin: 0; font-size: 1.4rem;">Personal Media Passport</h2>
+                <p style="margin: 4px 0 0; color: var(--text-muted); font-size: 0.95rem;">
+                  Live Household Showcase: Trophy Shelf, Obsession Spotlight, Taste Affinity &amp; Viewing Bonds
+                </p>
+              </div>
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <span class="badge" id="live-status-badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 600; padding: 6px 12px; border-radius: 8px;">
+              ● Live Engine (Compute-On-Read)
+            </span>
+            <button id="btn-refresh-achievements" class="btn" style="display: flex; align-items: center; gap: 6px; padding: 8px 16px; cursor: pointer;">
+              🔄 Refresh
+            </button>
+          </div>
+        </section>
+
+        <!-- User Selector Tabs (Draggable & Scrollable Bubble Row) -->
+        <section id="user-bubbles-container" class="card" style="padding: 14px 20px; display: flex; flex-direction: column; gap: 10px; background: rgba(22, 27, 34, 0.7); border: 1px solid var(--border-color, #30363d); border-radius: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);">
+                Household Profiles
+              </span>
+              <span class="badge" style="font-size: 0.7rem; padding: 2px 8px; background: rgba(99, 102, 241, 0.15); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 999px;">
+                ⇄ Movable / Drag to reorder
+              </span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <button type="button" id="btn-scroll-tabs-left" class="btn" style="padding: 4px 10px; font-size: 0.85rem; line-height: 1; border-radius: 6px;" title="Scroll left">‹</button>
+              <button type="button" id="btn-scroll-tabs-right" class="btn" style="padding: 4px 10px; font-size: 0.85rem; line-height: 1; border-radius: 6px;" title="Scroll right">›</button>
+              <button type="button" id="btn-reset-user-order" class="btn" style="padding: 4px 10px; font-size: 0.75rem; color: var(--text-muted); background: transparent; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; cursor: pointer;" title="Reset profiles to default order">Reset Order</button>
+            </div>
+          </div>
+          <div id="user-tabs" style="display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 8px 2px; scroll-behavior: smooth;" class="thin-scroll">
+            <div style="color: var(--text-muted); font-size: 0.9rem;">Loading household profiles...</div>
+          </div>
+        </section>
+
+        <!-- Active User Hero Banner -->
+        <section id="user-hero" class="card" style="padding: 24px; border: 1px solid rgba(99, 102, 241, 0.3); background: linear-gradient(135deg, rgba(30, 27, 75, 0.3) 0%, rgba(22, 27, 34, 0.9) 100%);">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 20px;">
+            <div style="display: flex; align-items: center; gap: 16px;">
+              <div id="user-avatar" style="width: 60px; height: 60px; border-radius: 16px; background: #1f6feb; display: flex; align-items: center; justify-content: center; font-size: 1.6rem; font-weight: bold; color: white; border: 2px solid rgba(88, 166, 255, 0.4); box-shadow: 0 4px 14px rgba(0,0,0,0.4);">
+                ?
+              </div>
+              <div>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <h2 id="user-name" style="margin: 0; font-size: 1.6rem; color: #fff;">Loading...</h2>
+                  <span class="badge" style="background: rgba(99, 102, 241, 0.2); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); font-size: 0.75rem; padding: 3px 8px; border-radius: 999px;">Household Viewer</span>
+                </div>
+                <p id="user-summary" style="margin: 6px 0 0; color: var(--text-muted); font-size: 0.9rem;"></p>
+              </div>
+            </div>
+            <!-- Quick Stats Matrix -->
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; text-align: center;">
+              <div style="background: rgba(13, 17, 23, 0.7); border: 1px solid #30363d; border-radius: 12px; padding: 10px 16px;">
+                <div id="stat-earned" style="font-size: 1.4rem; font-weight: bold; color: #58a6ff;">0</div>
+                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; margin-top: 2px;">Earned</div>
+              </div>
+              <div style="background: rgba(13, 17, 23, 0.7); border: 1px solid #30363d; border-radius: 12px; padding: 10px 16px;">
+                <div id="stat-trophies" style="font-size: 1.4rem; font-weight: bold; color: #e3b341;">0</div>
+                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; margin-top: 2px;">Show Trophies</div>
+              </div>
+              <div style="background: rgba(13, 17, 23, 0.7); border: 1px solid #30363d; border-radius: 12px; padding: 10px 16px;">
+                <div id="stat-cowatches" style="font-size: 1.4rem; font-weight: bold; color: #3fb950;">0</div>
+                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; margin-top: 2px;">Co-Watches</div>
+              </div>
+              <div style="background: rgba(13, 17, 23, 0.7); border: 1px solid #30363d; border-radius: 12px; padding: 10px 16px;">
+                <div id="stat-inprogress" style="font-size: 1.4rem; font-weight: bold; color: #79c0ff;">0</div>
+                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; margin-top: 2px;">In Progress</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Filter & Sort Controls -->
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+          <div id="facet-filters" style="display: flex; gap: 6px; flex-wrap: wrap; background: rgba(22, 27, 34, 0.85); padding: 4px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.12);">
+            <button data-facet="all" class="btn-facet active">All Showcases</button>
+            <button data-facet="trophy_shelf" class="btn-facet">🏆 Trophy Shelf</button>
+            <button data-facet="obsession_spotlight" class="btn-facet">🔥 Obsession Spotlight</button>
+            <button data-facet="taste_affinity" class="btn-facet">📊 Taste Devotion</button>
+            <button data-facet="cowatch_bond" class="btn-facet">🤝 Viewing Bonds</button>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <div id="sort-controls">
+              <label for="sort-badges-select" style="font-size: 0.8rem; font-weight: 600; color: #8b949e; display: flex; align-items: center; gap: 4px;">
+                <span>⇅</span> Sort:
+              </label>
+              <select id="sort-badges-select">
+                <option value="default">Default Order</option>
+                <option value="date-desc">Date Completed (Newest First)</option>
+                <option value="date-asc">Date Completed (Oldest First)</option>
+                <option value="name-asc">Badge Name (A–Z)</option>
+                <option value="name-desc">Badge Name (Z–A)</option>
+                <option value="progress-desc">Highest Progress %</option>
+                <option value="tier-desc">Tier (Platinum → Bronze)</option>
+              </select>
+            </div>
+            <div id="state-filters" style="display: flex; gap: 6px; background: rgba(22, 27, 34, 0.85); padding: 4px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.12);">
+              <button data-state="earned" class="btn-state active">Earned Only</button>
+              <button data-state="caught_up" class="btn-state">Caught Up on Plex</button>
+              <button data-state="all" class="btn-state">All States</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Obsession Spotlight Featured Card -->
+        <div id="obsession-container"></div>
+
+        <!-- Trophy Shelf Section -->
+        <section id="trophy-section" style="display: flex; flex-direction: column; gap: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <span style="font-size: 1.3rem;">🏆</span>
+              <h3 style="margin: 0; font-size: 1.25rem;">The Trophy Shelf</h3>
+              <span id="trophy-count-badge" class="badge" style="background: rgba(245, 158, 11, 0.2); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.3); font-size: 0.75rem; padding: 2px 8px; border-radius: 999px;">0 Earned</span>
+              <button id="trophy-caught-up-badge" class="badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); font-size: 0.75rem; padding: 3px 10px; border-radius: 999px; cursor: pointer; display: none; align-items: center; gap: 4px;" title="Filter to caught-up series">
+                <span>⚡</span> <span id="trophy-caught-up-text">0 Caught Up</span>
+              </button>
+            </div>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">100% Episode Completion Verified</span>
+          </div>
+          <div id="trophy-caught-up-banner" style="display: none; padding: 10px 14px; background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 10px;"></div>
+          <div id="trophy-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px;"></div>
+        </section>
+
+        <!-- Badges Section -->
+        <section id="badges-section" style="display: flex; flex-direction: column; gap: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 1.3rem;">🎖️</span>
+              <h3 id="badges-heading" style="margin: 0; font-size: 1.25rem;">Milestones, Devotion &amp; Bonds</h3>
+            </div>
+          </div>
+          <div id="badges-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;"></div>
+        </section>
+      </div>
+
+      <!-- Detail Modal -->
+      <div id="detail-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px); z-index: 1000; align-items: center; justify-content: center; padding: 16px;">
+        <div style="background: #161b22; border: 1px solid #30363d; border-radius: 16px; max-width: 540px; width: 100%; padding: 24px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); position: relative; display: flex; flex-direction: column; gap: 16px; max-height: 90vh;">
+          <button id="modal-close" style="position: absolute; top: 16px; right: 16px; background: none; border: none; color: #8b949e; font-size: 1.5rem; cursor: pointer;">&times;</button>
+          <div style="display: flex; gap: 16px; align-items: flex-start;">
+            <div id="modal-icon" style="width: 60px; height: 75px; border-radius: 12px; background: #0d1117; display: flex; align-items: center; justify-content: center; font-size: 2rem; border: 1px solid #30363d; flex-shrink: 0; overflow: hidden;"></div>
+            <div style="flex: 1; min-width: 0;">
+              <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 4px;">
+                <span id="modal-tier" class="badge" style="text-transform: uppercase; font-size: 0.7rem; font-weight: 700;"></span>
+                <span id="modal-state" class="badge" style="font-size: 0.7rem; font-weight: 600;"></span>
+              </div>
+              <h3 id="modal-title" style="margin: 0; font-size: 1.15rem; color: #fff;"></h3>
+              <p id="modal-facet" style="margin: 4px 0 0; font-size: 0.8rem; color: #58a6ff; font-weight: 500;"></p>
+            </div>
+          </div>
+          <p id="modal-desc" style="margin: 0; font-size: 0.9rem; color: #c9d1d9; line-height: 1.5;"></p>
+          <div id="modal-stats-box" style="background: rgba(13, 17, 23, 0.8); border: 1px solid #30363d; border-radius: 12px; padding: 12px; font-size: 0.85rem;"></div>
+          <div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; color: #8b949e;">
+              <span>Supporting Evidence Trail</span>
+              <span id="evidence-count" style="font-weight: 400; color: #6e7681;"></span>
+            </div>
+            <div id="modal-evidence-list" style="max-height: 180px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; font-size: 0.8rem;" class="thin-scroll"></div>
+          </div>
+          <div style="border-top: 1px solid #30363d; padding-top: 12px; display: flex; justify-content: space-between; align-items: center;">
+            <span id="modal-earned-at" style="font-size: 0.75rem; color: #6e7681;"></span>
+            <button id="modal-dismiss" class="btn" style="padding: 6px 16px;">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <script>
+        let activeUserId = null;
+        let activeFacet = 'all';
+        let activeState = 'earned';
+        let activeSort = 'default';
+        try {
+          activeSort = localStorage.getItem('plex_achievements_sort') || 'default';
+        } catch {}
+
+        let usersData = [];
+        let achievementsStore = {};
+        let draggedUserId = null;
+
+        const TIER_COLORS = {
+          bronze: { bg: 'rgba(217, 119, 6, 0.15)', border: '#d97706', text: '#f59e0b', ribbon: 'ribbon-bronze', badge: 'border: 1px solid #d97706; color: #f59e0b;' },
+          silver: { bg: 'rgba(148, 163, 184, 0.15)', border: '#94a3b8', text: '#cbd5e1', ribbon: 'ribbon-silver', badge: 'border: 1px solid #94a3b8; color: #cbd5e1;' },
+          gold: { bg: 'rgba(245, 158, 11, 0.15)', border: '#f59e0b', text: '#fbbf24', ribbon: 'ribbon-gold', badge: 'border: 1px solid #f59e0b; color: #fbbf24;' },
+          platinum: { bg: 'rgba(56, 189, 248, 0.15)', border: '#38bdf8', text: '#7dd3fc', ribbon: 'ribbon-platinum', badge: 'border: 1px solid #38bdf8; color: #7dd3fc;' }
+        };
+
+        function sortAchievements(items, sortKey) {
+          const list = [...items];
+          const TIER_ORDER = { platinum: 4, gold: 3, silver: 2, bronze: 1 };
+          if (sortKey === 'name-asc') {
+            return list.sort((a, b) => (a.badge?.title || '').localeCompare(b.badge?.title || ''));
+          }
+          if (sortKey === 'name-desc') {
+            return list.sort((a, b) => (b.badge?.title || '').localeCompare(a.badge?.title || ''));
+          }
+          if (sortKey === 'date-desc') {
+            return list.sort((a, b) => {
+              const timeA = a.earnedAt ? new Date(a.earnedAt).getTime() : 0;
+              const timeB = b.earnedAt ? new Date(b.earnedAt).getTime() : 0;
+              return timeB - timeA;
+            });
+          }
+          if (sortKey === 'date-asc') {
+            return list.sort((a, b) => {
+              const timeA = a.earnedAt ? new Date(a.earnedAt).getTime() : Infinity;
+              const timeB = b.earnedAt ? new Date(b.earnedAt).getTime() : Infinity;
+              return timeA - timeB;
+            });
+          }
+          if (sortKey === 'progress-desc') {
+            return list.sort((a, b) => {
+              const pctA = a.state === 'earned' ? 100 : (a.progress && a.progress.target ? (a.progress.current / a.progress.target) * 100 : 0);
+              const pctB = b.state === 'earned' ? 100 : (b.progress && b.progress.target ? (b.progress.current / b.progress.target) * 100 : 0);
+              return pctB - pctA;
+            });
+          }
+          if (sortKey === 'tier-desc') {
+            return list.sort((a, b) => {
+              const tA = TIER_ORDER[a.badge?.tier] || 0;
+              const tB = TIER_ORDER[b.badge?.tier] || 0;
+              return tB - tA;
+            });
+          }
+          return list;
+        }
+
+        function applySavedUserOrder(users) {
+          try {
+            const saved = localStorage.getItem('plex_achievements_profile_order');
+            if (saved) {
+              const orderIds = JSON.parse(saved);
+              if (Array.isArray(orderIds) && orderIds.length > 0) {
+                const map = new Map();
+                users.forEach(u => map.set(Number(u.id), u));
+                const ordered = [];
+                orderIds.forEach(id => {
+                  const u = map.get(Number(id));
+                  if (u) {
+                    ordered.push(u);
+                    map.delete(Number(id));
+                  }
+                });
+                map.forEach(u => ordered.push(u));
+                return ordered;
+              }
+            }
+          } catch (e) {}
+          return users;
+        }
+
+        async function initAchievements() {
+          try {
+            const userRes = await fetch('/api/dashboard/users');
+            const userData = await userRes.json();
+            if (userData.ok && userData.users) {
+              usersData = applySavedUserOrder(userData.users);
+              renderUserTabs();
+              const defaultUser = usersData.find(u => u.plex_username === 'Tony') || usersData[0];
+              if (defaultUser) {
+                selectUser(defaultUser.id);
+              }
+            }
+          } catch (e) {
+            console.error('Failed to init users:', e);
+          }
+        }
+
+        function renderUserTabs() {
+          const container = document.getElementById('user-tabs');
+          container.innerHTML = usersData.map(u => {
+            const displayName = u.alias || u.display_name || u.plex_username || ('User ' + u.id);
+            const initial = displayName.slice(0, 1).toUpperCase();
+            const isActive = u.id === activeUserId;
+            return '<button class="user-tab ' + (isActive ? 'active' : '') + '" draggable="true" data-id="' + u.id + '" title="Click to view profile, drag to reorder">' +
+              '<span class="drag-grip" style="opacity: 0.35; font-size: 0.8rem; margin-right: -2px; cursor: grab;">⠿</span>' +
+              '<span style="width: 26px; height: 26px; border-radius: 999px; background: ' + (isActive ? 'rgba(255,255,255,0.25)' : '#21262d') + '; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 0.8rem;">' + initial + '</span>' +
+              '<span style="font-weight: 600; font-size: 0.85rem;">' + displayName + '</span>' +
+            '</button>';
+          }).join('');
+
+          container.querySelectorAll('.user-tab').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+              if (btn.classList.contains('dragging')) return;
+              const id = Number(btn.dataset.id);
+              selectUser(id);
+            });
+          });
+
+          attachBubbleDragListeners();
+        }
+
+        function attachBubbleDragListeners() {
+          const container = document.getElementById('user-tabs');
+          if (!container) return;
+
+          container.querySelectorAll('.user-tab').forEach(tab => {
+            tab.addEventListener('dragstart', (e) => {
+              draggedUserId = Number(tab.dataset.id);
+              tab.classList.add('dragging');
+              e.dataTransfer.effectAllowed = 'move';
+              e.dataTransfer.setData('text/plain', String(draggedUserId));
+            });
+
+            tab.addEventListener('dragend', () => {
+              tab.classList.remove('dragging');
+              container.querySelectorAll('.user-tab').forEach(t => t.classList.remove('drag-over'));
+              draggedUserId = null;
+            });
+
+            tab.addEventListener('dragover', (e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+              const targetTab = e.target.closest('.user-tab');
+              if (targetTab && targetTab !== tab) {
+                targetTab.classList.add('drag-over');
+              }
+            });
+
+            tab.addEventListener('dragleave', (e) => {
+              const targetTab = e.target.closest('.user-tab');
+              if (targetTab) {
+                targetTab.classList.remove('drag-over');
+              }
+            });
+
+            tab.addEventListener('drop', (e) => {
+              e.preventDefault();
+              const targetTab = e.target.closest('.user-tab');
+              if (!targetTab) return;
+              targetTab.classList.remove('drag-over');
+              const targetId = Number(targetTab.dataset.id);
+              if (draggedUserId && draggedUserId !== targetId) {
+                const fromIdx = usersData.findIndex(u => Number(u.id) === draggedUserId);
+                const toIdx = usersData.findIndex(u => Number(u.id) === targetId);
+                if (fromIdx !== -1 && toIdx !== -1) {
+                  const [moved] = usersData.splice(fromIdx, 1);
+                  usersData.splice(toIdx, 0, moved);
+                  try {
+                    localStorage.setItem('plex_achievements_profile_order', JSON.stringify(usersData.map(u => u.id)));
+                  } catch {}
+                  renderUserTabs();
+                }
+              }
+            });
+          });
+        }
+
+        async function selectUser(userId, forceRefresh = false) {
+          activeUserId = userId;
+          renderUserTabs();
+          await loadAchievements(userId, forceRefresh);
+          renderAll();
+        }
+
+        async function loadAchievements(userId, force = false) {
+          const refreshBtn = document.getElementById('btn-refresh-achievements');
+          if (refreshBtn) {
+            refreshBtn.disabled = true;
+            refreshBtn.textContent = '⏳ Refreshing...';
+          }
+          try {
+            const res = await fetch('/api/achievements?user=' + userId, { cache: 'no-store' });
+            if (res.ok) {
+              const data = await res.json();
+              if (data && data.results) {
+                achievementsStore[userId] = data.results;
+              }
+            }
+          } catch (err) {
+            console.error('Failed to load achievements:', err);
+          } finally {
+            if (refreshBtn) {
+              refreshBtn.disabled = false;
+              refreshBtn.textContent = '🔄 Refresh';
+            }
+          }
+        }
+
+        function renderAll() {
+          renderUserHero();
+          renderObsession();
+          renderTrophyShelf();
+          renderBadges();
+        }
+
+        function renderUserHero() {
+          const userObj = usersData.find(u => u.id === activeUserId);
+          const results = achievementsStore[activeUserId] || [];
+          const name = userObj ? (userObj.alias || userObj.display_name || userObj.plex_username) : 'Viewer';
+
+          document.getElementById('user-avatar').textContent = name.slice(0, 1).toUpperCase();
+          document.getElementById('user-name').textContent = name;
+
+          const earnedList = results.filter(r => r.state === 'earned');
+          const inProgList = results.filter(r => r.state === 'in_progress');
+          const trophies = earnedList.filter(r => r.facet === 'trophy_shelf' && r.badge && r.badge.posterUrl);
+          const cowatches = earnedList.filter(r => r.facet === 'cowatch_bond');
+          const caughtUpList = results.filter(r => r.badge && r.badge.stats && r.badge.stats.isCaughtUpOnPlex);
+
+          document.getElementById('stat-earned').textContent = earnedList.length;
+          document.getElementById('stat-trophies').textContent = trophies.length;
+          document.getElementById('stat-cowatches').textContent = cowatches.length;
+          document.getElementById('stat-inprogress').textContent = inProgList.length;
+
+          let summaryText = earnedList.length + ' milestones unlocked across movie, series, anime, and household viewing.';
+          if (caughtUpList.length > 0) {
+            summaryText += ' • ' + caughtUpList.length + ' series caught up on server library.';
+          }
+          document.getElementById('user-summary').textContent = summaryText;
+        }
+
+        function renderObsession() {
+          const container = document.getElementById('obsession-container');
+          const results = achievementsStore[activeUserId] || [];
+          const obsession = results.find(r => r.facet === 'obsession_spotlight' && r.state === 'earned');
+
+          if (!obsession || (activeFacet !== 'all' && activeFacet !== 'obsession_spotlight')) {
+            container.innerHTML = '';
+            return;
+          }
+
+          const stats = obsession.badge.stats || {};
+          container.innerHTML = '<div class="card" style="padding: 24px; border: 1px solid rgba(245, 158, 11, 0.35); background: linear-gradient(135deg, rgba(69, 26, 3, 0.3) 0%, rgba(22, 27, 34, 0.95) 100%); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 20px;">' +
+            '<div style="display: flex; align-items: center; gap: 16px;">' +
+              '<span style="font-size: 2.5rem;">🔥</span>' +
+              '<div>' +
+                '<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">' +
+                  '<span class="badge" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); font-weight: 700; font-size: 0.75rem;">Obsession Spotlight</span>' +
+                  '<span style="font-size: 0.8rem; color: var(--text-muted);">' + (stats.runnerUpTitle ? 'Runner-up: ' + stats.runnerUpTitle : '') + '</span>' +
+                '</div>' +
+                '<h3 style="margin: 0; font-size: 1.5rem; color: #fff;">' + (stats.topTitle || obsession.badge.title) + '</h3>' +
+                '<p style="margin: 6px 0 0; color: #d1d5db; font-size: 0.9rem;">' + obsession.badge.description + '</p>' +
+              '</div>' +
+            '</div>' +
+            '<div style="display: flex; gap: 16px; text-align: center;">' +
+              '<div style="background: rgba(13, 17, 23, 0.8); border: 1px solid #30363d; border-radius: 12px; padding: 10px 16px;">' +
+                '<div style="font-size: 1.3rem; font-weight: bold; color: #fbbf24;">' + (stats.totalHours || 0) + ' hrs</div>' +
+                '<div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Logged Time</div>' +
+              '</div>' +
+              '<div style="background: rgba(13, 17, 23, 0.8); border: 1px solid #30363d; border-radius: 12px; padding: 10px 16px;">' +
+                '<div style="font-size: 1.3rem; font-weight: bold; color: #fff;">' + (stats.totalPlays || 0) + '</div>' +
+                '<div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Episodes</div>' +
+              '</div>' +
+            '</div>' +
+          '</div>';
+        }
+
+        function renderTrophyShelf() {
+          const container = document.getElementById('trophy-grid');
+          const badgeCount = document.getElementById('trophy-count-badge');
+          const results = achievementsStore[activeUserId] || [];
+
+          if (activeFacet !== 'all' && activeFacet !== 'trophy_shelf') {
+            document.getElementById('trophy-section').style.display = 'none';
+            return;
+          }
+          document.getElementById('trophy-section').style.display = 'flex';
+
+          const allTrophies = results.filter(r => r.facet === 'trophy_shelf' && r.badge && r.badge.posterUrl);
+          const earnedTrophies = allTrophies.filter(t => t.state === 'earned');
+          const caughtUpTrophies = allTrophies.filter(t => t.badge && t.badge.stats && t.badge.stats.isCaughtUpOnPlex);
+
+          badgeCount.textContent = earnedTrophies.length + ' Earned';
+
+          const caughtUpBadge = document.getElementById('trophy-caught-up-badge');
+          if (caughtUpBadge) {
+            if (caughtUpTrophies.length > 0) {
+              caughtUpBadge.style.display = 'inline-flex';
+              const textEl = document.getElementById('trophy-caught-up-text');
+              if (textEl) textEl.textContent = caughtUpTrophies.length + ' Caught Up';
+              caughtUpBadge.onclick = () => {
+                document.querySelectorAll('#state-filters button').forEach(b => b.classList.remove('active'));
+                const targetBtn = document.querySelector('#state-filters button[data-state="caught_up"]');
+                if (targetBtn) targetBtn.classList.add('active');
+                activeState = 'caught_up';
+                renderAll();
+              };
+            } else {
+              caughtUpBadge.style.display = 'none';
+            }
+          }
+
+          const bannerEl = document.getElementById('trophy-caught-up-banner');
+          if (bannerEl) {
+            if (activeState === 'earned' && caughtUpTrophies.length > 0) {
+              bannerEl.style.display = 'flex';
+              bannerEl.innerHTML = '<div style="display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 12px; flex-wrap: wrap;">' +
+                '<span style="display: flex; align-items: center; gap: 8px; color: #34d399; font-size: 0.85rem; font-weight: 500;">' +
+                  '<span>⚡</span> <span><b>' + caughtUpTrophies.length + ' series</b> caught up on Plex library with off-server episodes remaining.</span>' +
+                '</span>' +
+                '<button id="btn-banner-view-caught-up" style="background: rgba(16, 185, 129, 0.25); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.4); padding: 5px 14px; border-radius: 6px; font-size: 0.75rem; font-weight: 600; cursor: pointer;">View Caught Up &rarr;</button>' +
+              '</div>';
+              document.getElementById('btn-banner-view-caught-up')?.addEventListener('click', () => {
+                document.querySelectorAll('#state-filters button').forEach(b => b.classList.remove('active'));
+                const targetBtn = document.querySelector('#state-filters button[data-state="caught_up"]');
+                if (targetBtn) targetBtn.classList.add('active');
+                activeState = 'caught_up';
+                renderAll();
+              });
+            } else {
+              bannerEl.style.display = 'none';
+            }
+          }
+
+          const showTrophies = allTrophies.filter(r => {
+            if (activeState === 'earned' && r.state !== 'earned') return false;
+            if (activeState === 'caught_up' && (!r.badge.stats || !r.badge.stats.isCaughtUpOnPlex)) return false;
+            return true;
+          });
+
+          if (showTrophies.length === 0) {
+            const msg = activeState === 'caught_up'
+              ? 'No in-progress series currently caught up on server library.'
+              : 'No series completed matching filters.';
+            container.innerHTML = '<div style="grid-column: 1 / -1; padding: 32px; text-align: center; color: var(--text-muted); background: var(--bg-card); border-radius: 12px; border: 1px solid var(--border-color);">' + msg + '</div>';
+            return;
+          }
+
+          const sortedTrophies = sortAchievements(showTrophies, activeSort);
+          container.innerHTML = sortedTrophies.map(t => {
+            const isComplete = t.state === 'earned';
+            const isCaughtUp = !isComplete && t.badge && t.badge.stats && t.badge.stats.isCaughtUpOnPlex;
+            const missingCount = isCaughtUp ? (t.badge.stats.missingOffServerCount || 0) : 0;
+            const availableCount = isCaughtUp ? (t.badge.stats.availableOnPlex || t.progress.current) : null;
+            const title = t.badge.title.replace('Show Mastery: ', '').replace('Series Progress: ', '');
+            const tierStyle = TIER_COLORS[t.badge.tier] || TIER_COLORS.bronze;
+            const rewatchCount = t.badge.stats && t.badge.stats.rewatchCount ? t.badge.stats.rewatchCount : 0;
+            const progressPercent = t.progress ? Math.round((t.progress.current / t.progress.target) * 100) : 0;
+
+            return '<div data-rule="' + t.ruleId + '" class="trophy-card">' +
+              '<div class="trophy-poster-frame">' +
+                '<div class="trophy-overlay">' +
+                  (isComplete
+                    ? '<span style="font-size: 0.75rem; font-weight: bold; color: #3fb950; display: flex; align-items: center; gap: 4px; margin-bottom: 4px;">● 100% Completed</span>'
+                    : (isCaughtUp
+                        ? '<div style="margin-bottom: 6px;">' +
+                            '<div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.7rem; font-weight: bold; color: #34d399; margin-bottom: 2px;">' +
+                              '<span style="display: flex; align-items: center; gap: 4px;">⚡ Caught Up</span>' +
+                              '<span style="background: rgba(16, 185, 129, 0.25); color: #6ee7b7; padding: 1px 5px; border-radius: 4px; font-size: 0.65rem;">+' + missingCount + ' off-server</span>' +
+                            '</div>' +
+                            '<div style="display: flex; justify-content: space-between; font-size: 0.65rem; color: #cbd5e1; margin-bottom: 2px;">' +
+                              '<span>' + t.progress.current + ' of ' + t.progress.target + ' eps</span>' +
+                              '<span>' + progressPercent + '%</span>' +
+                            '</div>' +
+                            '<div style="width: 100%; background: rgba(0,0,0,0.8); height: 5px; border-radius: 999px; overflow: hidden;">' +
+                              '<div style="background: #10b981; width: ' + progressPercent + '%; height: 100%;"></div>' +
+                            '</div>' +
+                          '</div>'
+                        : '<div style="margin-bottom: 6px;">' +
+                            '<div style="display: flex; justify-content: space-between; font-size: 0.7rem; font-weight: bold; color: #f59e0b; margin-bottom: 2px;">' +
+                              '<span>' + t.progress.current + ' / ' + t.progress.target + ' eps</span>' +
+                              '<span>' + progressPercent + '%</span>' +
+                            '</div>' +
+                            '<div style="width: 100%; background: rgba(0,0,0,0.8); height: 5px; border-radius: 999px; overflow: hidden;">' +
+                              '<div style="background: #e5a00d; width: ' + progressPercent + '%; height: 100%;"></div>' +
+                            '</div>' +
+                          '</div>'
+                      )
+                  ) +
+                  '<span style="font-size: 0.85rem; font-weight: bold; color: #fff; line-height: 1.2;">' + title + '</span>' +
+                '</div>' +
+                '<img src="' + t.badge.posterUrl + '" alt="' + title + '" onerror="this.style.display=\\'none\\'" />' +
+                (isComplete && rewatchCount > 0
+                  ? '<div class="tier-ribbon ' + tierStyle.ribbon + '">' + rewatchCount + 'x Replay</div>'
+                  : (isCaughtUp
+                      ? '<div class="tier-ribbon" style="background: rgba(16, 185, 129, 0.3); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.5); font-weight: 700;">Caught Up +' + missingCount + '</div>'
+                      : (!isComplete ? '<div class="tier-ribbon" style="background: rgba(245, 158, 11, 0.3); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.4);">In Progress</div>' : '')
+                    )
+                ) +
+                '<div class="tier-pill" style="' + (isComplete ? tierStyle.badge : (isCaughtUp ? 'border: 1px solid #059669; color: #34d399;' : 'border: 1px solid #d97706; color: #f59e0b;')) + '">' +
+                  (isComplete ? t.badge.tier : (t.badge.iconHint === 'anime' ? 'Anime' : 'TV')) +
+                '</div>' +
+              '</div>' +
+              '<div style="padding: 10px 12px; background: rgba(13, 17, 23, 0.85); border-top: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; color: var(--text-muted);">' +
+                (isCaughtUp
+                  ? '<span style="color: #34d399; font-weight: 600;">' + t.progress.current + '/' + (availableCount || t.progress.current) + ' on Plex &bull; +' + missingCount + ' missing</span>'
+                  : '<span>' + (t.badge.stats && t.badge.stats.completedItems ? t.badge.stats.completedItems : (t.progress ? t.progress.current : 0)) + ' eps</span>'
+                ) +
+                '<span style="color: #58a6ff; font-weight: 500;">Details &rarr;</span>' +
+              '</div>' +
+            '</div>';
+          }).join('');
+
+          container.querySelectorAll('.trophy-card').forEach(card => {
+            card.addEventListener('click', () => {
+              const ruleId = card.dataset.rule;
+              const ach = results.find(r => r.ruleId === ruleId);
+              if (ach) showModal(ach);
+            });
+          });
+        }
+
+        function renderBadges() {
+          const container = document.getElementById('badges-grid');
+          const results = achievementsStore[activeUserId] || [];
+
+          let list = results.filter(r => {
+            if (r.facet === 'trophy_shelf' && r.badge && r.badge.posterUrl) return false;
+            if (r.facet === 'obsession_spotlight') return false;
+            if (activeFacet !== 'all' && r.facet !== activeFacet) return false;
+            if (activeState === 'earned' && r.state !== 'earned') return false;
+            if (activeState === 'caught_up' && (!r.badge.stats || !r.badge.stats.isCaughtUpOnPlex)) return false;
+            return true;
+          });
+
+          if (list.length === 0) {
+            container.innerHTML = '<div style="grid-column: 1 / -1; padding: 32px; text-align: center; color: var(--text-muted); background: var(--bg-card); border-radius: 12px; border: 1px solid var(--border-color);">No badges matching current filter criteria.</div>';
+            return;
+          }
+
+          const sortedList = sortAchievements(list, activeSort);
+          container.innerHTML = sortedList.map(b => {
+            const tierStyle = TIER_COLORS[b.badge.tier] || TIER_COLORS.bronze;
+            const isEarned = b.state === 'earned';
+            const isInProgress = b.state === 'in_progress';
+
+            const icon = b.badge.iconHint === 'tv' ? '📺' :
+                         b.badge.iconHint === 'movie' ? '🎬' :
+                         b.badge.iconHint === 'audiobook' ? '🎧' :
+                         b.badge.iconHint === 'cowatch' ? '🤝' :
+                         b.badge.iconHint === 'anime' ? '🎌' : '🎖️';
+
+            const facetLabel = b.facet === 'cowatch_bond' ? 'Shared Viewing Bond' :
+                               b.facet === 'taste_affinity' ? 'Taste Devotion' : 'Milestone';
+
+            return '<div data-rule="' + b.ruleId + '" class="badge-card" style="' + (!isEarned ? 'opacity: 0.7;' : '') + '">' +
+              '<div style="display: flex; gap: 14px; align-items: flex-start;">' +
+                '<div style="width: 48px; height: 48px; border-radius: 12px; background: ' + tierStyle.bg + '; border: 1px solid ' + tierStyle.border + '; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0;">' +
+                  icon +
+                '</div>' +
+                '<div style="flex: 1; min-width: 0;">' +
+                  '<div style="display: flex; gap: 6px; align-items: center; margin-bottom: 4px;">' +
+                    '<span class="badge" style="' + tierStyle.badge + ' font-size: 0.65rem; padding: 1px 6px; text-transform: uppercase;">' + b.badge.tier + '</span>' +
+                    '<span style="font-size: 0.75rem; color: var(--text-muted);">' + facetLabel + '</span>' +
+                  '</div>' +
+                  '<h4 style="margin: 0; font-size: 0.95rem; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">' + b.badge.title + '</h4>' +
+                  '<p style="margin: 4px 0 0; font-size: 0.8rem; color: var(--text-muted); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">' + b.badge.description + '</p>' +
+                '</div>' +
+              '</div>' +
+              '<div style="padding-top: 8px; border-top: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem;">' +
+                (isEarned
+                  ? '<span style="color: #3fb950; font-weight: 600;">● Earned</span><span style="color: var(--text-muted);">' + (b.earnedAt ? new Date(b.earnedAt).toLocaleDateString() : '') + '</span>'
+                  : (isInProgress
+                    ? '<span style="color: #58a6ff; font-weight: 500;">' + b.progress.current + ' / ' + b.progress.target + ' ' + b.progress.unit + 's</span><span style="color: var(--text-muted);">In Progress</span>'
+                    : '<span style="color: var(--text-muted);">Not earned</span><span></span>')
+                ) +
+              '</div>' +
+            '</div>';
+          }).join('');
+
+          container.querySelectorAll('.badge-card').forEach(card => {
+            card.addEventListener('click', () => {
+              const ruleId = card.dataset.rule;
+              const ach = results.find(r => r.ruleId === ruleId);
+              if (ach) showModal(ach);
+            });
+          });
+        }
+
+        function showModal(ach) {
+          const modal = document.getElementById('detail-modal');
+          const tierStyle = TIER_COLORS[ach.badge.tier] || TIER_COLORS.bronze;
+
+          document.getElementById('modal-title').textContent = ach.badge.title;
+          document.getElementById('modal-desc').textContent = ach.badge.description;
+
+          const modalTier = document.getElementById('modal-tier');
+          modalTier.textContent = ach.badge.tier;
+          modalTier.style.cssText = tierStyle.badge;
+
+          const modalState = document.getElementById('modal-state');
+          const isCaughtUp = ach.badge && ach.badge.stats && ach.badge.stats.isCaughtUpOnPlex;
+          if (ach.state === 'earned') {
+            modalState.textContent = 'Earned';
+            modalState.style.background = 'rgba(46, 160, 67, 0.2)';
+            modalState.style.color = '#3fb950';
+            modalState.style.border = '1px solid rgba(46, 160, 67, 0.4)';
+          } else if (isCaughtUp) {
+            modalState.textContent = 'Caught Up on Plex';
+            modalState.style.background = 'rgba(16, 185, 129, 0.2)';
+            modalState.style.color = '#34d399';
+            modalState.style.border = '1px solid rgba(16, 185, 129, 0.4)';
+          } else if (ach.state === 'in_progress') {
+            modalState.textContent = 'In Progress';
+            modalState.style.background = 'rgba(56, 189, 248, 0.2)';
+            modalState.style.color = '#58a6ff';
+            modalState.style.border = '1px solid rgba(56, 189, 248, 0.4)';
+          } else {
+            modalState.textContent = 'Not Earned';
+            modalState.style.background = 'rgba(139, 148, 158, 0.2)';
+            modalState.style.color = '#8b949e';
+            modalState.style.border = '1px solid rgba(139, 148, 158, 0.4)';
+          }
+
+          document.getElementById('modal-facet').textContent = (ach.facet || 'Milestone').replace('_', ' ').toUpperCase();
+
+          const iconContainer = document.getElementById('modal-icon');
+          if (ach.badge.posterUrl) {
+            iconContainer.innerHTML = '<img src="' + ach.badge.posterUrl + '" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.style.display=\\'none\\'" />';
+          } else {
+            const icon = ach.badge.iconHint === 'tv' ? '📺' :
+                         ach.badge.iconHint === 'movie' ? '🎬' :
+                         ach.badge.iconHint === 'audiobook' ? '🎧' :
+                         ach.badge.iconHint === 'cowatch' ? '🤝' :
+                         ach.badge.iconHint === 'anime' ? '🎌' : '🎖️';
+            iconContainer.innerHTML = '<span>' + icon + '</span>';
+          }
+
+          const statsBox = document.getElementById('modal-stats-box');
+          if (ach.badge.stats || ach.progress) {
+            statsBox.style.display = 'block';
+            let html = '';
+            if (isCaughtUp) {
+              const available = ach.badge.stats.availableOnPlex || ach.progress.current;
+              const missing = ach.badge.stats.missingOffServerCount || (ach.progress.target - ach.progress.current);
+              const watched = ach.progress.current;
+              const target = ach.progress.target;
+              const pct = Math.round((watched / target) * 100);
+
+              html += '<div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">';
+              html +=   '<div style="display: flex; justify-content: space-between; font-weight: 600; color: #fff;">';
+              html +=     '<span>Progress: ' + watched + ' / ' + target + ' episodes</span>';
+              html +=     '<span style="color: #34d399;">' + pct + '% (Caught Up)</span>';
+              html +=   '</div>';
+              html +=   '<div style="width: 100%; background: rgba(0,0,0,0.6); height: 6px; border-radius: 999px; overflow: hidden;">';
+              html +=     '<div style="background: #10b981; width: ' + pct + '%; height: 100%;"></div>';
+              html +=   '</div>';
+              html +=   '<div style="padding: 12px 14px; background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 10px; display: flex; flex-direction: column; gap: 8px;">';
+              html +=     '<div style="display: flex; justify-content: space-between; align-items: center;">';
+              html +=       '<span style="font-weight: 700; font-size: 0.8rem; color: #34d399; display: flex; align-items: center; gap: 6px;">';
+              html +=         '<span>🛡️</span> Server Coverage Audit';
+              html +=       '</span>';
+              html +=       '<span style="font-size: 0.7rem; font-weight: 600; background: rgba(16, 185, 129, 0.2); color: #6ee7b7; padding: 2px 8px; border-radius: 999px;">';
+              html +=         'Caught Up on Plex';
+              html +=       '</span>';
+              html +=     '</div>';
+              html +=     '<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; font-size: 0.75rem; text-align: center; margin-top: 4px;">';
+              html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
+              html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Server Library</div>';
+              html +=         '<div style="font-weight: 700; color: #e2e8f0;">' + available + '/' + available + ' eps</div>';
+              html +=       '</div>';
+              html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
+              html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Household Watched</div>';
+              html +=         '<div style="font-weight: 700; color: #34d399;">' + watched + ' eps</div>';
+              html +=       '</div>';
+              html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
+              html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Missing Off-Server</div>';
+              html +=         '<div style="font-weight: 700; color: #f59e0b;">+' + missing + ' eps</div>';
+              html +=       '</div>';
+              html +=     '</div>';
+              html +=     '<div style="font-size: 0.75rem; color: #cbd5e1; display: flex; align-items: center; gap: 6px; margin-top: 2px;">';
+              html +=       '<span>🔒</span>';
+              html +=       '<span>Series Trophy locked until full canonical series (' + target + ' eps) is acquired on server and completed.</span>';
+              html +=     '</div>';
+              html +=   '</div>';
+              html += '</div>';
+            } else {
+              html += '<div style="display: flex; justify-content: space-between; font-weight: 600; color: #fff;">';
+              if (ach.progress) {
+                const pct = Math.round((ach.progress.current / ach.progress.target) * 100);
+                html += '<span>Progress: ' + ach.progress.current + ' / ' + ach.progress.target + ' ' + (ach.progress.unit || 'items') + '</span>';
+                html += '<span>' + pct + '%</span>';
+              } else {
+                html += '<span>' + (ach.reason || 'Criteria met') + '</span>';
+              }
+              html += '</div>';
+            }
+            statsBox.innerHTML = html;
+          } else {
+            statsBox.style.display = 'none';
+          }
+
+          const evidenceList = document.getElementById('modal-evidence-list');
+          const evidenceCount = document.getElementById('evidence-count');
+          const evidence = ach.supportingEvidence || [];
+          evidenceCount.textContent = evidence.length + ' evidence events';
+
+          if (evidence.length === 0) {
+            evidenceList.innerHTML = '<div style="color: var(--text-muted); padding: 8px;">No explicit evidence events recorded.</div>';
+          } else {
+            evidenceList.innerHTML = evidence.slice(0, 50).map((e, idx) => {
+              return '<div style="padding: 6px 10px; background: #0d1117; border: 1px solid #21262d; border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">' +
+                '<div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 8px;">' +
+                  '<span style="color: #58a6ff; font-family: monospace; margin-right: 6px;">#' + (idx + 1) + '</span>' +
+                  '<span style="color: #c9d1d9;">' + (e.title || 'Playback event #' + e.id) + '</span>' +
+                '</div>' +
+                '<div style="text-align: right; flex-shrink: 0; font-size: 0.75rem; color: var(--text-muted);">' +
+                  '<div>' + (e.eventTime ? new Date(e.eventTime).toLocaleDateString() : 'Historical') + '</div>' +
+                '</div>' +
+              '</div>';
+            }).join('');
+          }
+
+          document.getElementById('modal-earned-at').textContent = ach.earnedAt
+            ? 'Earned on ' + new Date(ach.earnedAt).toLocaleString()
+            : (isCaughtUp
+                ? 'Status: Caught Up on Plex (' + ach.progress.current + '/' + (ach.badge.stats.availableOnPlex || ach.progress.current) + ' available on server)'
+                : 'Status: ' + ach.state);
+
+          modal.style.display = 'flex';
+        }
+
+        function closeModal() {
+          document.getElementById('detail-modal').style.display = 'none';
+        }
+
+        document.getElementById('btn-refresh-achievements').addEventListener('click', () => {
+          if (activeUserId) selectUser(activeUserId, true);
+        });
+
+        document.querySelectorAll('#facet-filters button').forEach(btn => {
+          btn.addEventListener('click', () => {
+            document.querySelectorAll('#facet-filters button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            activeFacet = btn.dataset.facet;
+            renderAll();
+          });
+        });
+
+        document.querySelectorAll('#state-filters button').forEach(btn => {
+          btn.addEventListener('click', () => {
+            document.querySelectorAll('#state-filters button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            activeState = btn.dataset.state;
+            renderAll();
+          });
+        });
+
+        document.getElementById('modal-close').addEventListener('click', closeModal);
+        document.getElementById('modal-dismiss').addEventListener('click', closeModal);
+        document.getElementById('detail-modal').addEventListener('click', (e) => {
+          if (e.target.id === 'detail-modal') closeModal();
+        });
+
+        // Bubble Scroll Controls
+        document.getElementById('btn-scroll-tabs-left')?.addEventListener('click', () => {
+          document.getElementById('user-tabs')?.scrollBy({ left: -220, behavior: 'smooth' });
+        });
+        document.getElementById('btn-scroll-tabs-right')?.addEventListener('click', () => {
+          document.getElementById('user-tabs')?.scrollBy({ left: 220, behavior: 'smooth' });
+        });
+        document.getElementById('btn-reset-user-order')?.addEventListener('click', () => {
+          try {
+            localStorage.removeItem('plex_achievements_profile_order');
+          } catch {}
+          initAchievements();
+        });
+
+        // Badge Sorting Dropdown
+        const sortSelect = document.getElementById('sort-badges-select');
+        if (sortSelect) {
+          sortSelect.value = activeSort;
+          sortSelect.addEventListener('change', (e) => {
+            activeSort = e.target.value;
+            try {
+              localStorage.setItem('plex_achievements_sort', activeSort);
+            } catch {}
+            renderAll();
+          });
+        }
+
+        initAchievements();
+      </script>
+    `));
+  });
 }
 
 function renderPage(title: string, body: string): string {
@@ -731,7 +3089,7 @@ function renderPage(title: string, body: string): string {
       <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
       <link rel="apple-touch-icon" href="/static/icon.svg">
       <title>${title} - Plex Co-Watch Sync</title>
-      <link rel="stylesheet" href="/static/styles.css?v=3-2n-6e-2-layout">
+      <link rel="stylesheet" href="/static/styles.css?v=3-6-6d-caught-up">
       <script>
         if ('serviceWorker' in navigator) {
           window.addEventListener('load', () => {
@@ -752,6 +3110,8 @@ function renderPage(title: string, body: string): string {
         <nav class="topnav" aria-label="Primary">
           ${navItem("/", "Dashboard")}
           ${navItem("/copy", "Copy History")}
+          ${navItem("/prompts", "Review Prompts")}
+          ${navItem("/achievements", "Achievements")}
           ${navItem("/audit", "Audit")}
           ${navItem("/settings", "Settings")}
         </nav>

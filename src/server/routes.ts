@@ -171,7 +171,7 @@ export function buildRouter(
   router.get("/api/dashboard/users", (_req, res) => {
     try {
       const rows = dashboardPreferences.listVisibleUsers();
-      res.json({ ok: true, users: rows });
+      res.json({ ok: true, users: rows, data: rows });
     } catch (error) {
       res.status(500).json({ ok: false, error: String(error) });
     }
@@ -368,10 +368,182 @@ export function buildRouter(
       next(error);
     }
   });
-  router.get("/api/dashboard/prompts", (_req, res) => {
-    const rows = db.prepare("SELECT * FROM watch_events WHERE prompt_status IN ('pending','prompted','failed') ORDER BY watched_at DESC LIMIT 50").all();
-    res.json(rows);
+  router.get("/api/dashboard/prompts", (req, res) => {
+    try {
+      const status = String(req.query.status ?? "unaddressed");
+      const user = req.query.user ? String(req.query.user).trim() : undefined;
+      const search = req.query.search ? String(req.query.search).trim() : undefined;
+      const sort = String(req.query.sort).toLowerCase() === "asc" ? "ASC" : "DESC";
+      const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+      const offset = Math.max(0, Number(req.query.offset) || 0);
+
+      const conditions: string[] = [];
+      const params: any[] = [];
+
+      if (status === "unaddressed") {
+        conditions.push("we.prompt_status IN ('pending', 'prompted')");
+      } else if (status === "all") {
+        // no prompt_status filter
+      } else if (["pending", "prompted", "confirmed", "dismissed", "failed", "resolved", "none"].includes(status)) {
+        conditions.push("we.prompt_status = ?");
+        params.push(status);
+      } else {
+        conditions.push("we.prompt_status IN ('pending', 'prompted')");
+      }
+
+      if (user) {
+        conditions.push("(lower(u.plex_username) = lower(?) OR u.id = ?)");
+        params.push(user, isNaN(Number(user)) ? -1 : Number(user));
+      }
+
+      if (search) {
+        conditions.push("(we.show_title LIKE ? OR we.title LIKE ?)");
+        params.push(`%${search}%`, `%${search}%`);
+      }
+
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+      const totalRow = db.prepare(`
+        SELECT COUNT(*) AS total
+        FROM watch_events we
+        JOIN users u ON u.id = we.source_user_id
+        ${whereClause}
+      `).get(...params) as { total: number };
+
+      const rows = db.prepare(`
+        SELECT
+          we.id,
+          we.source_user_id,
+          u.plex_username AS source_username,
+          COALESCE(NULLIF(u.dashboard_alias, ''), u.display_name, u.plex_username) AS source_display_name,
+          we.rating_key,
+          we.media_type,
+          we.title,
+          we.show_title,
+          we.season_number,
+          we.episode_number,
+          we.watched_at,
+          we.prompt_status,
+          we.discord_prompt_message_id,
+          we.discord_prompt_sent_at,
+          (
+            SELECT json_group_array(json_object(
+              'targetUserId', cc.target_user_id,
+              'targetUsername', tu.plex_username,
+              'targetDisplayName', COALESCE(NULLIF(tu.dashboard_alias, ''), tu.display_name, tu.plex_username),
+              'status', cc.status
+            ))
+            FROM cowatch_confirmations cc
+            JOIN users tu ON tu.id = cc.target_user_id
+            WHERE cc.watch_event_id = we.id
+          ) AS confirmations_json
+        FROM watch_events we
+        JOIN users u ON u.id = we.source_user_id
+        ${whereClause}
+        ORDER BY we.watched_at ${sort}
+        LIMIT ? OFFSET ?
+      `).all(...params, limit, offset) as any[];
+
+      const items = rows.map((r) => {
+        let confirmations = [];
+        try {
+          confirmations = r.confirmations_json ? JSON.parse(r.confirmations_json) : [];
+        } catch {
+          confirmations = [];
+        }
+        return {
+          ...r,
+          confirmations
+        };
+      });
+
+      res.json({
+        ok: true,
+        items,
+        total: totalRow.total,
+        limit,
+        offset
+      });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: String(error) });
+    }
   });
+
+  router.post("/api/dashboard/prompts/bulk-resolve", express.json(), async (req, res, next) => {
+    try {
+      const { watchEventIds, action, targetUserIds } = req.body;
+      if (!Array.isArray(watchEventIds) || watchEventIds.length === 0) {
+        return res.status(400).json({ ok: false, message: "watchEventIds must be a non-empty array of IDs." });
+      }
+      if (action !== "confirm" && action !== "dismiss" && action !== "none" && action !== "solo") {
+        return res.status(400).json({ ok: false, message: "action must be 'confirm', 'dismiss', or 'none'." });
+      }
+      if (action === "confirm" && (!Array.isArray(targetUserIds) || targetUserIds.length === 0)) {
+        return res.status(400).json({ ok: false, message: "targetUserIds must be a non-empty array when action is 'confirm'." });
+      }
+
+      const results = [];
+      let successCount = 0;
+      let failedCount = 0;
+
+      for (const rawId of watchEventIds) {
+        const id = Number(rawId);
+        if (action === "confirm") {
+          try {
+            const resolution = await cowatch.resolvePrompt({
+              watchEventId: id,
+              selectedTargetUserIds: targetUserIds.map(Number),
+              actor: "web",
+              method: "browser"
+            });
+            if (resolution.ok) successCount += 1;
+            else failedCount += 1;
+            results.push({ watchEventId: id, ok: resolution.ok, resolution });
+          } catch (err) {
+            failedCount += 1;
+            results.push({ watchEventId: id, ok: false, error: String(err) });
+          }
+        } else if (action === "none" || action === "solo") {
+          try {
+            const resolution = await cowatch.resolvePrompt({
+              watchEventId: id,
+              selectedTargetUserIds: [],
+              resolution: "none",
+              actor: "web",
+              method: "browser"
+            });
+            if (resolution.ok) successCount += 1;
+            else failedCount += 1;
+            results.push({ watchEventId: id, ok: resolution.ok, resolution });
+          } catch (err) {
+            failedCount += 1;
+            results.push({ watchEventId: id, ok: false, error: String(err) });
+          }
+        } else if (action === "dismiss") {
+          try {
+            const resolution = cowatch.dismissPrompt(id, true, "web");
+            if (resolution.ok) successCount += 1;
+            else failedCount += 1;
+            results.push({ watchEventId: id, ok: resolution.ok, resolution });
+          } catch (err) {
+            failedCount += 1;
+            results.push({ watchEventId: id, ok: false, error: String(err) });
+          }
+        }
+      }
+
+      res.json({
+        ok: true,
+        data: {
+          processed: results.length,
+          successCount,
+          failedCount,
+          results
+        }
+      });
+    } catch (e) { next(e); }
+  });
+
   router.post("/api/dashboard/prompts/:id/:action", express.json(), async (req, res, next) => {
     try {
       const id = Number(req.params.id);
@@ -382,9 +554,104 @@ export function buildRouter(
       } else if (action === "reprompt") {
         const result = cowatch.reprompt(id, req.body.confirm === true, "web");
         res.status(result.ok ? 200 : result.errorCode === "WATCH_EVENT_NOT_FOUND" ? 404 : result.errorCode === "PROMPT_NOT_REPROMPTABLE" ? 409 : 400).json(result);
+      } else if (action === "none" || action === "solo") {
+        const result = await cowatch.resolvePrompt({
+          watchEventId: id,
+          selectedTargetUserIds: [],
+          resolution: "none",
+          actor: "web",
+          method: "browser"
+        });
+        res.status(result.ok ? 200 : result.errorCode === "WATCH_EVENT_NOT_FOUND" ? 404 : 400).json(result);
+      } else if (action === "change-streamer") {
+        const targetUserId = Number(req.body.newSourceUserId);
+        if (isNaN(targetUserId)) {
+          return res.status(400).json({ ok: false, message: "newSourceUserId must be a valid user ID." });
+        }
+        const targetUser = db.prepare("SELECT id, plex_username, display_name FROM users WHERE id = ?").get(targetUserId) as
+          | { id: number; plex_username: string; display_name: string }
+          | undefined;
+        if (!targetUser) {
+          return res.status(404).json({ ok: false, message: "Target user not found." });
+        }
+        const existing = db.prepare("SELECT id, source_user_id FROM watch_events WHERE id = ?").get(id) as
+          | { id: number; source_user_id: number }
+          | undefined;
+        if (!existing) {
+          return res.status(404).json({ ok: false, message: "Watch event not found." });
+        }
+        const now = new Date().toISOString();
+        db.prepare("UPDATE watch_events SET source_user_id = ?, updated_at = ? WHERE id = ?").run(targetUserId, now, id);
+        db.prepare("DELETE FROM cowatch_confirmations WHERE watch_event_id = ? AND target_user_id = ?").run(id, targetUserId);
+        audit.record("dashboard_prompt_streamer_changed", "web", "ok", {
+          watchEventId: id,
+          previousSourceUserId: existing.source_user_id,
+          newSourceUserId: targetUserId
+        });
+        res.json({
+          ok: true,
+          data: {
+            watchEventId: id,
+            newSourceUserId: targetUserId,
+            newSourceDisplayName: targetUser.display_name || targetUser.plex_username
+          }
+        });
       } else {
         res.status(400).json({ ok: false, message: "Invalid action" });
       }
+    } catch (e) { next(e); }
+  });
+
+  router.post("/api/dashboard/prompts/change-streamer", express.json(), async (req, res, next) => {
+    try {
+      const { watchEventIds, newSourceUserId } = req.body;
+      if (!Array.isArray(watchEventIds) || watchEventIds.length === 0) {
+        return res.status(400).json({ ok: false, message: "watchEventIds must be a non-empty array of IDs." });
+      }
+      const targetUserId = Number(newSourceUserId);
+      if (isNaN(targetUserId)) {
+        return res.status(400).json({ ok: false, message: "newSourceUserId must be a valid user ID." });
+      }
+
+      const targetUser = db.prepare("SELECT id, plex_username, display_name FROM users WHERE id = ?").get(targetUserId) as
+        | { id: number; plex_username: string; display_name: string }
+        | undefined;
+      if (!targetUser) {
+        return res.status(404).json({ ok: false, message: "Target user not found." });
+      }
+
+      const now = new Date().toISOString();
+      let updatedCount = 0;
+      const updatedIds: number[] = [];
+
+      for (const rawId of watchEventIds) {
+        const id = Number(rawId);
+        const existing = db.prepare("SELECT id, source_user_id FROM watch_events WHERE id = ?").get(id) as
+          | { id: number; source_user_id: number }
+          | undefined;
+        if (!existing) continue;
+
+        db.prepare("UPDATE watch_events SET source_user_id = ?, updated_at = ? WHERE id = ?").run(targetUserId, now, id);
+        db.prepare("DELETE FROM cowatch_confirmations WHERE watch_event_id = ? AND target_user_id = ?").run(id, targetUserId);
+        audit.record("dashboard_prompt_streamer_changed", "web", "ok", {
+          watchEventId: id,
+          previousSourceUserId: existing.source_user_id,
+          newSourceUserId: targetUserId
+        });
+        updatedCount += 1;
+        updatedIds.push(id);
+      }
+
+      res.json({
+        ok: true,
+        data: {
+          updatedCount,
+          updatedIds,
+          newSourceUserId: targetUserId,
+          newSourceUsername: targetUser.plex_username,
+          newSourceDisplayName: targetUser.display_name || targetUser.plex_username
+        }
+      });
     } catch (e) { next(e); }
   });
   router.get("/api/dashboard/export.csv", (req, res, next) => {

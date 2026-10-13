@@ -16,6 +16,10 @@ export interface BadgeFlavorStats {
   runnerUpTitle?: string;
   runnerUpHours?: number;
   runnerUpPlays?: number;
+  availableOnPlex?: number | null;
+  missingOffServerCount?: number | null;
+  isCaughtUpOnPlex?: boolean;
+  seriesStatus?: string | null;
 }
 
 export interface BadgeDescriptor {
@@ -144,6 +148,8 @@ export interface CanonicalPlay {
   category: 'movie' | 'tv' | 'anime' | 'classic_tv' | 'audiobook';
   title: string;
   showTitle?: string | null;
+  seasonNumber?: number | null;
+  episodeNumber?: number | null;
   genres?: string[];
   watchedAt: string | null;
   completed: boolean;
@@ -167,6 +173,10 @@ export interface ShowProgressEvidence {
   showTitle: string;
   category: 'tv' | 'anime' | 'classic_tv';
   totalEpisodes: number | null;
+  availableOnPlex?: number | null;
+  missingOffServerCount?: number | null;
+  isCaughtUpOnPlex?: boolean;
+  seriesStatus?: string | null;
   completedEpisodeKeys: Set<string>;
   allCompletedPlays: CanonicalPlay[];
   replaysByEpisode: Map<string, number>;

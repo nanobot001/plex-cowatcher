@@ -1136,9 +1136,30 @@ export class DashboardService {
     let resolvedCompletedItems = completedItems;
     let resolvedLatestPercent = latestPercent;
     let currentChapterIndex: number | null | undefined;
+    let availableOnPlex: number | null = null;
+    let canonicalTotalItems: number | null = null;
+    let missingOffServerCount: number | null = null;
+    let isCaughtUpOnPlex = false;
+    let isSeriesComplete = false;
+    let seriesStatus: string | null = null;
+
     if (identity.kind === "series") {
-      const row = this.db.prepare(`SELECT leaf_count FROM content_catalog WHERE rating_key = ? LIMIT 1`).get(identity.grandparentRatingKey) as any;
-      totalItems = row?.leaf_count > 0 ? row.leaf_count : null;
+      const row = this.db.prepare(`SELECT leaf_count, canonical_total_episodes, series_status FROM content_catalog WHERE rating_key = ? LIMIT 1`).get(identity.grandparentRatingKey) as any;
+      const leafCount = row?.leaf_count > 0 ? Number(row.leaf_count) : null;
+      availableOnPlex = leafCount;
+      if (row?.canonical_total_episodes != null && Number(row.canonical_total_episodes) > 0) {
+        canonicalTotalItems = Number(row.canonical_total_episodes);
+        seriesStatus = row.series_status ?? null;
+        totalItems = canonicalTotalItems;
+        missingOffServerCount = Math.max(0, canonicalTotalItems - (leafCount ?? 0));
+        isCaughtUpOnPlex = (leafCount != null && leafCount > 0) &&
+          (resolvedCompletedItems >= leafCount) &&
+          (missingOffServerCount > 0);
+        isSeriesComplete = (resolvedCompletedItems >= canonicalTotalItems) &&
+          (seriesStatus === "ended");
+      } else {
+        totalItems = leafCount;
+      }
     } else if (identity.kind === "audiobook") {
       const verified = audiobookProgress?.hasVerifiedChapters ?? (this.getActiveAudiobookChapterSource(identity.audiobookId) !== null);
       if (verified) {
@@ -1169,6 +1190,14 @@ export class DashboardService {
       sourceVerified,
       ...(quality ? { quality, evidenceSource, qualityReason } : {}),
       ...(identity.kind === "audiobook" ? { currentChapterIndex: currentChapterIndex ?? null } : {}),
+      ...(identity.kind === "series" ? {
+        availableOnPlex,
+        canonicalTotalItems,
+        missingOffServerCount,
+        isCaughtUpOnPlex,
+        isSeriesComplete,
+        seriesStatus
+      } : {}),
       completedItems: resolvedCompletedItems,
       currentPercent: Number.isFinite(percent as number) ? percent : null,
       totalItems
@@ -2840,6 +2869,12 @@ export class DashboardService {
         let currentProgressPercent: number | null = null;
         let audiobookProgress: AudiobookProgressProjectionSet | undefined;
         let audiobookBook: any = null;
+        let availableOnPlex: number | null = null;
+        let canonicalTotalItems: number | null = null;
+        let missingOffServerCount: number | null = null;
+        let isCaughtUpOnPlex = false;
+        let isSeriesComplete = false;
+        let seriesStatus: string | null = null;
 
         if (first.category === "audiobook") {
           progressUnit = "track";
@@ -2875,13 +2910,28 @@ export class DashboardService {
           progressSourceVerified = true;
           const showKey = first.grandparentRatingKey ?? first.ratingKey;
           const show = this.db.prepare(`
-            SELECT leaf_count
+            SELECT leaf_count, canonical_total_episodes, series_status
             FROM content_catalog
             WHERE rating_key = ?
           `).get(showKey) as any;
           if (show) {
-            totalKnown = Boolean(show.leaf_count && show.leaf_count > 0);
-            totalItems = show.leaf_count || null;
+            const leafCount = (show.leaf_count && show.leaf_count > 0) ? Number(show.leaf_count) : null;
+            availableOnPlex = leafCount;
+            if (show.canonical_total_episodes != null && Number(show.canonical_total_episodes) > 0) {
+              canonicalTotalItems = Number(show.canonical_total_episodes);
+              seriesStatus = show.series_status ?? null;
+              totalKnown = true;
+              totalItems = canonicalTotalItems;
+              missingOffServerCount = Math.max(0, canonicalTotalItems - (leafCount ?? 0));
+              isCaughtUpOnPlex = (leafCount != null && leafCount > 0) &&
+                (g.distinctCompleted.size >= leafCount) &&
+                (missingOffServerCount > 0);
+              isSeriesComplete = (g.distinctCompleted.size >= canonicalTotalItems) &&
+                (seriesStatus === "ended");
+            } else {
+              totalKnown = Boolean(leafCount && leafCount > 0);
+              totalItems = leafCount;
+            }
           }
         } else if (first.category === "movie") {
           progressUnit = "movie";
@@ -2999,7 +3049,13 @@ export class DashboardService {
           observedMinutes: minutesFromSeconds(g.observedSeconds),
           people,
           seasons: g.seasons,
-          hierarchy
+          hierarchy,
+          availableOnPlex,
+          canonicalTotalItems,
+          missingOffServerCount,
+          isCaughtUpOnPlex,
+          isSeriesComplete,
+          seriesStatus
         };
         progressGroups.push(pg);
 
@@ -3050,6 +3106,11 @@ export class DashboardService {
       const recentlyCompletedGroups = progressGroups.filter((g) => {
         if (g.category === "audiobook") {
           return g.audiobookProgress?.listeners.some((listener) => listener.bookCompleted) ?? false;
+        }
+        if (g.category === "tv" || g.category === "classic_tv" || g.category === "anime") {
+          if (g.canonicalTotalItems != null && g.canonicalTotalItems > 0) {
+            return g.distinctCompleted >= g.canonicalTotalItems;
+          }
         }
         return g.completedPlays > 0;
       }).sort((a, b) => b.latestWatchedAt.localeCompare(a.latestWatchedAt));

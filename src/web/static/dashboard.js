@@ -700,7 +700,13 @@ function restoreLocationState(){
   const raw=location.hash.slice(1);
   const [layoutName,rawQuery=""]=raw.split("?");
   if(layouts.has(layoutName))state.layout=layoutName;
-  if(!raw.includes("?"))return;
+  if(!raw.includes("?")){
+    if(state.layout==="overview"){
+      delete state.filters.user;
+      if(form&&form.elements&&form.elements.user)form.elements.user.value="";
+    }
+    return;
+  }
   const params=new URLSearchParams(rawQuery);
   const restoredFilterKeys=state.layout==="people"?explorerFilterKeys.filter(key=>!['dateFrom','dateTo'].includes(key)):explorerFilterKeys;
   state.filters=Object.fromEntries(restoredFilterKeys.filter(key=>params.has(key)).map(key=>[key,params.get(key)]));
@@ -1321,7 +1327,37 @@ function renderSeriesHierarchy(workspace, state, presenterName, heading) {
   if (!hierarchy || hierarchy.type !== "tv") {
     return `<div data-testid="detail-presenter-${presenterName}"><section class="detail-hierarchy-section" data-testid="detail-workspace-hierarchy"><h3>${esc(heading)}</h3><p class="text-muted">No hierarchy is available for this title.</p></section></div>`;
   }
+  const summary = workspace.progressSummary;
+  const coverageBanner = (summary?.isCaughtUpOnPlex && summary.canonicalTotalItems && summary.availableOnPlex) ? `
+    <div class="detail-server-coverage-banner" data-testid="detail-coverage-banner">
+      <div class="coverage-banner-header">
+        <div class="coverage-text">
+          <strong>Caught Up on Server</strong>
+          <p>You have watched all ${summary.availableOnPlex} episodes available on Plex. ${summary.missingOffServerCount ?? 0} aired episodes have not yet been acquired to complete the ${summary.canonicalTotalItems}-episode series.</p>
+        </div>
+        <span class="badge badge-caught-up">Caught Up +${summary.missingOffServerCount ?? 0}</span>
+      </div>
+      <div class="coverage-stats-row">
+        <div class="coverage-stat">
+          <span class="stat-label">Server Library</span>
+          <span class="stat-val">${summary.availableOnPlex} / ${summary.canonicalTotalItems} (${Math.round((summary.availableOnPlex / summary.canonicalTotalItems) * 100)}%)</span>
+        </div>
+        <div class="coverage-stat">
+          <span class="stat-label">Household Watched</span>
+          <span class="stat-val highlight">${summary.completedItems} / ${summary.canonicalTotalItems} (${summary.currentPercent ?? 0}%)</span>
+        </div>
+        <div class="coverage-stat">
+          <span class="stat-label">Missing from Server</span>
+          <span class="stat-val warning">+${summary.missingOffServerCount ?? 0} eps</span>
+        </div>
+        <div class="coverage-stat">
+          <span class="stat-label">Series Trophy</span>
+          <span class="stat-val locked">🔒 Locked</span>
+        </div>
+      </div>
+    </div>` : "";
   return `<div data-testid="detail-presenter-${presenterName}">
+    ${coverageBanner}
     <section class="detail-hierarchy-section" data-testid="detail-workspace-hierarchy" aria-label="${esc(heading)}">
       <h3>${esc(heading)}</h3>
       <div class="detail-hierarchy-tree">
@@ -1781,6 +1817,14 @@ async function loadDetailWorkspaceHierarchy(workspace, signal) {
 // ----------------------------------------------------
 async function loadGlobals() {
   try {
+    fetchJson("/api/dashboard/users").then(ud => {
+      const user = form.elements.user;
+      const list = Array.isArray(ud) ? ud : (ud?.users || ud?.data || []);
+      if (user && user.options.length <= 1 && list.length > 0) {
+        list.forEach(u => user.add(new Option(u.alias || u.display_name || u.plex_username, u.plex_username)));
+        if (state.filters.user) user.value = state.filters.user;
+      }
+    }).catch(() => {});
     const d = await fetchJson("/api/dashboard/overview?" + query({ limit: 1 }));
     state.totals = d.totals;
     state.users = d.users;
@@ -1789,6 +1833,7 @@ async function loadGlobals() {
     // Update options if empty
     const user=form.elements.user,lib=form.elements.library;
     if(user && user.options.length===1)d.users.forEach(u=>user.add(new Option(u.display_name||u.plex_username,u.plex_username)));
+    if(user)user.value=state.filters.user||"";
     if(lib && lib.options.length===1)d.libraries.forEach(x=>lib.add(new Option(x,x)));
 
     // Update sidebar presence status list
@@ -1822,10 +1867,10 @@ async function loadGlobals() {
           <span class="ribbon-val">${d.totals.people}</span>
           <span class="ribbon-lbl">Active Users</span>
         </div>
-        <div class="ribbon-card alert-state ${d.totals.pendingPrompts > 0 ? 'active' : ''}">
+        <a href="/prompts" class="ribbon-card alert-state ${d.totals.pendingPrompts > 0 ? 'active' : ''}" style="text-decoration:none; cursor:pointer;" title="Review unaddressed prompts">
           <span class="ribbon-val">${d.totals.pendingPrompts}</span>
           <span class="ribbon-lbl">Pending Prompts</span>
-        </div>
+        </a>
       `;
     }
   } catch(e) {
@@ -2425,7 +2470,7 @@ async function renderPeople() {
     </details>
     <section class="dashboard-panel" data-testid="pairings-panel"><div class="panel-title"><div><h3>Who watches together</h3><span>Exact-item evidence only</span></div></div><div class="pairings-list">${pairingHtml}</div></section>
     <section class="dashboard-panel" data-testid="reviews-panel"><div class="panel-title"><div><h3>Review likely co-watches</h3><span>${reviewsResult.status==="fulfilled"?`${reviewsResult.value.total} exact-item candidate${reviewsResult.value.total===1?"":"s"}`:"Needs retry"}</span></div></div><div class="reviews-list">${reviewsHtml}</div></section>
-    <section class="dashboard-panel" data-testid="operations-panel"><div class="panel-title"><div><h3>Operations</h3><span>Current unresolved prompts and sync issues</span></div></div><div class="operations-list">${operationsHtml}</div></section>
+    <section class="dashboard-panel" data-testid="operations-panel"><div class="panel-title"><div><h3>Operations</h3><span>Current unresolved prompts and sync issues</span></div><a href="/prompts" class="text-button" style="text-decoration:none; font-size:0.85rem;">Review all prompts &rarr;</a></div><div class="operations-list">${operationsHtml}</div></section>
     <div class="people-heatmap-popover" data-testid="people-heatmap-popover" hidden></div>
   </div>`;
   peopleHeatmapState.popover = content.querySelector("[data-testid='people-heatmap-popover']");
@@ -2533,7 +2578,10 @@ async function renderProgress() {
           <div class="progress-card-info">
             <div class="progress-card-title-row">
               <h4>${esc(x.title)}</h4>
-              <span class="progress-card-category-badge" data-cat="${esc(x.category)}">${esc(categoryLabel(x.category))}</span>
+              <div class="progress-card-badges">
+                ${x.isCaughtUpOnPlex ? `<span class="badge badge-caught-up" data-testid="badge-caught-up">Caught Up${x.missingOffServerCount ? ` <b class="offserver-chip">+${x.missingOffServerCount}</b>` : ""}</span>` : ""}
+                <span class="progress-card-category-badge" data-cat="${esc(x.category)}">${esc(categoryLabel(x.category))}</span>
+              </div>
             </div>
             ${summaryLine ? `<p class="progress-card-summary">${summaryLine}</p>` : ""}
             ${visibleProgress ? `<p class="progress-card-progress" data-testid="progress-summary">${esc(visibleProgress.text)}</p>${progressMeterMarkup(visibleProgress, x.title)}` : ""}
@@ -2631,7 +2679,7 @@ function progressSummaryCopy(x) {
     const completed = Math.max(0, Math.min(total, Number(x.distinctCompleted || 0)));
     const percent = Math.max(0, Math.min(100, Math.round((completed / total) * 100)));
     return {
-      text: `${completed} of ${total} ${progressUnitCopy(x, total)} · ${percent}%`,
+      text: `${completed} of ${total} ${progressUnitCopy(x, total)} · ${x.isCaughtUpOnPlex ? "Caught up" : `${percent}%`}`,
       percent
     };
   }
@@ -2869,7 +2917,7 @@ function findPersonCardAtPoint(group, x, y, excludeId = "") {
 // ----------------------------------------------------
 function pager(d){if(d.total<=d.limit)return "";return '<nav class="pager" aria-label="Pagination"><button data-page="prev" '+(d.offset===0?"disabled":"")+'>Previous</button><span>'+(d.offset+1)+'-'+Math.min(d.total,d.offset+d.limit)+' of '+d.total+'</span><button data-page="next" '+(d.offset+d.limit>=d.total?"disabled":"")+'>Next</button></nav>';}
 function libraryPager(d){if(d.total<=d.limit)return "";return '<nav class="pager" aria-label="Library pagination"><button data-library-page="prev" '+(d.offset===0?"disabled":"")+'>Previous</button><span>'+(d.offset+1)+'-'+Math.min(d.total,d.offset+d.limit)+' of '+d.total+'</span><button data-library-page="next" '+(d.offset+d.limit>=d.total?"disabled":"")+'>Next</button></nav>';}
-function populateOptions(d){const user=form.elements.user,lib=form.elements.library;if(user && user.options.length===1)d.users.forEach(u=>user.add(new Option(u.display_name||u.plex_username,u.plex_username)));if(lib && lib.options.length===1)d.libraries.forEach(x=>lib.add(new Option(x,x)));}
+function populateOptions(d){const user=form.elements.user,lib=form.elements.library;if(user && user.options.length===1)d.users.forEach(u=>user.add(new Option(u.display_name||u.plex_username,u.plex_username)));if(user)user.value=state.filters.user||"";if(lib && lib.options.length===1)d.libraries.forEach(x=>lib.add(new Option(x,x)));}
 
 async function render(){
   setButtons();
@@ -2907,13 +2955,33 @@ document.querySelector("#layout-switcher").addEventListener("click",e=>{
   e.preventDefault();
   state.layout=b.dataset.layout;
   state.offset=0;
+  if(state.layout==="overview"){
+    delete state.filters.user;
+    if(form&&form.elements&&form.elements.user)form.elements.user.value="";
+  }
   save();
   render();
 });
 
 form.addEventListener("change",()=>{
   const previousCategory=state.filters.category||"";
-  state.filters=Object.fromEntries(new FormData(form));
+  const rawFilters=Object.fromEntries(new FormData(form));
+  state.filters=Object.fromEntries(Object.entries(rawFilters).filter(([,v])=>v!==""&&v!=null));
+  state.offset=0;
+  if((state.filters.category||"")!==previousCategory)state.explorer.section=state.filters.category||"";
+  state.explorer.offset=0;
+  state.explorer.selected="";
+  state.progress={recentlyActiveOffset:0,continueOffset:0,recentlyCompletedOffset:0,selected:""};
+  save();
+  render();
+  loadGlobals();
+});
+
+form.addEventListener("submit",(e)=>{
+  e.preventDefault();
+  const previousCategory=state.filters.category||"";
+  const rawFilters=Object.fromEntries(new FormData(form));
+  state.filters=Object.fromEntries(Object.entries(rawFilters).filter(([,v])=>v!==""&&v!=null));
   state.offset=0;
   if((state.filters.category||"")!==previousCategory)state.explorer.section=state.filters.category||"";
   state.explorer.offset=0;

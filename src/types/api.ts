@@ -635,6 +635,12 @@ export interface DashboardProgressGroup {
     series: string | null;
     book: string | null;
   } | null;
+  availableOnPlex?: number | null;
+  canonicalTotalItems?: number | null;
+  missingOffServerCount?: number | null;
+  isCaughtUpOnPlex?: boolean;
+  isSeriesComplete?: boolean;
+  seriesStatus?: string | null;
 }
 
 export interface DashboardProgressBucket {

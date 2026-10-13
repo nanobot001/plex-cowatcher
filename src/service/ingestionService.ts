@@ -259,10 +259,12 @@ export class IngestionService {
     const twoDaysAgo = Date.now() - 48 * 60 * 60 * 1000;
     let initialPromptStatus = eventDate > twoDaysAgo ? "pending" : "dismissed";
 
-    if (initialPromptStatus === "pending" && mediaType === "audiobook") {
+    if (mediaType === "audiobook" || row.mediaType === "track") {
       const settingRow = this.db.prepare("SELECT value FROM app_settings WHERE key = 'prompt_for_audiobooks'").get() as { value: string } | undefined;
-      if (!settingRow || settingRow.value !== "true") {
-        initialPromptStatus = "dismissed";
+      if (settingRow?.value === "true" && eventDate > twoDaysAgo) {
+        initialPromptStatus = "pending";
+      } else {
+        initialPromptStatus = "none";
       }
     }
 

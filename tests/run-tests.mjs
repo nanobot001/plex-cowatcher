@@ -1169,6 +1169,13 @@ test("watch completion uses percent threshold", () => {
   assert.equal(countsAsCompleted({ percentComplete: 42 }, 90), false);
 });
 
+test("watch completion uses episode 80% threshold default while non-episodes require 90%", () => {
+  assert.equal(countsAsCompleted({ percentComplete: 82, mediaType: "episode" }), true);
+  assert.equal(countsAsCompleted({ percentComplete: 78, mediaType: "episode" }), false);
+  assert.equal(countsAsCompleted({ percentComplete: 82, mediaType: "movie" }), false);
+  assert.equal(countsAsCompleted({ percentComplete: 91, mediaType: "movie" }), true);
+});
+
 test("watch completion uses view offset and duration when percent is missing", () => {
   assert.equal(countsAsCompleted({ viewOffset: 90, duration: 100 }, 90), true);
 });
@@ -1802,6 +1809,21 @@ test("IngestionService polls recent history and writes to playback_observations 
     const events = db.prepare("SELECT * FROM watch_events").all();
     assert.equal(events.length, 1);
     assert.equal(events[0].rating_key, "movie-1");
+
+    // Audiobooks default to solo ("none")
+    const tonyUser = db.prepare("SELECT id FROM users WHERE plex_username = 'Tony'").get();
+    ingestion.ingestRow(tonyUser.id, {
+      user: "Tony",
+      ratingKey: "audiobook-solo-1",
+      mediaType: "audiobook",
+      title: "Audiobook Solo Chapter",
+      watchedAt: "2026-05-30T22:00:00.000Z",
+      percentComplete: 100,
+      duration: 3600
+    });
+    const abEvent = db.prepare("SELECT * FROM watch_events WHERE rating_key = 'audiobook-solo-1'").get();
+    assert.ok(abEvent);
+    assert.equal(abEvent.prompt_status, "none");
   });
 });
 
@@ -4745,6 +4767,108 @@ test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed promp
       assert.match(copyPage,/api\/dashboard\/users/);
       assert.match(copyPage,/<th>Select<\/th>/);
       assert.match(copyPage,/row-select/);
+      const promptsPage = await (await fetch(base+"/prompts")).text();
+      assert.match(promptsPage, /Review Unaddressed Prompts/);
+      assert.match(promptsPage, /id="filterSort"/);
+      assert.match(promptsPage, /id="btn-bulk-confirm"/);
+      assert.match(promptsPage, /sticky-bulk-bar/);
+      assert.match(promptsPage, /id="btn-cowatchers-toggle"/);
+      assert.match(promptsPage, /id="cowatchers-dropdown"/);
+      assert.match(promptsPage, /id="bulkChangeStreamerSelect"/);
+      assert.match(promptsPage, /id="btn-bulk-change-streamer"/);
+      assert.match(promptsPage, /id="change-streamer-dialog"/);
+      const achievementsPage = await (await fetch(base+"/achievements")).text();
+      assert.match(achievementsPage, /Personal Media Passport/);
+      assert.match(achievementsPage, /id="user-tabs"/);
+      assert.match(achievementsPage, /id="user-bubbles-container"/);
+      assert.match(achievementsPage, /id="sort-badges-select"/);
+      assert.match(achievementsPage, /id="trophy-grid"/);
+      assert.match(achievementsPage, /id="btn-refresh-achievements"/);
+      const promptsApi = await (await fetch(base+"/api/dashboard/prompts?status=all")).json();
+      assert.equal(promptsApi.ok, true);
+      assert.ok(promptsApi.total >= 1);
+      assert.equal(promptsApi.items[0].rating_key, "movie-http");
+
+      // Multi-person co-watch confirmation on a dedicated watch event
+      const multiEvent = db.prepare(`INSERT INTO watch_events
+        (source_user_id,rating_key,media_type,title,watched_at,prompt_status,created_at,updated_at)
+        VALUES (?, 'movie-multi', 'movie', 'Multi Movie', ?, 'pending', ?, ?)`).run(user.id,now,now,now);
+      db.prepare("UPDATE users SET plex_user_id = 'plex-' || id WHERE plex_user_id IS NULL").run();
+      const allUsers = db.prepare("SELECT id FROM users WHERE enabled = 1 LIMIT 2").all();
+      const multiConfirm = await (await fetch(base+"/api/dashboard/prompts/bulk-resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          watchEventIds: [Number(multiEvent.lastInsertRowid)],
+          action: "confirm",
+          targetUserIds: allUsers.map(u => u.id)
+        })
+      })).json();
+      assert.equal(multiConfirm.ok, true);
+      assert.equal(multiConfirm.data.successCount, 1);
+      const confCount = db.prepare("SELECT COUNT(*) as c FROM cowatch_confirmations WHERE watch_event_id = ?").get(multiEvent.lastInsertRowid).c;
+      assert.equal(confCount, allUsers.length);
+
+      // Change streamer on multiEvent to allUsers[1].id
+      const changeStreamerRes = await (await fetch(base+"/api/dashboard/prompts/change-streamer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          watchEventIds: [Number(multiEvent.lastInsertRowid)],
+          newSourceUserId: allUsers[1].id
+        })
+      })).json();
+      assert.equal(changeStreamerRes.ok, true);
+      assert.equal(changeStreamerRes.data.updatedCount, 1);
+      const updatedEvent = db.prepare("SELECT source_user_id FROM watch_events WHERE id = ?").get(multiEvent.lastInsertRowid);
+      assert.equal(updatedEvent.source_user_id, allUsers[1].id);
+      // Ensure self-confirmation for the new streamer is removed
+      const selfConf = db.prepare("SELECT COUNT(*) as c FROM cowatch_confirmations WHERE watch_event_id = ? AND target_user_id = ?").get(multiEvent.lastInsertRowid, allUsers[1].id).c;
+      assert.equal(selfConf, 0);
+
+      // Single prompt change-streamer endpoint
+      const singleChangeRes = await (await fetch(base+"/api/dashboard/prompts/" + Number(multiEvent.lastInsertRowid) + "/change-streamer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newSourceUserId: user.id })
+      })).json();
+      assert.equal(singleChangeRes.ok, true);
+      assert.equal(singleChangeRes.data.newSourceUserId, user.id);
+      const reUpdatedEvent = db.prepare("SELECT source_user_id FROM watch_events WHERE id = ?").get(multiEvent.lastInsertRowid);
+      assert.equal(reUpdatedEvent.source_user_id, user.id);
+
+      const bulkDismiss = await (await fetch(base+"/api/dashboard/prompts/bulk-resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          watchEventIds: [Number(event.lastInsertRowid)],
+          action: "dismiss"
+        })
+      })).json();
+      assert.equal(bulkDismiss.ok, true);
+      assert.equal(bulkDismiss.data.successCount, 1);
+      const bulkSolo = await (await fetch(base+"/api/dashboard/prompts/bulk-resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          watchEventIds: [Number(event.lastInsertRowid)],
+          action: "none"
+        })
+      })).json();
+      assert.equal(bulkSolo.ok, true);
+      assert.equal(bulkSolo.data.successCount, 1);
+      const confCountAfterSolo = db.prepare("SELECT COUNT(*) as c FROM cowatch_confirmations WHERE watch_event_id = ?").get(event.lastInsertRowid).c;
+      assert.equal(confCountAfterSolo, 0);
+      const promptsSolo = await (await fetch(base+"/api/dashboard/prompts?status=none")).json();
+      assert.equal(promptsSolo.ok, true);
+      assert.ok(promptsSolo.items.some((i) => i.id === Number(event.lastInsertRowid) && i.prompt_status === "none"));
+      const singleNone = await (await fetch(base+"/api/dashboard/prompts/" + Number(event.lastInsertRowid) + "/none", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: true })
+      })).json();
+      assert.equal(singleNone.ok, true);
+      assert.equal(singleNone.data.status, "none");
       const overview = await (await fetch(base+"/api/dashboard/overview")).json();
       assert.equal(overview.ok,true);
       assert.equal(overview.data.totals.plays,1);
@@ -7706,6 +7830,105 @@ test("3-6-6D Anime classification & in-progress tracking: catalog library fallba
     assert.ok(aceShelf.badge.title.includes('Ace of the Diamond'));
   });
 });
+test("TV episode denominator: canonical episode count distinguishes caught-up on Plex from 100% complete", async () => {
+  await withTestDb(async (db) => {
+    // 1. User
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 2. Partial Show (Ahsoka): 3 of 3 episodes on Plex watched, but canonical total is 8, running series
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, library_title, leaf_count, canonical_total_episodes, series_status, source_provenance, refreshed_at)
+      VALUES ('show-ahsoka', 'show', 'Ahsoka', 'TV Shows', 3, 8, 'running', 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+
+    for (let i = 1; i <= 3; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'show-ahsoka', 'episode', 'TV Shows', ?, 'Ahsoka', '2026-08-01T12:00:00Z', 1, 1800, '2026-08-01T12:00:00Z', '2026-08-01T12:00:00Z')
+      `).run(100 + i, `ahsoka-ep-${i}`, `Ahsoka Part ${i}`);
+    }
+
+    // 3. Fully Completed Show (Breaking Bad): 5 episodes on Plex, 5 canonical episodes, ended series
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, library_title, leaf_count, canonical_total_episodes, series_status, source_provenance, refreshed_at)
+      VALUES ('show-bb', 'show', 'Breaking Bad', 'TV Shows', 5, 5, 'ended', 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+
+    for (let i = 1; i <= 5; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'show-bb', 'episode', 'TV Shows', ?, 'Breaking Bad', '2026-08-02T12:00:00Z', 1, 1800, '2026-08-02T12:00:00Z', '2026-08-02T12:00:00Z')
+      `).run(200 + i, `bb-ep-${i}`, `BB Ep ${i}`);
+    }
+
+    const dashboardService = new DashboardService(db);
+    const progress = dashboardService.getProgress({});
+
+    // Verify Ahsoka in Progress
+    const ahsokaGroup = progress.recentlyActive.items.find((x) => x.title === "Ahsoka");
+    assert.ok(ahsokaGroup, "Ahsoka must exist in progress groups");
+    assert.equal(ahsokaGroup.availableOnPlex, 3, "Available on Plex must be 3");
+    assert.equal(ahsokaGroup.canonicalTotalItems, 8, "Canonical total items must be 8");
+    assert.equal(ahsokaGroup.totalItems, 8, "totalItems must report canonical total");
+    assert.equal(ahsokaGroup.totalKnown, true, "totalKnown must be true");
+    assert.equal(ahsokaGroup.missingOffServerCount, 5, "missingOffServerCount must be 5");
+    assert.equal(ahsokaGroup.isCaughtUpOnPlex, true, "isCaughtUpOnPlex must be true when 3/3 watched but 5 missing");
+    assert.equal(ahsokaGroup.isSeriesComplete, false, "isSeriesComplete must be false");
+
+    // Partial show must NOT be in recentlyCompleted
+    const inCompleted = progress.recentlyCompleted.items.some((x) => x.title === "Ahsoka");
+    assert.equal(inCompleted, false, "Caught-up show with unacquired episodes must NOT be in recentlyCompleted");
+
+    // Partial show MUST be in continue watching
+    const inContinue = progress.continue.items.some((x) => x.title === "Ahsoka");
+    assert.equal(inContinue, true, "Caught-up show must remain in continue watching");
+
+    // Verify Breaking Bad in Progress
+    const bbGroup = progress.recentlyActive.items.find((x) => x.title === "Breaking Bad");
+    assert.ok(bbGroup, "Breaking Bad must exist in progress groups");
+    assert.equal(bbGroup.availableOnPlex, 5);
+    assert.equal(bbGroup.canonicalTotalItems, 5);
+    assert.equal(bbGroup.missingOffServerCount, 0);
+    assert.equal(bbGroup.isCaughtUpOnPlex, false);
+    assert.equal(bbGroup.isSeriesComplete, true);
+
+    const bbInCompleted = progress.recentlyCompleted.items.some((x) => x.title === "Breaking Bad");
+    assert.equal(bbInCompleted, true, "Ended show with 100% completed episodes must be in recentlyCompleted");
+
+    // Verify Detail Workspace summary for Ahsoka
+    const ahsokaDetail = dashboardService.getDetailWorkspace(ahsokaGroup.groupKey);
+    assert.ok(ahsokaDetail.ok, "Detail workspace must resolve");
+    assert.equal(ahsokaDetail.data.progressSummary.isCaughtUpOnPlex, true);
+    assert.equal(ahsokaDetail.data.progressSummary.availableOnPlex, 3);
+    assert.equal(ahsokaDetail.data.progressSummary.canonicalTotalItems, 8);
+    assert.equal(ahsokaDetail.data.progressSummary.missingOffServerCount, 5);
+    assert.equal(ahsokaDetail.data.progressSummary.isSeriesComplete, false);
+
+    // Verify Achievements: Ahsoka should NOT earn show mastery trophy
+    const achievementService = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const trophyShelf = achievementService.getAchievements({ user: 1, facet: 'trophy_shelf' });
+    const ahsokaTrophy = trophyShelf.results.find((r) => r.ruleId === 'show_mastery_show-ahsoka');
+    assert.ok(ahsokaTrophy, "Ahsoka trophy shelf entry must exist");
+    assert.notEqual(ahsokaTrophy.state, 'earned', "Ahsoka must NOT earn completion trophy when 5 episodes are missing");
+    assert.equal(ahsokaTrophy.state, 'in_progress');
+    assert.equal(ahsokaTrophy.progress.current, 3);
+    assert.equal(ahsokaTrophy.progress.target, 8);
+    assert.equal(ahsokaTrophy.badge.stats.isCaughtUpOnPlex, true);
+    assert.equal(ahsokaTrophy.badge.stats.availableOnPlex, 3);
+    assert.equal(ahsokaTrophy.badge.stats.missingOffServerCount, 5);
+
+    // Breaking Bad should earn trophy
+    const bbTrophy = trophyShelf.results.find((r) => r.ruleId === 'show_mastery_show-bb');
+    assert.ok(bbTrophy, "Breaking Bad trophy shelf entry must exist");
+    assert.equal(bbTrophy.state, 'earned', "Breaking Bad must earn completion trophy");
+    assert.equal(bbTrophy.progress.current, 5);
+    assert.equal(bbTrophy.progress.target, 5);
+  });
+});
+
 let passed = 0;
 for (const { name, fn } of tests) {
   try {

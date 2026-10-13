@@ -112,7 +112,7 @@ export class CowatchService {
         this.audit.record("dashboard_prompt_dismissed", actor, "skipped", { watchEventId, reason: "already_dismissed" });
         return { ok: true, data: { watchEventId, status: "dismissed", changed: false } };
       }
-      if (!["pending", "prompted", "failed"].includes(event.prompt_status)) {
+      if (!["pending", "prompted", "failed", "none"].includes(event.prompt_status)) {
         throw new AppError("PROMPT_NOT_DISMISSIBLE", "Prompt is not eligible for dismissal", { watchEventId, status: event.prompt_status }, false, 409);
       }
       const now = nowIso();
@@ -162,6 +162,7 @@ export class CowatchService {
       if (input.selectedTargetUserIds.length === 0) {
         const status = resolution === "dismiss" ? "dismissed" : "none";
         this.db.prepare("UPDATE watch_events SET prompt_status = ?, updated_at = ? WHERE id = ?").run(status, nowIso(), input.watchEventId);
+        this.db.prepare("DELETE FROM cowatch_confirmations WHERE watch_event_id = ?").run(input.watchEventId);
         this.audit.record("resolve_cowatch_prompt", input.actor, status, input);
         return { ok: true, data: { status, results: [] } };
       }

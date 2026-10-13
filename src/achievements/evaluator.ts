@@ -119,7 +119,11 @@ export function evaluateSubjectAchievements(
                 stats: {
                   totalPlays: show.allCompletedPlays.length,
                   completedItems: show.completedEpisodeKeys.size,
-                  rewatchCount
+                  rewatchCount,
+                  availableOnPlex: show.availableOnPlex ?? null,
+                  missingOffServerCount: show.missingOffServerCount ?? 0,
+                  isCaughtUpOnPlex: false,
+                  seriesStatus: show.seriesStatus ?? null
                 }
               },
               state: 'earned',
@@ -138,6 +142,7 @@ export function evaluateSubjectAchievements(
               reason: `Completed all ${show.totalEpisodes} episodes of ${show.showTitle}`
             });
           } else {
+            const isCaughtUp = show.isCaughtUpOnPlex ?? false;
             results.push({
               userId: subject.userId,
               ruleId: dynamicRuleId,
@@ -147,13 +152,19 @@ export function evaluateSubjectAchievements(
                 badgeKey: `show_mastery_${show.grandparentRatingKey}`,
                 tier: 'bronze',
                 title: `Series Progress: ${show.showTitle}`,
-                description: `Watched ${show.completedEpisodeKeys.size} of ${show.totalEpisodes} episodes of ${show.showTitle} (${Math.round((show.completedEpisodeKeys.size / show.totalEpisodes) * 100)}%).`,
+                description: isCaughtUp
+                  ? `Caught up on Plex (${show.completedEpisodeKeys.size} of ${show.availableOnPlex} available; ${show.missingOffServerCount} off-server). Series trophy locked until full series is acquired and completed.`
+                  : `Watched ${show.completedEpisodeKeys.size} of ${show.totalEpisodes} episodes of ${show.showTitle} (${Math.round((show.completedEpisodeKeys.size / show.totalEpisodes) * 100)}%).`,
                 posterUrl: show.posterUrl,
                 iconHint: show.category === 'anime' ? 'anime' : 'series',
                 stats: {
                   totalPlays: show.allCompletedPlays.length,
                   completedItems: show.completedEpisodeKeys.size,
-                  rewatchCount: 0
+                  rewatchCount: 0,
+                  availableOnPlex: show.availableOnPlex ?? null,
+                  missingOffServerCount: show.missingOffServerCount ?? 0,
+                  isCaughtUpOnPlex: isCaughtUp,
+                  seriesStatus: show.seriesStatus ?? null
                 }
               },
               state: 'in_progress',
@@ -169,7 +180,9 @@ export function evaluateSubjectAchievements(
                 eventTime: p.watchedAt,
                 title: p.title
               })),
-              reason: `${show.completedEpisodeKeys.size} of ${show.totalEpisodes} episodes completed`
+              reason: isCaughtUp
+                ? `Caught up on Plex (${show.completedEpisodeKeys.size}/${show.availableOnPlex} eps); ${show.missingOffServerCount} off-server`
+                : `${show.completedEpisodeKeys.size} of ${show.totalEpisodes} episodes completed`
             });
           }
         }

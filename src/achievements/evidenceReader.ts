@@ -113,6 +113,8 @@ export class AchievementEvidenceReader {
         COALESCE(NULLIF(po.library_name, ''), cat.library_title, gp_cat.library_title) as library_name,
         po.title,
         po.show_title,
+        po.season_number,
+        po.episode_number,
         po.watched_at,
         po.completed,
         po.duration,
@@ -152,6 +154,8 @@ export class AchievementEvidenceReader {
         category,
         title: String(row.title ?? ''),
         showTitle: row.show_title ? String(row.show_title) : null,
+        seasonNumber: row.season_number != null ? Number(row.season_number) : null,
+        episodeNumber: row.episode_number != null ? Number(row.episode_number) : null,
         genres,
         watchedAt: row.watched_at ?? null,
         completed: Boolean(row.completed),
@@ -205,6 +209,8 @@ export class AchievementEvidenceReader {
       let showTitle: string | null = null;
       let grandparentRatingKey: string | null = null;
       let libraryName: string | null = null;
+      let seasonNumber: number | null = null;
+      let episodeNumber: number | null = null;
       if (row.metadata_json) {
         try {
           const meta = JSON.parse(row.metadata_json);
@@ -212,6 +218,8 @@ export class AchievementEvidenceReader {
           if (meta.showTitle || meta.grandparentTitle) showTitle = String(meta.showTitle || meta.grandparentTitle);
           if (meta.grandparentRatingKey) grandparentRatingKey = String(meta.grandparentRatingKey);
           if (meta.librarySectionTitle) libraryName = String(meta.librarySectionTitle);
+          if (meta.seasonNumber != null) seasonNumber = Number(meta.seasonNumber);
+          if (meta.episodeNumber != null) episodeNumber = Number(meta.episodeNumber);
         } catch {}
       }
 
@@ -226,6 +234,8 @@ export class AchievementEvidenceReader {
         category,
         title: String(row.title_snapshot ?? ''),
         showTitle,
+        seasonNumber,
+        episodeNumber,
         watchedAt: row.event_time ?? null,
         completed: Boolean(row.completed)
       };
@@ -248,12 +258,16 @@ export class AchievementEvidenceReader {
         COALESCE(NULLIF(po.library_name, ''), NULLIF(we.library_name, ''), cat.library_title, gp_cat.library_title) AS resolved_library_name,
         we.title AS we_title,
         we.show_title AS we_show_title,
+        we.season_number AS we_season_number,
+        we.episode_number AS we_episode_number,
         we.watched_at,
         po.id AS observation_id,
         po.grandparent_rating_key AS po_gp_key,
         po.media_type AS po_media_type,
         po.title AS po_title,
         po.show_title AS po_show_title,
+        po.season_number AS po_season_number,
+        po.episode_number AS po_episode_number,
         COALESCE(po.completed, 1) AS completed,
         po.duration,
         po.view_offset,
@@ -312,6 +326,8 @@ export class AchievementEvidenceReader {
             category,
             title: String(row.po_title || row.we_title || ''),
             showTitle: (row.po_show_title || row.we_show_title) ? String(row.po_show_title || row.we_show_title) : null,
+            seasonNumber: (row.po_season_number ?? row.we_season_number) != null ? Number(row.po_season_number ?? row.we_season_number) : null,
+            episodeNumber: (row.po_episode_number ?? row.we_episode_number) != null ? Number(row.po_episode_number ?? row.we_episode_number) : null,
             genres,
             watchedAt: row.watched_at ?? null,
             completed: Boolean(row.completed),
@@ -654,6 +670,10 @@ export class AchievementEvidenceReader {
       if (play.category !== 'tv' && play.category !== 'anime' && play.category !== 'classic_tv') {
         continue;
       }
+      if (play.seasonNumber === 0) {
+        // Exclude Season 0 specials from canonical series progress & show mastery
+        continue;
+      }
       const showKey = play.grandparentRatingKey || play.showTitle || play.title;
       if (!showKey) continue;
       const list = playsByShowKey.get(showKey) ?? [];
@@ -668,7 +688,7 @@ export class AchievementEvidenceReader {
       if (sample.grandparentRatingKey) {
         try {
           catalogRow = this.db.prepare(`
-            SELECT rating_key, title, leaf_count, media_type, library_title, genres_json
+            SELECT rating_key, title, leaf_count, canonical_total_episodes, series_status, media_type, library_title, genres_json
             FROM content_catalog
             WHERE rating_key = ?
           `).get(sample.grandparentRatingKey);
@@ -678,7 +698,7 @@ export class AchievementEvidenceReader {
       if (!catalogRow && sample.showTitle) {
         try {
           catalogRow = this.db.prepare(`
-            SELECT rating_key, title, leaf_count, media_type, library_title, genres_json
+            SELECT rating_key, title, leaf_count, canonical_total_episodes, series_status, media_type, library_title, genres_json
             FROM content_catalog
             WHERE media_type = 'show' AND title = ?
             LIMIT 1
@@ -687,8 +707,20 @@ export class AchievementEvidenceReader {
       }
 
       let totalEpisodes: number | null = null;
-      if (catalogRow?.leaf_count != null && Number(catalogRow.leaf_count) > 0) {
-        totalEpisodes = Number(catalogRow.leaf_count);
+      let availableOnPlex: number | null = null;
+      let missingOffServerCount: number | null = null;
+      const seriesStatus: string | null = catalogRow?.series_status ?? null;
+
+      const leafCount = catalogRow?.leaf_count != null && Number(catalogRow.leaf_count) > 0 ? Number(catalogRow.leaf_count) : null;
+      availableOnPlex = leafCount;
+
+      if (catalogRow?.canonical_total_episodes != null && Number(catalogRow.canonical_total_episodes) > 0) {
+        totalEpisodes = Number(catalogRow.canonical_total_episodes);
+        if (availableOnPlex !== null) {
+          missingOffServerCount = Math.max(0, totalEpisodes - availableOnPlex);
+        }
+      } else if (leafCount !== null) {
+        totalEpisodes = leafCount;
       } else {
         const lookupKey = catalogRow?.rating_key || sample.grandparentRatingKey;
         if (lookupKey) {
@@ -697,9 +729,13 @@ export class AchievementEvidenceReader {
               SELECT COUNT(DISTINCT rating_key) as ep_count
               FROM content_catalog
               WHERE grandparent_rating_key = ? AND media_type = 'episode'
+                AND (parent_title IS NULL OR (parent_title NOT LIKE '%Special%' AND parent_title != 'Season 0'))
             `).get(lookupKey) as any;
             if (countRow?.ep_count > 0) {
               totalEpisodes = Number(countRow.ep_count);
+              if (availableOnPlex === null) {
+                availableOnPlex = totalEpisodes;
+              }
             }
           } catch {}
         }
@@ -719,20 +755,26 @@ export class AchievementEvidenceReader {
         });
 
       const completedEpisodeKeys = new Set<string>();
-      for (const p of allCompletedPlays) {
-        completedEpisodeKeys.add(p.ratingKey);
-      }
-
       const replaysByEpisode = new Map<string, number>();
-      for (const epKey of completedEpisodeKeys) {
-        const rep = replaysByRatingKey.get(epKey);
-        if (rep) replaysByEpisode.set(epKey, rep);
+      for (const p of allCompletedPlays) {
+        const epKey = (p.seasonNumber != null && p.episodeNumber != null)
+          ? `s${p.seasonNumber}e${p.episodeNumber}`
+          : p.ratingKey;
+        completedEpisodeKeys.add(epKey);
+        const rep = replaysByRatingKey.get(p.ratingKey) ?? 0;
+        if (rep > 0) {
+          replaysByEpisode.set(epKey, Math.max(replaysByEpisode.get(epKey) ?? 0, rep));
+        }
       }
 
       let lastCompletedWatchedAt: string | null = null;
-      if (totalEpisodes != null && completedEpisodeKeys.size >= totalEpisodes && allCompletedPlays.length > 0) {
+      const isEnded = seriesStatus ? String(seriesStatus).toLowerCase() === "ended" : true;
+      const isComplete = totalEpisodes != null && completedEpisodeKeys.size >= totalEpisodes && allCompletedPlays.length > 0 && isEnded;
+      if (isComplete) {
         lastCompletedWatchedAt = allCompletedPlays[allCompletedPlays.length - 1]?.watchedAt ?? null;
       }
+
+      const isCaughtUpOnPlex = !isComplete && availableOnPlex !== null && totalEpisodes !== null && completedEpisodeKeys.size >= availableOnPlex && (missingOffServerCount ?? 0) > 0;
 
       let resolvedCategory = sample.category;
       if (catalogRow?.library_title?.toLowerCase().includes('anime')) {
@@ -751,6 +793,10 @@ export class AchievementEvidenceReader {
         showTitle,
         category: resolvedCategory as 'tv' | 'anime' | 'classic_tv',
         totalEpisodes,
+        availableOnPlex,
+        missingOffServerCount,
+        isCaughtUpOnPlex,
+        seriesStatus,
         completedEpisodeKeys,
         allCompletedPlays,
         replaysByEpisode,

@@ -6,12 +6,18 @@ import { nowIso } from "../utils/time.js";
 import { UserService } from "../service/userService.js";
 import { AuditService } from "../service/auditService.js";
 import { isDuplicateWithinWindow } from "./dedupe.js";
+import { isAudiobookMedia } from "../service/audiobookService.js";
 
-export function countsAsCompleted(row: Pick<TautulliHistoryRow, "completed" | "percentComplete" | "viewOffset" | "duration">, threshold = appConfig.WATCH_COMPLETION_THRESHOLD_PERCENT): boolean {
+export function countsAsCompleted(
+  row: Pick<TautulliHistoryRow, "completed" | "percentComplete" | "viewOffset" | "duration"> & { mediaType?: string; media_type?: string },
+  threshold?: number
+): boolean {
   if (row.completed) return true;
-  if (typeof row.percentComplete === "number") return row.percentComplete >= threshold;
+  const isEpisode = row.mediaType === "episode" || (row as any).media_type === "episode";
+  const effectiveThreshold = threshold ?? (isEpisode ? appConfig.WATCH_EPISODE_COMPLETION_THRESHOLD_PERCENT : appConfig.WATCH_COMPLETION_THRESHOLD_PERCENT);
+  if (typeof row.percentComplete === "number") return row.percentComplete >= effectiveThreshold;
   if (typeof row.viewOffset === "number" && typeof row.duration === "number" && row.duration > 0) {
-    return (row.viewOffset / row.duration) * 100 >= threshold;
+    return (row.viewOffset / row.duration) * 100 >= effectiveThreshold;
   }
   return false;
 }
@@ -34,6 +40,13 @@ export class WatcherService {
     if (!row.watchedAt || row.watchedAtProvenance === "unknown") return undefined;
     if (this.hasNearbyDuplicate(source.id, row.ratingKey, row.watchedAt)) return undefined;
 
+    const mediaType = isAudiobookMedia(row) ? "audiobook" : row.mediaType;
+    let promptStatus = "pending";
+    if (mediaType === "audiobook" || row.mediaType === "track") {
+      const settingRow = this.db.prepare("SELECT value FROM app_settings WHERE key = 'prompt_for_audiobooks'").get() as { value: string } | undefined;
+      promptStatus = settingRow?.value === "true" ? "pending" : "none";
+    }
+
     const now = nowIso();
     const result = this.db
       .prepare(
@@ -50,14 +63,14 @@ export class WatcherService {
         row.grandparentRatingKey ?? null,
         row.parentRatingKey ?? null,
         row.plexGuid ?? null,
-        row.mediaType,
+        mediaType,
         row.libraryName ?? null,
         row.title,
         row.showTitle ?? null,
         row.seasonNumber ?? null,
         row.episodeNumber ?? null,
         row.watchedAt,
-        "pending",
+        promptStatus,
         now,
         now
       );
