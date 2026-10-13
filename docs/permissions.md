@@ -21,6 +21,7 @@ Every tool must have a risk level.
 ## Dashboard Actions
 
 - People, person-pairing, and operations endpoints are `public_read` within the localhost dashboard boundary.
+- Achievements evaluation (HTTP `/api/achievements` and CLI `achievements`) is `public_read` within the localhost boundary, computed read-only over canonical evidence without mutations.
 - People attributed contributions are computed read-only and cannot create observations, confirmations, adjudications, prompts, audit writes, or Plex mutations.
 - Prompt dismiss and re-prompt endpoints are `write_action`. Both require explicit confirmation, lifecycle validation, idempotent retry behavior, and audit events.
 - Co-watch review decisions are `write_action`. They default to dry-run and require `apply=true`, explicit confirmation, and a stable request ID before appending an adjudication.

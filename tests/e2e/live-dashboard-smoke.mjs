@@ -49,7 +49,12 @@ try {
       const label = await card.getByTestId("viewer-badge").getAttribute("aria-label");
       if (!label?.includes(",")) continue;
       const cardCategory = await card.getAttribute("data-cat");
-      await card.click();
+      const poster = card.locator(".poster-frame");
+      if (await poster.count() > 0) {
+        await poster.click();
+      } else {
+        await card.click();
+      }
       const cleanLabel = label.replace(/^(Watched by|Together|Likely together) /, "");
       const expectedNames = cleanLabel.split(",").map((name) => name.trim()).filter(Boolean);
       const detailPeople = page.getByTestId("detail-people");

@@ -111,6 +111,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
   created_at TEXT NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log (created_at DESC);
+
 CREATE TABLE IF NOT EXISTS sync_failures (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   action TEXT NOT NULL,
@@ -302,7 +304,9 @@ CREATE TABLE IF NOT EXISTS content_catalog (
   file_path TEXT,
   audiobook_id INTEGER REFERENCES audiobook_books(id),
   last_seen_at TEXT,
-  last_seen_scan_id INTEGER
+  last_seen_scan_id INTEGER,
+  canonical_total_episodes INTEGER,
+  series_status TEXT
 );
 
 INSERT OR IGNORE INTO schema_migrations (version, name)

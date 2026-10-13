@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Db } from "../db/database.js";
-import type { AudiobookProgressEvidenceSource, AudiobookProgressListenerProjection, AudiobookProgressProjectionSet, AudiobookProgressQuality, AudiobookProgressQualityReason, DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket, ProgressHierarchyExpansion, ProgressNodeState, ProgressNodeStateSource, ProgressWatcherEvidence, DashboardDetailIdentity, DashboardDetailIdentityInput, DashboardDetailResolution, DashboardDetailWorkspaceResult, DashboardDetailWorkspaceHierarchyResult, DashboardMovieHistory, DashboardMovieHistoryRow, DashboardArchiveIdentityReview, DashboardPlaybackDigest, DashboardPlaybackDigestChapter, DashboardPlaybackDigestEpisode, DashboardPlaybackDigestSession } from "../types/api.js";
+import type { AudiobookProgressEvidenceSource, AudiobookProgressListenerProjection, AudiobookProgressProjectionSet, AudiobookProgressQuality, AudiobookProgressQualityReason, DashboardActivityItem, DashboardCategory, DashboardTimelineSession, DashboardProgressResponse, DashboardProgressGroup, DashboardProgressPersonContext, DashboardProgressBucket, ProgressHierarchyExpansion, ProgressNodeState, ProgressNodeStateSource, ProgressWatcherEvidence, DashboardDetailIdentity, DashboardDetailIdentityInput, DashboardDetailResolution, DashboardDetailWorkspaceResult, DashboardDetailWorkspaceHierarchyResult, DashboardMovieHistory, DashboardMovieHistoryRow, DashboardArchiveIdentityReview, DashboardPlaybackDigest, DashboardPlaybackDigestChapter, DashboardPlaybackDigestEpisode, DashboardPlaybackDigestEpisodeProgress, DashboardPlaybackDigestMovieProgress, DashboardPlaybackDigestSession } from "../types/api.js";
 import { CowatchingIntelligenceService } from "./cowatchingIntelligenceService.js";
 import { CowatchAdjudicationService } from "./cowatchAdjudicationService.js";
 import { buildDashboardArtworkDescriptor, type DashboardArtworkDescriptor } from "./artworkService.js";
@@ -1136,9 +1136,30 @@ export class DashboardService {
     let resolvedCompletedItems = completedItems;
     let resolvedLatestPercent = latestPercent;
     let currentChapterIndex: number | null | undefined;
+    let availableOnPlex: number | null = null;
+    let canonicalTotalItems: number | null = null;
+    let missingOffServerCount: number | null = null;
+    let isCaughtUpOnPlex = false;
+    let isSeriesComplete = false;
+    let seriesStatus: string | null = null;
+
     if (identity.kind === "series") {
-      const row = this.db.prepare(`SELECT leaf_count FROM content_catalog WHERE rating_key = ? LIMIT 1`).get(identity.grandparentRatingKey) as any;
-      totalItems = row?.leaf_count > 0 ? row.leaf_count : null;
+      const row = this.db.prepare(`SELECT leaf_count, canonical_total_episodes, series_status FROM content_catalog WHERE rating_key = ? LIMIT 1`).get(identity.grandparentRatingKey) as any;
+      const leafCount = row?.leaf_count > 0 ? Number(row.leaf_count) : null;
+      availableOnPlex = leafCount;
+      if (row?.canonical_total_episodes != null && Number(row.canonical_total_episodes) > 0) {
+        canonicalTotalItems = Number(row.canonical_total_episodes);
+        seriesStatus = row.series_status ?? null;
+        totalItems = canonicalTotalItems;
+        missingOffServerCount = Math.max(0, canonicalTotalItems - (leafCount ?? 0));
+        isCaughtUpOnPlex = (leafCount != null && leafCount > 0) &&
+          (resolvedCompletedItems >= leafCount) &&
+          (missingOffServerCount > 0);
+        isSeriesComplete = (resolvedCompletedItems >= canonicalTotalItems) &&
+          (seriesStatus === "ended");
+      } else {
+        totalItems = leafCount;
+      }
     } else if (identity.kind === "audiobook") {
       const verified = audiobookProgress?.hasVerifiedChapters ?? (this.getActiveAudiobookChapterSource(identity.audiobookId) !== null);
       if (verified) {
@@ -1169,6 +1190,14 @@ export class DashboardService {
       sourceVerified,
       ...(quality ? { quality, evidenceSource, qualityReason } : {}),
       ...(identity.kind === "audiobook" ? { currentChapterIndex: currentChapterIndex ?? null } : {}),
+      ...(identity.kind === "series" ? {
+        availableOnPlex,
+        canonicalTotalItems,
+        missingOffServerCount,
+        isCaughtUpOnPlex,
+        isSeriesComplete,
+        seriesStatus
+      } : {}),
       completedItems: resolvedCompletedItems,
       currentPercent: Number.isFinite(percent as number) ? percent : null,
       totalItems
@@ -1242,10 +1271,12 @@ export class DashboardService {
     const total = directTotal + archiveRows.length;
 
     const cowatchMap = new Map<number, { event: any; participant: any }>();
-    if (rows.length > 0) {
-      let minDate = rows[0].watched_at;
-      let maxDate = rows[0].watched_at;
-      for (const row of rows) {
+    if (rows.length > 0 && (input as any)?.includeCowatching !== false) {
+      const cowatchLimit = Math.min(rows.length, Number((input as any)?.cowatchingLimit) || rows.length);
+      const cowatchRows = rows.slice(0, cowatchLimit);
+      let minDate = cowatchRows[0].watched_at;
+      let maxDate = cowatchRows[0].watched_at;
+      for (const row of cowatchRows) {
         if (row.watched_at < minDate) minDate = row.watched_at;
         if (row.watched_at > maxDate) maxDate = row.watched_at;
       }
@@ -1302,14 +1333,14 @@ export class DashboardService {
     return isHouseholdCategory(category) && (!p.category || p.category === category);
   }
 
-  getContinueWatching(input: unknown) {
-    return this.getContinueConsuming({ ...(input as object), offset: 0 }).items;
+  getContinueWatching(input: unknown, preloadedItems?: DashboardActivityItem[]) {
+    return this.getContinueConsuming({ ...(input as object), offset: 0 }, preloadedItems).items;
   }
 
-  getContinueConsuming(input: unknown) {
+  getContinueConsuming(input: unknown, preloadedItems?: DashboardActivityItem[]) {
     const p = parseFilters(input);
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const all = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0, sort: "recent", includeAudiobookProgress: false }).items;
+    const all = preloadedItems ?? this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0, sort: "recent", includeAudiobookProgress: false }).items;
     const groups = new Map<string, any>();
     for (const item of all) {
       if (!isRecognizedExplorerItem(item) || (item.completed && item.category !== "audiobook")) continue;
@@ -1445,7 +1476,13 @@ export class DashboardService {
   getOverview(input: unknown) {
     const timed = withTiming(() => {
       const filters = parseFilters(input);
-      const sampledActivity = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0, includeAudiobookProgress: false });
+      const sampledActivity = this.getActivity({
+        ...(input as object),
+        limit: SUMMARY_SAMPLE_LIMIT,
+        offset: 0,
+        includeAudiobookProgress: false,
+        cowatchingLimit: 48
+      });
       const all = sampledActivity.items;
       const baseActivity = {
         items: this.attachAudiobookSessionProjections(all.slice(0, 48)),
@@ -1626,7 +1663,7 @@ export class DashboardService {
       });
 
       const recentPlayback = this.attachAudiobookSessionProjections(this.buildRecentPlaybackCards(all, 24));
-      const recentPlaybackDigests = this.buildRecentPlaybackDigests(all, 24, observedSecondsByItem);
+      const recentPlaybackDigests = this.buildRecentPlaybackDigests(all.slice(0, 150), 24, observedSecondsByItem);
       const householdActivity = [...householdActivityMap.values()]
         .map((item) => ({
           ...item,
@@ -1665,7 +1702,7 @@ export class DashboardService {
         categories: [...categoryStats.values()].map(s => ({ category: s.category, count: s.plays })),
         users,
         libraries: [...new Set(all.map((item) => item.libraryName).filter(Boolean))].sort(),
-        continueWatching: this.getContinueWatching({ ...(input as object), limit: OVERVIEW_CONTINUE_LIMIT }),
+        continueWatching: this.getContinueWatching({ ...(input as object), limit: OVERVIEW_CONTINUE_LIMIT }, all),
         categoryStats: statsList,
         topTitles: Object.fromEntries(topTitlesByCategory),
         heatmaps: Object.fromEntries(heatmaps),
@@ -2840,6 +2877,12 @@ export class DashboardService {
         let currentProgressPercent: number | null = null;
         let audiobookProgress: AudiobookProgressProjectionSet | undefined;
         let audiobookBook: any = null;
+        let availableOnPlex: number | null = null;
+        let canonicalTotalItems: number | null = null;
+        let missingOffServerCount: number | null = null;
+        let isCaughtUpOnPlex = false;
+        let isSeriesComplete = false;
+        let seriesStatus: string | null = null;
 
         if (first.category === "audiobook") {
           progressUnit = "track";
@@ -2875,13 +2918,28 @@ export class DashboardService {
           progressSourceVerified = true;
           const showKey = first.grandparentRatingKey ?? first.ratingKey;
           const show = this.db.prepare(`
-            SELECT leaf_count
+            SELECT leaf_count, canonical_total_episodes, series_status
             FROM content_catalog
             WHERE rating_key = ?
           `).get(showKey) as any;
           if (show) {
-            totalKnown = Boolean(show.leaf_count && show.leaf_count > 0);
-            totalItems = show.leaf_count || null;
+            const leafCount = (show.leaf_count && show.leaf_count > 0) ? Number(show.leaf_count) : null;
+            availableOnPlex = leafCount;
+            if (show.canonical_total_episodes != null && Number(show.canonical_total_episodes) > 0) {
+              canonicalTotalItems = Number(show.canonical_total_episodes);
+              seriesStatus = show.series_status ?? null;
+              totalKnown = true;
+              totalItems = canonicalTotalItems;
+              missingOffServerCount = Math.max(0, canonicalTotalItems - (leafCount ?? 0));
+              isCaughtUpOnPlex = (leafCount != null && leafCount > 0) &&
+                (g.distinctCompleted.size >= leafCount) &&
+                (missingOffServerCount > 0);
+              isSeriesComplete = (g.distinctCompleted.size >= canonicalTotalItems) &&
+                (seriesStatus === "ended");
+            } else {
+              totalKnown = Boolean(leafCount && leafCount > 0);
+              totalItems = leafCount;
+            }
           }
         } else if (first.category === "movie") {
           progressUnit = "movie";
@@ -2999,7 +3057,13 @@ export class DashboardService {
           observedMinutes: minutesFromSeconds(g.observedSeconds),
           people,
           seasons: g.seasons,
-          hierarchy
+          hierarchy,
+          availableOnPlex,
+          canonicalTotalItems,
+          missingOffServerCount,
+          isCaughtUpOnPlex,
+          isSeriesComplete,
+          seriesStatus
         };
         progressGroups.push(pg);
 
@@ -3050,6 +3114,11 @@ export class DashboardService {
       const recentlyCompletedGroups = progressGroups.filter((g) => {
         if (g.category === "audiobook") {
           return g.audiobookProgress?.listeners.some((listener) => listener.bookCompleted) ?? false;
+        }
+        if (g.category === "tv" || g.category === "classic_tv" || g.category === "anime") {
+          if (g.canonicalTotalItems != null && g.canonicalTotalItems > 0) {
+            return g.distinctCompleted >= g.canonicalTotalItems;
+          }
         }
         return g.completedPlays > 0;
       }).sort((a, b) => b.latestWatchedAt.localeCompare(a.latestWatchedAt));
@@ -4444,6 +4513,7 @@ export class DashboardService {
     const chapterSummary = primary.category === "audiobook" && userId != null
       ? this.buildAudiobookDigestChapterSummary(sorted, userId, displayName)
       : { completedChapters: [], currentChapter: null };
+    const episodic = primary.category === "tv" || primary.category === "classic_tv" || primary.category === "anime";
     return {
       sessionKey,
       userId,
@@ -4460,10 +4530,118 @@ export class DashboardService {
         progressQualityReason: chapterSummary.progressQualityReason,
         audiobookProgress: chapterSummary.audiobookProgress
       } : {}),
-      episodeKeys: primary.category === "tv" || primary.category === "classic_tv" || primary.category === "anime"
+      episodeKeys: episodic
         ? [...new Set(sorted.map((item) => item.ratingKey))]
-        : undefined
+        : undefined,
+      episodeProgress: episodic ? this.buildPlaybackDigestEpisodeProgress(sorted) : undefined,
+      movieProgress: primary.category === "movie" ? this.buildPlaybackDigestMovieProgress(sorted) : undefined
     };
+  }
+
+  private buildPlaybackDigestMovieProgress(items: DashboardActivityItem[]): DashboardPlaybackDigestMovieProgress | undefined {
+    if (!items.length) return undefined;
+    const sorted = [...items].sort((a, b) => b.watchedAt.localeCompare(a.watchedAt) || b.id - a.id);
+    const primary = sorted[0];
+    const usablePercent = (value: number | undefined): number | null => {
+      if (value == null || !Number.isFinite(Number(value)) || Number(value) < 0) return null;
+      return Math.max(0, Math.min(100, Number(value)));
+    };
+    const completed = sorted.some((item) => item.completed);
+    if (completed) {
+      return {
+        ratingKey: primary.ratingKey,
+        title: primary.title,
+        watchedAt: primary.watchedAt,
+        state: "completed",
+        progressPercent: 100,
+        progressSource: "explicit_completion"
+      };
+    }
+    const latestPercent = sorted
+      .map((item) => usablePercent(item.percentComplete))
+      .find((val): val is number => val != null);
+    if (latestPercent != null) {
+      return {
+        ratingKey: primary.ratingKey,
+        title: primary.title,
+        watchedAt: primary.watchedAt,
+        state: "partial",
+        progressPercent: latestPercent,
+        progressSource: "source_percentage"
+      };
+    }
+    return {
+      ratingKey: primary.ratingKey,
+      title: primary.title,
+      watchedAt: primary.watchedAt,
+      state: "unknown",
+      progressPercent: null,
+      progressSource: "unavailable"
+    };
+  }
+
+  private buildPlaybackDigestEpisodeProgress(items: DashboardActivityItem[]): DashboardPlaybackDigestEpisodeProgress[] {
+    type EpisodeProgressAccumulator = {
+      item: DashboardActivityItem;
+      completed: boolean;
+      latestPercent: number | null;
+    };
+    const usablePercent = (value: number | undefined): number | null => {
+      if (value == null || !Number.isFinite(Number(value)) || Number(value) < 0) return null;
+      return Math.max(0, Math.min(100, Number(value)));
+    };
+    const progressByEpisode = new Map<string, EpisodeProgressAccumulator>();
+    const sorted = [...items].sort((a, b) => b.watchedAt.localeCompare(a.watchedAt) || b.id - a.id);
+    for (const item of sorted) {
+      const existing = progressByEpisode.get(item.ratingKey);
+      const percent = usablePercent(item.percentComplete);
+      if (!existing) {
+        progressByEpisode.set(item.ratingKey, {
+          item,
+          completed: item.completed,
+          latestPercent: percent
+        });
+        continue;
+      }
+      existing.completed ||= item.completed;
+      if (existing.latestPercent == null && percent != null) existing.latestPercent = percent;
+    }
+    return [...progressByEpisode.values()].map(({ item, completed, latestPercent }) => {
+      if (completed) {
+        return {
+          ratingKey: item.ratingKey,
+          title: item.title,
+          seasonNumber: item.seasonNumber ?? null,
+          episodeNumber: item.episodeNumber ?? null,
+          watchedAt: item.watchedAt,
+          state: "completed",
+          progressPercent: 100,
+          progressSource: "explicit_completion"
+        } satisfies DashboardPlaybackDigestEpisodeProgress;
+      }
+      if (latestPercent != null) {
+        return {
+          ratingKey: item.ratingKey,
+          title: item.title,
+          seasonNumber: item.seasonNumber ?? null,
+          episodeNumber: item.episodeNumber ?? null,
+          watchedAt: item.watchedAt,
+          state: "partial",
+          progressPercent: latestPercent,
+          progressSource: "source_percentage"
+        } satisfies DashboardPlaybackDigestEpisodeProgress;
+      }
+      return {
+        ratingKey: item.ratingKey,
+        title: item.title,
+        seasonNumber: item.seasonNumber ?? null,
+        episodeNumber: item.episodeNumber ?? null,
+        watchedAt: item.watchedAt,
+        state: "unknown",
+        progressPercent: null,
+        progressSource: "unavailable"
+      } satisfies DashboardPlaybackDigestEpisodeProgress;
+    });
   }
 
   private buildRecentPlaybackDigests(

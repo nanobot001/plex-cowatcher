@@ -30,6 +30,8 @@ export function migrateDatabase(db: Db): void {
   ensureColumn(db, "users", "is_home_user", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "users", "dashboard_alias", "TEXT");
   ensureColumn(db, "users", "dashboard_shown", "INTEGER NOT NULL DEFAULT 1");
+  ensureColumn(db, "content_catalog", "canonical_total_episodes", "INTEGER");
+  ensureColumn(db, "content_catalog", "series_status", "TEXT");
   migrateDashboardPreferences(db);
   migrateAudiobooks(db);
   normalizeAudiobookSeriesTitles(db);
@@ -52,6 +54,15 @@ export function migrateDatabase(db: Db): void {
   migratePlexSupplementalHistoricalRecovery(db);
   migratePlexPlayHistoryRecovery(db);
   migrateAudiobookPositionEvidence(db);
+  migrateAudiobookSoloDefault(db);
+}
+
+function migrateAudiobookSoloDefault(db: Db): void {
+  try {
+    db.prepare("UPDATE watch_events SET prompt_status = 'none' WHERE (media_type IN ('audiobook', 'track') OR library_name LIKE '%audiobook%') AND prompt_status IN ('pending', 'prompted', 'dismissed')").run();
+  } catch (err) {
+    console.warn("Failed to migrate audiobook solo default:", err);
+  }
 }
 
 function migrateCowatchReviewPrompts(db: Db): void {

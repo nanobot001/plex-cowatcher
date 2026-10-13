@@ -477,6 +477,32 @@ export interface DashboardPlaybackDigestChapter {
   progressPercent?: number | null;
 }
 
+export type DashboardPlaybackDigestEpisodeProgressState = "completed" | "partial" | "unknown";
+export type DashboardPlaybackDigestEpisodeProgressSource = "explicit_completion" | "source_percentage" | "unavailable";
+
+export interface DashboardPlaybackDigestEpisodeProgress {
+  ratingKey: string;
+  title: string;
+  seasonNumber: number | null;
+  episodeNumber: number | null;
+  watchedAt: string;
+  state: DashboardPlaybackDigestEpisodeProgressState;
+  progressPercent: number | null;
+  progressSource: DashboardPlaybackDigestEpisodeProgressSource;
+}
+
+export type DashboardPlaybackDigestMovieProgressState = "completed" | "partial" | "unknown";
+export type DashboardPlaybackDigestMovieProgressSource = "explicit_completion" | "source_percentage" | "unavailable";
+
+export interface DashboardPlaybackDigestMovieProgress {
+  ratingKey: string;
+  title: string;
+  watchedAt: string;
+  state: DashboardPlaybackDigestMovieProgressState;
+  progressPercent: number | null;
+  progressSource: DashboardPlaybackDigestMovieProgressSource;
+}
+
 export interface DashboardPlaybackDigestSession {
   sessionKey: string;
   userId: number | null;
@@ -492,6 +518,8 @@ export interface DashboardPlaybackDigestSession {
   progressQualityReason?: AudiobookProgressQualityReason;
   audiobookProgress?: AudiobookProgressProjectionSet;
   episodeKeys?: string[];
+  episodeProgress?: DashboardPlaybackDigestEpisodeProgress[];
+  movieProgress?: DashboardPlaybackDigestMovieProgress;
 }
 
 export interface DashboardPlaybackDigestEpisode {
@@ -607,6 +635,12 @@ export interface DashboardProgressGroup {
     series: string | null;
     book: string | null;
   } | null;
+  availableOnPlex?: number | null;
+  canonicalTotalItems?: number | null;
+  missingOffServerCount?: number | null;
+  isCaughtUpOnPlex?: boolean;
+  isSeriesComplete?: boolean;
+  seriesStatus?: string | null;
 }
 
 export interface DashboardProgressBucket {

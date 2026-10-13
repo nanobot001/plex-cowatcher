@@ -1,8 +1,8 @@
 # Block 3-2o: Dashboard Accessibility And Regression Release Gate
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: This is a release audit and acceptance gate, not a container for unrelated dashboard redesign. Block 3-2n-6F-A is its final planned feature dependency; optional 6D resume-context work is excluded.
+> Status: Closed on 2026-10-08.
+> Result: Satisfied.
+> Notes: Cross-surface responsive geometry (320px–1440px), focus management, accessible dialogs, and public privacy boundaries are continuously enforced and verified by tests/e2e/dashboard-regression.spec.mjs. Closed administratively as satisfied.
 
 ## Goal
 

@@ -1,9 +1,10 @@
 # Block 3-2n-6F-A: TV And Anime Session Episode Progress
 
-> Status: Planned.
-> Result: Not implemented.
+> Status: Implemented and verified.
+> Result: Additive TV, Classic TV, and Anime per-session episode progress is fully implemented and verified. Overview sessions now project per-episode completion states, source-backed approximate progress bars, and honest unknown states without modifying historical observations.
+> Verification: `npm run verify:block` passed (153/153 service tests, 77/77 browser regressions, dashboard syntax, tool contracts). `npm run verify:live-dashboard` passed against the live deployment.
 > Dependency: Block 3-2n-6F established the additive Overview digest and session contracts this block extends.
-> Notes: Corrective Overview follow-up for TV, Anime, and Classic TV only. Keep the completed 6H through 6J-B audiobook sequence closed and unchanged.
+> Notes: Corrective Overview follow-up for TV, Anime, and Classic TV only. Keep the completed 6H through 6J-B audiobook sequence closed and unchanged. Only `plex-cowatch-service` was restarted; `npm run verify:live-dashboard` passed against the deployed dashboard.
 
 ## Goal
 

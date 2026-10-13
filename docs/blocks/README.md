@@ -4,9 +4,9 @@ Blocks are numbered, bounded AI-buildable tickets for code, logic, docs, folder 
 
 ## Active Phase
 
-The project is currently in the Phase 3 refinement set. The canonical audiobook progress sequence through 3-2n-6J-B is implemented and live, and the remaining planning inventory has been reconciled against the larger current system. The selected next implementation block is:
+The project is currently in the Phase 3 refinement set. Blocks 3-2n-6F-A and 3-2n-6F-B are implemented and verified. Gating blocks 3-6-1, 3-7, and 3-2o have been closed. The selected next implementation block is:
 
-- **3-2n-6F-A: TV And Anime Session Episode Progress.** Add only the source-honest per-episode partial/completed/unknown projection to expanded TV, Anime, and Classic TV Overview sessions. Keep ingestion, persistence, historical fabrication, audiobook progress, and broader dashboard redesign out of this block.
+- **Block 3-6-6: Achievements Engine v1** (beginning with child block `3-6-6a-achievement-evidence-and-versioned-rule-contract.md`).
 
 Phase 3 builds on the completed playback-intelligence foundation with domain-specific refinement, richer operator ergonomics, and reporting.
 Blocks 3-2a through 3-2e form one sequential dashboard implementation path:
@@ -71,7 +71,8 @@ Corrective sequence:
    9. `completed/block-3-2n-6e-3b-on-demand-plex-metadata-and-artwork-refresh.md` - implemented and verified; adds confirmed title-scoped Plex metadata/artwork refresh from the shared detail workspace with stable revisions, privacy-safe errors, and regression coverage.
    10. `block-3-2n-6e-3c-plex-historical-movie-backfill.md` - implemented and verified; supplements post-2022 Tautulli history with exact-GUID, explicitly labeled pre-2022 Plex movie evidence, durable raw snapshots, and idempotent CLI apply.
 30. `block-3-2n-6f-overview-playback-digest-cards.md` - implemented Overview QOL follow-up; preserves the existing session-level projection and raw evidence.
-   1. `block-3-2n-6f-a-tv-and-anime-session-episode-progress.md` - planned corrective child; adds source-honest per-episode partial/completed progress to expanded TV, Anime, and Classic TV Overview sessions without changing ingestion or persistence.
+   1. `block-3-2n-6f-a-tv-and-anime-session-episode-progress.md` - implemented corrective child; adds source-honest per-episode partial/completed progress to expanded TV, Anime, and Classic TV Overview sessions without changing ingestion or persistence.
+   2. `block-3-2n-6f-b-movie-session-progress.md` - planned corrective child; adds source-honest per-session progress bars and completion status to expanded Movie Overview sessions matching the episodic and audiobook presentation pattern.
 31. `block-3-2n-6g-audiobook-progress-evidence-repair-and-retroactive-rebuild.md` - implemented audiobook-only corrective block; validates progress evidence, handles cumulative-duration resets with a high-water mark, and rebuilds derived progress without rewriting raw observations.
 32. `block-3-2n-6h-canonical-audiobook-progress-timeline-and-rewind-semantics.md` - implemented and verified; canonical evaluator separates current, furthest, session movement, rewind/revisit, chapter state, and uncertainty.
 33. `block-3-2n-6i-exact-audiobook-position-evidence-capture.md` - implemented, verified, and live; future exact stop evidence is stored additively in `audiobook_position_evidence`.
@@ -85,11 +86,11 @@ Corrective sequence:
    2. `block-3-2n-6d-2-trusted-resume-adapter-and-state.md` - revised to key jobs/results directly to durable 6I evidence.
    3. `block-3-2n-6d-3-stable-stop-worker-and-rollout.md` - revised as bounded reconciliation over durable 6I evidence with separate live enablement.
    4. `block-3-2n-6d-4-audiobook-resume-modal.md` - narrowed to the private stopping-point excerpt extension; canonical progress/chapter UI already exists.
-36. `block-3-2o-dashboard-accessibility-and-regression-gate.md` - rewritten as the final semantic/geometry release audit after 6F-A; optional 6D is excluded.
+36. `block-3-2o-dashboard-accessibility-and-regression-gate.md` - closed as satisfied by the continuous Playwright suite; optional 6D is excluded.
 
 Do not implement a later corrective block until the previous block's exit gate is recorded as passing. A later block must not conceal, waive, or silently absorb a failed earlier acceptance criterion.
 
-The full 3-2m sequence, the 6E shared-detail sequence, 6F/6G, and the canonical audiobook progress sequence 6H/6I/6J-A/6J-B are implemented and verified. Implement 6F-A next. Then complete the narrow 3-6-1 provenance closure and modern Block 3-7 operations acceptance before using 3-2o as the final dashboard release audit. The optional 6D children remain separately selectable and must reuse durable 6I evidence rather than duplicate capture. The pre-implementation reviews are `docs/process/block-3-2n-6e-design-review.md` and `docs/process/block-3-2n-6d-design-review.md`.
+The full 3-2m sequence, the 6E shared-detail sequence, 6F/6G, and the canonical audiobook progress sequence 6H/6I/6J-A/6J-B are implemented and verified. Blocks 6F-A and 6F-B are implemented and verified. Gating blocks 3-6-1, 3-7, and 3-2o are closed. Proceed to Block 3-6-6 Achievements Engine v1. The optional 6D children remain separately selectable and must reuse durable 6I evidence rather than duplicate capture. The pre-implementation reviews are `docs/process/block-3-2n-6e-design-review.md` and `docs/process/block-3-2n-6d-design-review.md`.
 
 ## Umbrella Specifications
 
@@ -149,12 +150,13 @@ The full 3-2m sequence, the 6E shared-detail sequence, 6F/6G, and the canonical 
       1. `block-3-6-5a-versioned-archive-query-contract.md`
       2. `block-3-6-5b-canonical-json-csv-export.md`
       3. `block-3-6-5c-verified-backup-restore-and-disaster-recovery.md`
-   9. `block-3-6-6-achievements-engine-v1.md` - planned umbrella; implement 3-6-6A/B before evidence-eligible rule families.
-      1. `block-3-6-6a-achievement-evidence-and-versioned-rule-contract.md`
-      2. `block-3-6-6b-deterministic-engine-persistence-and-recalculation.md`
-      3. `block-3-6-6c-first-watch-and-watch-count-rules.md`
-      4. `block-3-6-6d-rewatch-and-confirmed-cowatch-rules.md`
-      5. `block-3-6-6e-series-genre-and-library-completion-rules.md` - deferred pending denominator/classification evidence.
+   9. `block-3-6-6-achievements-engine-v1.md` - planned umbrella, restructured 2026-10-09 for Personal Media Showcase & Identity Passport. Compute-on-read, portable module, dashboard prototype. Direction: `docs/design/achievements-product-direction.md`. Implement in order:
+      1. `block-3-6-6a-achievement-evidence-and-versioned-rule-contract.md` - contract, evidence reader, and pure evaluator.
+      2. `block-3-6-6c-first-watch-and-watch-count-rules.md` - volume milestones, genre affinity, obsession spotlight rules + read-only HTTP/CLI contract surface.
+      3. `block-3-6-6d-rewatch-and-confirmed-cowatch-rules.md` - show mastery (Trophy Shelf poster badges), rewatch loyalty ribbons, and shared viewing bonds.
+      4. `block-3-6-6f-achievements-dashboard-prototype.md` - People-card Personal Media Showcase prototype over the public contract.
+      - `block-3-6-6b-deterministic-engine-persistence-and-recalculation.md` - deferred optional earned ledger.
+      - `block-3-6-6e-series-genre-and-library-completion-rules.md` - deferred pending denominator/classification evidence.
 - `block-3-2n-5d-automatic-audiobook-chapter-proof-handoff.md` - planned umbrella.
 - `completed/block-3-2n-5d-1-revision-manifest-and-safe-cache-activation.md` - implemented historical reference.
 - `completed/block-3-2n-5d-2-trusted-external-proof-adapter.md` - implemented historical reference.

@@ -79,7 +79,9 @@ export class SummaryService {
 
     const shows = Array.from(showGroups.entries()).map(([showKey, observations]) => {
       const cachedShow = this.metadataService.getCached(showKey);
-      const totalEpisodes = cachedShow?.leafCount ?? null;
+      const totalEpisodes = (cachedShow?.canonicalTotalEpisodes && cachedShow.canonicalTotalEpisodes > 0)
+        ? cachedShow.canonicalTotalEpisodes
+        : (cachedShow?.leafCount ?? null);
 
       const episodePlaysMap = new Map<string, any[]>();
       for (const obs of observations) {

@@ -62,6 +62,13 @@ import { ArchivePlexViewRecoveryService } from "../dist/service/archivePlexViewR
 import { TautulliBackfillService } from "../dist/service/tautulliBackfillService.js";
 import { PlexMovieIdentityService } from "../dist/service/plexMovieIdentityService.js";
 import { buildCowatchReviewComponents, buildCowatchReviewEmbed } from "../dist/discord/prompts.js";
+import {
+  AchievementEvidenceReader,
+  evaluateSubjectAchievements,
+  evaluateAllAchievements,
+  AchievementService,
+  DEFAULT_ACHIEVEMENT_RULES
+} from "../dist/achievements/index.js";
 
 const tests = [];
 
@@ -551,7 +558,9 @@ test("6J-A service and API consumers share current, furthest, and session-as-of 
       const instance = app.listen(0, "127.0.0.1", () => resolve(instance));
     });
     const base = `http://127.0.0.1:${server.address().port}`;
+    const realDateNow = Date.now;
     try {
+      Date.now = () => new Date("2026-08-20T15:00:00.000Z").getTime();
       const read = async (path) => {
         const response = await fetch(base + path);
         const body = await response.json();
@@ -614,6 +623,7 @@ test("6J-A service and API consumers share current, furthest, and session-as-of 
       assert.equal(tony.completionFacts.completedAudiobookBooks, 0);
       assert.ok(tony.completionFacts.passedAudiobookChapters >= 1);
     } finally {
+      Date.now = realDateNow;
       await new Promise((resolve) => server.close(resolve));
     }
     assert.deepEqual(db.prepare("SELECT * FROM playback_observations ORDER BY id").all(), rawBefore);
@@ -1159,6 +1169,13 @@ test("watch completion uses percent threshold", () => {
   assert.equal(countsAsCompleted({ percentComplete: 42 }, 90), false);
 });
 
+test("watch completion uses episode 80% threshold default while non-episodes require 90%", () => {
+  assert.equal(countsAsCompleted({ percentComplete: 82, mediaType: "episode" }), true);
+  assert.equal(countsAsCompleted({ percentComplete: 78, mediaType: "episode" }), false);
+  assert.equal(countsAsCompleted({ percentComplete: 82, mediaType: "movie" }), false);
+  assert.equal(countsAsCompleted({ percentComplete: 91, mediaType: "movie" }), true);
+});
+
 test("watch completion uses view offset and duration when percent is missing", () => {
   assert.equal(countsAsCompleted({ viewOffset: 90, duration: 100 }, 90), true);
 });
@@ -1241,6 +1258,20 @@ test("Tautulli history rows prefer canonical play_duration without altering its 
   assert.equal(row.percentComplete, 17);
   assert.equal(row.duration, 31142);
   assert.equal(row.viewOffset, undefined);
+});
+
+test("Tautulli history rows preserve unknown timestamp when date and stopped are missing", () => {
+  const row = normalizeTautulliHistoryRow({
+    user: "Tony",
+    rating_key: "movie-missing-time",
+    media_type: "movie",
+    title: "No Timestamp Movie"
+  });
+
+  assert.equal(row.watchedAt, "");
+  assert.equal(row.sessionStartAt, undefined);
+  assert.equal(row.sessionEndAt, undefined);
+  assert.equal(row.watchedAtProvenance, "unknown");
 });
 
 test("dedupe builds stable keys", () => {
@@ -1778,6 +1809,21 @@ test("IngestionService polls recent history and writes to playback_observations 
     const events = db.prepare("SELECT * FROM watch_events").all();
     assert.equal(events.length, 1);
     assert.equal(events[0].rating_key, "movie-1");
+
+    // Audiobooks default to solo ("none")
+    const tonyUser = db.prepare("SELECT id FROM users WHERE plex_username = 'Tony'").get();
+    ingestion.ingestRow(tonyUser.id, {
+      user: "Tony",
+      ratingKey: "audiobook-solo-1",
+      mediaType: "audiobook",
+      title: "Audiobook Solo Chapter",
+      watchedAt: "2026-05-30T22:00:00.000Z",
+      percentComplete: 100,
+      duration: 3600
+    });
+    const abEvent = db.prepare("SELECT * FROM watch_events WHERE rating_key = 'audiobook-solo-1'").get();
+    assert.ok(abEvent);
+    assert.equal(abEvent.prompt_status, "none");
   });
 });
 
@@ -2390,7 +2436,7 @@ test("CowatchingIntelligenceService infers co-watching from overlapping play tim
     `).run(viewerId);
 
     const service = new CowatchingIntelligenceService(db);
-    const events = service.getCowatchingEvents({ days: 100 });
+    const events = service.getCowatchingEvents({ days: 365 });
 
     assert.equal(events.length, 1);
     const event = events[0];
@@ -2450,7 +2496,7 @@ test("CowatchingIntelligenceService respects explicit Discord confirmations", as
     `).run(watchEventId, user3Id);
 
     const service = new CowatchingIntelligenceService(db);
-    const events = service.getCowatchingEvents({ days: 100 });
+    const events = service.getCowatchingEvents({ days: 365 });
 
     assert.equal(events.length, 1);
     const event = events[0];
@@ -2502,7 +2548,7 @@ test("CowatchingIntelligenceService handles non-qualifying overlap, missing timi
     `).run(user3Id);
 
     const service = new CowatchingIntelligenceService(db);
-    const events = service.getCowatchingEvents({ days: 100 });
+    const events = service.getCowatchingEvents({ days: 365 });
 
     // There should be 1 event (Tony & User 3). Viewer is not qualifying so they shouldn't be in the participants list.
     assert.equal(events.length, 1);
@@ -3328,9 +3374,9 @@ test("overview playback digests use category-aware daily grouping and episode ar
       (rating_key, media_type, title, library_title, leaf_count, source_provenance, refreshed_at)
       VALUES ('digest-show', 'show', 'Digest Show', 'TV Shows', 2, 'fixture', ?)`).run(refresh);
     for (const [ratingKey, title, episodeNumber] of [["digest-ep-1", "Episode One", 1], ["digest-ep-2", "Episode Two", 2]]) {
-      db.prepare(`INSERT INTO content_catalog
-        (rating_key, media_type, title, library_title, grandparent_rating_key, grandparent_title, parent_title, parent_rating_key, source_provenance, refreshed_at)
-        VALUES (?, 'episode', ?, 'TV Shows', 'digest-show', 'Digest Show', 'Season 1', 'digest-season-1', 'fixture', ?)`).run(ratingKey, title, refresh);
+    db.prepare(`INSERT INTO content_catalog
+      (rating_key, media_type, title, library_title, grandparent_rating_key, grandparent_title, parent_title, parent_rating_key, source_provenance, refreshed_at)
+      VALUES (?, 'episode', ?, 'TV Shows', 'digest-show', 'Digest Show', 'Season 1', 'digest-season-1', 'fixture', ?)`).run(ratingKey, title, refresh);
     }
     const insert = db.prepare(`INSERT INTO playback_observations
       (user_id, rating_key, grandparent_rating_key, parent_rating_key, media_type, library_name, title, show_title, watched_at, percent_complete, duration, completed, created_at, updated_at)
@@ -3339,8 +3385,11 @@ test("overview playback digests use category-aware daily grouping and episode ar
     insert.run(users.Tony, "digest-track", null, null, "track", "Audiobooks", "Digest Track", "Digest Author", "2026-07-25T10:30:00.000Z", 25, 600000, 0, refresh, refresh);
     insert.run(users.Viewer, "digest-track", null, null, "track", "Audiobooks", "Digest Track", "Digest Author", "2026-07-25T10:20:00.000Z", 15, 600000, 0, refresh, refresh);
     insert.run(users.Tony, "digest-track", null, null, "track", "Audiobooks", "Digest Track", "Digest Author", "2026-07-26T10:00:00.000Z", 30, 600000, 0, refresh, refresh);
-    insert.run(users.Tony, "digest-ep-1", "digest-show", "digest-season-1", "episode", "TV Shows", "Episode One", "Digest Show", "2026-07-25T12:00:00.000Z", 100, 1800000, 1, refresh, refresh);
-    insert.run(users.Tony, "digest-ep-2", "digest-show", "digest-season-1", "episode", "TV Shows", "Episode Two", "Digest Show", "2026-07-25T13:00:00.000Z", 50, 1800000, 0, refresh, refresh);
+    insert.run(users.Tony, "digest-ep-2", "digest-show", "digest-season-1", "episode", "TV Shows", "Episode Two", "Digest Show", "2026-07-25T12:00:00.000Z", 25, 1800000, 0, refresh, refresh);
+    insert.run(users.Tony, "digest-ep-2", "digest-show", "digest-season-1", "episode", "TV Shows", "Episode Two", "Digest Show", "2026-07-25T12:30:00.000Z", 50, 1800000, 0, refresh, refresh);
+    insert.run(users.Tony, "digest-ep-3", "digest-show", "digest-season-1", "episode", "TV Shows", "Episode Three", "Digest Show", "2026-07-25T13:00:00.000Z", null, 1800000, 0, refresh, refresh);
+    insert.run(users.Tony, "digest-ep-4", "digest-show", "digest-season-1", "episode", "TV Shows", "Episode Four", "Digest Show", "2026-07-25T13:30:00.000Z", 100, 1800000, 0, refresh, refresh);
+    insert.run(users.Tony, "digest-ep-1", "digest-show", "digest-season-1", "episode", "TV Shows", "Episode One", "Digest Show", "2026-07-25T13:45:00.000Z", 100, 1800000, 1, refresh, refresh);
 
     const overview = new DashboardService(db, { timeZone: "UTC" }).getOverview({});
     const audiobookDigests = overview.recentPlaybackDigests.filter((digest) => digest.category === "audiobook");
@@ -3351,8 +3400,17 @@ test("overview playback digests use category-aware daily grouping and episode ar
     const showDigest = overview.recentPlaybackDigests.find((digest) => digest.category === "tv");
     assert.ok(showDigest);
     assert.equal(showDigest.localDate, "2026-07-25");
-    assert.equal(showDigest.episodes.length, 2);
+    assert.equal(showDigest.episodes.length, 4);
     assert.match(showDigest.episodes[0].posterUrl, /^\/api\/artwork\/digest-ep-/);
+    const session = showDigest.sessions[0];
+    assert.deepEqual(session.episodeKeys, ["digest-ep-1", "digest-ep-4", "digest-ep-3", "digest-ep-2"]);
+    assert.deepEqual(session.episodeProgress.map((episode) => episode.ratingKey), session.episodeKeys);
+    assert.deepEqual(session.episodeProgress.map((episode) => [episode.ratingKey, episode.state, episode.progressPercent, episode.progressSource]), [
+      ["digest-ep-1", "completed", 100, "explicit_completion"],
+      ["digest-ep-4", "partial", 100, "source_percentage"],
+      ["digest-ep-3", "unknown", null, "unavailable"],
+      ["digest-ep-2", "partial", 50, "source_percentage"]
+    ]);
   });
 });
 
@@ -3388,6 +3446,70 @@ test("audiobook digest sessions expose verified completed and current chapters",
     assert.deepEqual(digest.sessions[0].completedChapters.map((chapter) => chapter.title), ["Digest Chapter 1"]);
     assert.equal(digest.sessions[0].currentChapter.title, "Digest Chapter 2");
     assert.deepEqual(digest.sessions[1].completedChapters.map((chapter) => chapter.title), ["Digest Chapter 1", "Digest Chapter 2"]);
+  });
+});
+
+test("movie digest sessions expose source-honest movie progress projection", () => {
+  withTestDb((db) => {
+    seedUsers(db);
+    const tony = db.prepare("SELECT id FROM users WHERE plex_username = 'Tony'").get();
+    const refresh = "2026-07-25T00:00:00.000Z";
+    const insert = db.prepare(`INSERT INTO playback_observations
+      (user_id, rating_key, grandparent_rating_key, parent_rating_key, media_type, library_name, title, show_title, watched_at, percent_complete, duration, completed, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+
+    insert.run(tony.id, "movie-partial", null, null, "movie", "Movies", "Partial Movie", null, "2026-07-25T10:00:00.000Z", 65, 7200000, 0, refresh, refresh);
+    insert.run(tony.id, "movie-full-incomplete", null, null, "movie", "Movies", "Full Incomplete Movie", null, "2026-07-25T14:00:00.000Z", 100, 7200000, 0, refresh, refresh);
+    insert.run(tony.id, "movie-unknown", null, null, "movie", "Movies", "Unknown Movie", null, "2026-07-25T18:00:00.000Z", null, 7200000, 0, refresh, refresh);
+    insert.run(tony.id, "movie-completed", null, null, "movie", "Movies", "Completed Movie", null, "2026-07-25T20:00:00.000Z", 40, 7200000, 0, refresh, refresh);
+    insert.run(tony.id, "movie-completed", null, null, "movie", "Movies", "Completed Movie", null, "2026-07-25T21:00:00.000Z", 100, 7200000, 1, refresh, refresh);
+
+    const overview = new DashboardService(db, { timeZone: "UTC" }).getOverview({});
+    const movieDigests = overview.recentPlaybackDigests.filter((digest) => digest.category === "movie");
+
+    const partialDigest = movieDigests.find((d) => d.title === "Partial Movie");
+    assert.ok(partialDigest);
+    assert.deepEqual(partialDigest.sessions[0].movieProgress, {
+      ratingKey: "movie-partial",
+      title: "Partial Movie",
+      watchedAt: "2026-07-25T10:00:00.000Z",
+      state: "partial",
+      progressPercent: 65,
+      progressSource: "source_percentage"
+    });
+
+    const fullIncompleteDigest = movieDigests.find((d) => d.title === "Full Incomplete Movie");
+    assert.ok(fullIncompleteDigest);
+    assert.deepEqual(fullIncompleteDigest.sessions[0].movieProgress, {
+      ratingKey: "movie-full-incomplete",
+      title: "Full Incomplete Movie",
+      watchedAt: "2026-07-25T14:00:00.000Z",
+      state: "partial",
+      progressPercent: 100,
+      progressSource: "source_percentage"
+    });
+
+    const unknownDigest = movieDigests.find((d) => d.title === "Unknown Movie");
+    assert.ok(unknownDigest);
+    assert.deepEqual(unknownDigest.sessions[0].movieProgress, {
+      ratingKey: "movie-unknown",
+      title: "Unknown Movie",
+      watchedAt: "2026-07-25T18:00:00.000Z",
+      state: "unknown",
+      progressPercent: null,
+      progressSource: "unavailable"
+    });
+
+    const completedDigest = movieDigests.find((d) => d.title === "Completed Movie");
+    assert.ok(completedDigest);
+    assert.deepEqual(completedDigest.sessions[0].movieProgress, {
+      ratingKey: "movie-completed",
+      title: "Completed Movie",
+      watchedAt: "2026-07-25T21:00:00.000Z",
+      state: "completed",
+      progressPercent: 100,
+      progressSource: "explicit_completion"
+    });
   });
 });
 
@@ -4645,6 +4767,108 @@ test("dashboard HTTP routes preserve privacy, CSV streaming, and confirmed promp
       assert.match(copyPage,/api\/dashboard\/users/);
       assert.match(copyPage,/<th>Select<\/th>/);
       assert.match(copyPage,/row-select/);
+      const promptsPage = await (await fetch(base+"/prompts")).text();
+      assert.match(promptsPage, /Review Unaddressed Prompts/);
+      assert.match(promptsPage, /id="filterSort"/);
+      assert.match(promptsPage, /id="btn-bulk-confirm"/);
+      assert.match(promptsPage, /sticky-bulk-bar/);
+      assert.match(promptsPage, /id="btn-cowatchers-toggle"/);
+      assert.match(promptsPage, /id="cowatchers-dropdown"/);
+      assert.match(promptsPage, /id="bulkChangeStreamerSelect"/);
+      assert.match(promptsPage, /id="btn-bulk-change-streamer"/);
+      assert.match(promptsPage, /id="change-streamer-dialog"/);
+      const achievementsPage = await (await fetch(base+"/achievements")).text();
+      assert.match(achievementsPage, /Personal Media Passport/);
+      assert.match(achievementsPage, /id="user-tabs"/);
+      assert.match(achievementsPage, /id="user-bubbles-container"/);
+      assert.match(achievementsPage, /id="sort-badges-select"/);
+      assert.match(achievementsPage, /id="trophy-grid"/);
+      assert.match(achievementsPage, /id="btn-refresh-achievements"/);
+      const promptsApi = await (await fetch(base+"/api/dashboard/prompts?status=all")).json();
+      assert.equal(promptsApi.ok, true);
+      assert.ok(promptsApi.total >= 1);
+      assert.equal(promptsApi.items[0].rating_key, "movie-http");
+
+      // Multi-person co-watch confirmation on a dedicated watch event
+      const multiEvent = db.prepare(`INSERT INTO watch_events
+        (source_user_id,rating_key,media_type,title,watched_at,prompt_status,created_at,updated_at)
+        VALUES (?, 'movie-multi', 'movie', 'Multi Movie', ?, 'pending', ?, ?)`).run(user.id,now,now,now);
+      db.prepare("UPDATE users SET plex_user_id = 'plex-' || id WHERE plex_user_id IS NULL").run();
+      const allUsers = db.prepare("SELECT id FROM users WHERE enabled = 1 LIMIT 2").all();
+      const multiConfirm = await (await fetch(base+"/api/dashboard/prompts/bulk-resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          watchEventIds: [Number(multiEvent.lastInsertRowid)],
+          action: "confirm",
+          targetUserIds: allUsers.map(u => u.id)
+        })
+      })).json();
+      assert.equal(multiConfirm.ok, true);
+      assert.equal(multiConfirm.data.successCount, 1);
+      const confCount = db.prepare("SELECT COUNT(*) as c FROM cowatch_confirmations WHERE watch_event_id = ?").get(multiEvent.lastInsertRowid).c;
+      assert.equal(confCount, allUsers.length);
+
+      // Change streamer on multiEvent to allUsers[1].id
+      const changeStreamerRes = await (await fetch(base+"/api/dashboard/prompts/change-streamer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          watchEventIds: [Number(multiEvent.lastInsertRowid)],
+          newSourceUserId: allUsers[1].id
+        })
+      })).json();
+      assert.equal(changeStreamerRes.ok, true);
+      assert.equal(changeStreamerRes.data.updatedCount, 1);
+      const updatedEvent = db.prepare("SELECT source_user_id FROM watch_events WHERE id = ?").get(multiEvent.lastInsertRowid);
+      assert.equal(updatedEvent.source_user_id, allUsers[1].id);
+      // Ensure self-confirmation for the new streamer is removed
+      const selfConf = db.prepare("SELECT COUNT(*) as c FROM cowatch_confirmations WHERE watch_event_id = ? AND target_user_id = ?").get(multiEvent.lastInsertRowid, allUsers[1].id).c;
+      assert.equal(selfConf, 0);
+
+      // Single prompt change-streamer endpoint
+      const singleChangeRes = await (await fetch(base+"/api/dashboard/prompts/" + Number(multiEvent.lastInsertRowid) + "/change-streamer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newSourceUserId: user.id })
+      })).json();
+      assert.equal(singleChangeRes.ok, true);
+      assert.equal(singleChangeRes.data.newSourceUserId, user.id);
+      const reUpdatedEvent = db.prepare("SELECT source_user_id FROM watch_events WHERE id = ?").get(multiEvent.lastInsertRowid);
+      assert.equal(reUpdatedEvent.source_user_id, user.id);
+
+      const bulkDismiss = await (await fetch(base+"/api/dashboard/prompts/bulk-resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          watchEventIds: [Number(event.lastInsertRowid)],
+          action: "dismiss"
+        })
+      })).json();
+      assert.equal(bulkDismiss.ok, true);
+      assert.equal(bulkDismiss.data.successCount, 1);
+      const bulkSolo = await (await fetch(base+"/api/dashboard/prompts/bulk-resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          watchEventIds: [Number(event.lastInsertRowid)],
+          action: "none"
+        })
+      })).json();
+      assert.equal(bulkSolo.ok, true);
+      assert.equal(bulkSolo.data.successCount, 1);
+      const confCountAfterSolo = db.prepare("SELECT COUNT(*) as c FROM cowatch_confirmations WHERE watch_event_id = ?").get(event.lastInsertRowid).c;
+      assert.equal(confCountAfterSolo, 0);
+      const promptsSolo = await (await fetch(base+"/api/dashboard/prompts?status=none")).json();
+      assert.equal(promptsSolo.ok, true);
+      assert.ok(promptsSolo.items.some((i) => i.id === Number(event.lastInsertRowid) && i.prompt_status === "none"));
+      const singleNone = await (await fetch(base+"/api/dashboard/prompts/" + Number(event.lastInsertRowid) + "/none", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: true })
+      })).json();
+      assert.equal(singleNone.ok, true);
+      assert.equal(singleNone.data.status, "none");
       const overview = await (await fetch(base+"/api/dashboard/overview")).json();
       assert.equal(overview.ok,true);
       assert.equal(overview.data.totals.plays,1);
@@ -6654,8 +6878,1056 @@ test("canonical Plex movie identity repair is exact-GUID, dry-run safe, idempote
   });
 });
 
+test("3-6-6A catalog expresses all families with badge descriptors and pure evaluator determinism", () => {
+  const rules = [
+    {
+      ruleId: "first_film",
+      version: 1,
+      family: "first_watch",
+      unit: "movie",
+      threshold: 1,
+      scope: { category: "movie" },
+      badge: {
+        badgeKey: "first_film",
+        tier: "bronze",
+        title: "First Film",
+        description: "Watched your first movie"
+      }
+    },
+    {
+      ruleId: "movie_buff_5",
+      version: 1,
+      family: "watch_count",
+      unit: "movie",
+      threshold: 5,
+      scope: { category: "movie" },
+      badge: {
+        badgeKey: "movie_buff",
+        tier: "silver",
+        title: "Movie Buff 5",
+        description: "Watched 5 movies"
+      }
+    },
+    {
+      ruleId: "rewatch_veteran_2",
+      version: 1,
+      family: "rewatch",
+      unit: "movie",
+      threshold: 2,
+      scope: { category: "movie" },
+      badge: {
+        badgeKey: "rewatcher",
+        tier: "gold",
+        title: "Rewatch Veteran",
+        description: "Rewatched 2 movies"
+      }
+    },
+    {
+      ruleId: "cowatch_party_3",
+      version: 1,
+      family: "confirmed_cowatch",
+      unit: "session",
+      threshold: 3,
+      badge: {
+        badgeKey: "cowatch_trio",
+        tier: "gold",
+        title: "Movie Night Trio",
+        description: "Watched 3 movies together"
+      }
+    },
+    {
+      ruleId: "series_finisher",
+      version: 1,
+      family: "completion",
+      unit: "episode",
+      threshold: 10,
+      badge: {
+        badgeKey: "series_complete",
+        tier: "platinum",
+        title: "Series Finisher",
+        description: "Completed an entire series"
+      }
+    }
+  ];
 
+  const subject1 = {
+    userId: 1,
+    username: "Tony",
+    displayName: "Tony",
+    plays: [
+      {
+        id: 10,
+        sourceKind: "playback_observation",
+        userId: 1,
+        ratingKey: "m-1",
+        mediaType: "movie",
+        category: "movie",
+        title: "Movie 1",
+        watchedAt: "2026-08-01T12:00:00Z",
+        completed: true
+      },
+      {
+        id: 11,
+        sourceKind: "playback_observation",
+        userId: 1,
+        ratingKey: "m-2",
+        mediaType: "movie",
+        category: "movie",
+        title: "Movie 2",
+        watchedAt: "2026-08-02T12:00:00Z",
+        completed: true
+      },
+      {
+        id: 12,
+        sourceKind: "playback_observation",
+        userId: 1,
+        ratingKey: "m-3",
+        mediaType: "movie",
+        category: "movie",
+        title: "Movie 3",
+        watchedAt: "2026-08-03T12:00:00Z",
+        completed: true
+      }
+    ],
+    replaysByRatingKey: new Map([["m-1", 2]]),
+    replayEvidenceByRatingKey: new Map([
+      ["m-1", [{ kind: "playback_observation", id: 13, eventTime: "2026-08-05T12:00:00Z", title: "Movie 1 Replay" }]]
+    ]),
+    confirmedCoWatches: [],
+    completedAudiobookCount: 0,
+    hasInferredCoWatchOnly: true,
+    hasUnknownDenominator: true
+  };
 
+  const context = { timezone: "America/New_York", nowIso: "2026-10-09T00:00:00Z" };
+  const results = evaluateSubjectAchievements(rules, subject1, context);
+
+  // 1. First watch: earned with crossing date
+  const firstFilm = results.find((r) => r.ruleId === "first_film");
+  assert.equal(firstFilm.state, "earned");
+  assert.equal(firstFilm.earnedAt, "2026-08-01T12:00:00Z");
+  assert.equal(firstFilm.supportingEvidence.length, 1);
+
+  // 2. Watch count: in_progress with 3 of 5
+  const movieBuff = results.find((r) => r.ruleId === "movie_buff_5");
+  assert.equal(movieBuff.state, "in_progress");
+  assert.equal(movieBuff.progress.current, 3);
+  assert.equal(movieBuff.progress.target, 5);
+
+  // 3. Rewatch: earned with 2 replays
+  const rewatcher = results.find((r) => r.ruleId === "rewatch_veteran_2");
+  assert.equal(rewatcher.state, "earned");
+  assert.equal(rewatcher.progress.current, 2);
+
+  // 4. Confirmed co-watch: blocked because user has only inferred co-watch evidence
+  const cowatch = results.find((r) => r.ruleId === "cowatch_party_3");
+  assert.equal(cowatch.state, "blocked");
+  assert.ok(cowatch.reason.includes("Inferred co-watching cannot satisfy"));
+
+  // 5. Completion: unknown because denominator is unknown
+  const finisher = results.find((r) => r.ruleId === "series_finisher");
+  assert.equal(finisher.state, "unknown");
+  assert.ok(finisher.reason.includes("Unknown denominator"));
+
+  // 6. Determinism: identical input yields byte-identical output
+  const watermark = { maxObservationId: 100, maxArchiveEventId: 50, maxConfirmationId: 10, maxAdjudicationId: 5 };
+  const payload1 = evaluateAllAchievements(rules, [subject1], watermark, context);
+  const payload2 = evaluateAllAchievements(rules, [subject1], watermark, context);
+  assert.deepEqual(payload1, payload2);
+  assert.equal(JSON.stringify(payload1), JSON.stringify(payload2));
+
+  // 7. Missing/null timestamp yields earnedAt = null without failure
+  const nullDateSubject = {
+    ...subject1,
+    plays: [{ ...subject1.plays[0], watchedAt: null }]
+  };
+  const nullDateResults = evaluateSubjectAchievements(rules, nullDateSubject, context);
+  const nullDateFirstFilm = nullDateResults.find((r) => r.ruleId === "first_film");
+  assert.equal(nullDateFirstFilm.state, "earned");
+  assert.equal(nullDateFirstFilm.earnedAt, null);
+});
+
+test("3-6-6A evidence reader extracts canonical merged plays, honors replay semantics, and deduplicates linked archive events", async () => {
+  await withTestDb(async (db) => {
+    // Seed users: Tony (visible) and Secret (hidden)
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+             (2, 'Secret', 'Secret', 0, 0, 1, 0, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // Tony direct observations
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (1, 1, 'movie-1', 'movie', 'Movies', 'Inception', '2026-08-01T10:00:00Z', 1, 7200, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z'),
+             (2, 1, 'movie-1', 'movie', 'Movies', 'Inception', '2026-08-02T10:00:00Z', 1, 7200, '2026-08-02T10:00:00Z', '2026-08-02T10:00:00Z'),
+             (3, 2, 'movie-2', 'movie', 'Movies', 'Interstellar', '2026-08-01T10:00:00Z', 1, 7200, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z')
+    `).run();
+
+    // Archive events
+    db.prepare(`
+      INSERT INTO archive_watch_events (id, user_id, source, source_record_key, title_snapshot, event_time, event_time_precision, completed, resolution_status, captured_at)
+      VALUES (101, 1, 'plex_api_history', 'plex-rec-1', 'Inception', '2026-08-01T10:00:00Z', 'second', 1, 'resolved', '2026-08-01T10:00:00Z'),
+             (102, 1, 'plex_api_history', 'plex-rec-2', 'The Prestige', '2026-08-03T10:00:00Z', 'second', 1, 'resolved', '2026-08-03T10:00:00Z')
+    `).run();
+
+    // Link archive event 101 to observation 1 (duplicate/same_event)
+    db.prepare(`
+      INSERT INTO archive_observation_links (archive_event_id, playback_observation_id, relation, method, confidence, created_at)
+      VALUES (101, 1, 'same_event', 'exact_timestamp', 'high', '2026-08-01T10:00:00Z')
+    `).run();
+
+    const reader = new AchievementEvidenceReader(db);
+    const watermark = reader.getWatermark();
+    assert.equal(watermark.maxObservationId, 3);
+    assert.equal(watermark.maxArchiveEventId, 102);
+
+    const subjects = reader.readAllSubjects();
+
+    // Hidden listener (Secret) must be completely absent from results
+    assert.equal(subjects.length, 1);
+    assert.equal(subjects[0].userId, 1);
+
+    const tony = subjects[0];
+    // Plays: observation 1, observation 2, and unlinked archive event 102.
+    // Archive event 101 MUST NOT be present because it is linked as same_event.
+    assert.equal(tony.plays.length, 3);
+    assert.ok(tony.plays.some((p) => p.title === "The Prestige"));
+    assert.equal(tony.plays.filter((p) => p.title === "Inception").length, 2);
+
+    // Replay semantics: Inception watched on 2 separate days yields 1 replay
+    assert.equal(tony.replaysByRatingKey.get("movie-1"), 1);
+
+    const rule = {
+      ruleId: "rewatch_1",
+      version: 1,
+      family: "rewatch",
+      unit: "movie",
+      threshold: 1,
+      badge: { badgeKey: "rewatch_1", tier: "bronze", title: "Rewatcher", description: "Rewatched 1 movie" }
+    };
+
+    const results = evaluateSubjectAchievements([rule], tony, { timezone: "UTC" });
+    assert.equal(results[0].state, "earned");
+  });
+});
+
+test("3-6-6A evidence reader reconciles Discord and browser co-watch confirmations and supports retraction", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+             (2, 'Viewer', 'Viewer', 0, 1, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 1. Discord confirmation: 1 confirmed co-watch
+    db.prepare(`
+      INSERT INTO watch_events (id, source_user_id, rating_key, media_type, title, watched_at, created_at, updated_at)
+      VALUES (1, 1, 'movie-cowatch-1', 'movie', 'Together 1', '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z')
+    `).run();
+    db.prepare(`
+      INSERT INTO cowatch_confirmations (id, watch_event_id, target_user_id, confirmation_method, status, created_at, updated_at)
+      VALUES (1, 1, 2, 'discord_button', 'confirmed', '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z')
+    `).run();
+
+    const reader = new AchievementEvidenceReader(db);
+    let subjects = reader.readAllSubjects();
+    assert.equal(subjects.find((s) => s.userId === 1).confirmedCoWatches.length, 1);
+    assert.equal(subjects.find((s) => s.userId === 2).confirmedCoWatches.length, 1);
+
+    const cowatchRule = {
+      ruleId: "cowatch_2",
+      version: 1,
+      family: "confirmed_cowatch",
+      unit: "session",
+      threshold: 2,
+      badge: { badgeKey: "cowatch_2", tier: "silver", title: "Double Co-watch", description: "Watched 2 movies together" }
+    };
+
+    // Before second co-watch: in_progress (1/2)
+    let results = evaluateSubjectAchievements([cowatchRule], subjects.find((s) => s.userId === 1), { timezone: "UTC" });
+    assert.equal(results[0].state, "in_progress");
+    assert.equal(results[0].progress.current, 1);
+
+    // 2. Browser adjudication: candidate-A decision='yes'
+    db.prepare(`
+      INSERT INTO cowatch_adjudications (id, candidate_id, source_user_id, target_user_id, rating_key, rule_version, supporting_observation_ids_json, decision, actor_kind, method, request_id, created_at)
+      VALUES (1, 'cand-1', 1, 2, 'movie-cowatch-2', 'v1', '[]', 'yes', 'operator', 'browser', 'req-1', '2026-08-02T10:00:00Z')
+    `).run();
+
+    subjects = reader.readAllSubjects();
+    assert.equal(subjects.find((s) => s.userId === 1).confirmedCoWatches.length, 2);
+    results = evaluateSubjectAchievements([cowatchRule], subjects.find((s) => s.userId === 1), { timezone: "UTC" });
+    assert.equal(results[0].state, "earned");
+    assert.equal(results[0].progress.current, 2);
+
+    // 3. Retraction: browser adjudication decision='clear'
+    db.prepare(`
+      INSERT INTO cowatch_adjudications (id, candidate_id, source_user_id, target_user_id, rating_key, rule_version, supporting_observation_ids_json, decision, actor_kind, method, request_id, created_at)
+      VALUES (2, 'cand-1', 1, 2, 'movie-cowatch-2', 'v1', '[]', 'clear', 'operator', 'browser', 'req-2', '2026-08-03T10:00:00Z')
+    `).run();
+
+    // Next read immediately drops back to 1 confirmed co-watch without sticky persistence
+    subjects = reader.readAllSubjects();
+    assert.equal(subjects.find((s) => s.userId === 1).confirmedCoWatches.length, 1);
+    results = evaluateSubjectAchievements([cowatchRule], subjects.find((s) => s.userId === 1), { timezone: "UTC" });
+    assert.equal(results[0].state, "in_progress");
+    assert.equal(results[0].progress.current, 1);
+  });
+});
+
+test("3-6-6A isolated achievements module has zero imports from dashboard services, server, or web", () => {
+  const dir = path.resolve("src/achievements");
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith(".ts"));
+  assert.ok(files.length >= 3);
+
+  const forbiddenImports = [
+    "dashboardService",
+    "src/server",
+    "src/web",
+    "express"
+  ];
+
+  for (const file of files) {
+    const content = fs.readFileSync(path.join(dir, file), "utf8");
+    for (const forbidden of forbiddenImports) {
+      assert.ok(
+        !content.includes(forbidden),
+        `File src/achievements/${file} must not import from '${forbidden}'`
+      );
+    }
+  }
+});
+
+test("3-6-6C Volume Milestones: counts distinct items and NEVER counts audiobook observations as books", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 10 distinct movies
+    for (let i = 1; i <= 10; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'movie', 'Movies', ?, '2026-08-01T10:00:00Z', 1, 7200, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z')
+      `).run(i, `movie-${i}`, `Movie ${i}`);
+    }
+
+    // 25 distinct TV episodes
+    for (let i = 1; i <= 25; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'episode', 'TV Shows', ?, 'Breaking Bad', '2026-08-02T10:00:00Z', 1, 3000, '2026-08-02T10:00:00Z', '2026-08-02T10:00:00Z')
+      `).run(10 + i, `tv-ep-${i}`, `Episode ${i}`);
+    }
+
+    // 25 distinct Anime episodes
+    for (let i = 1; i <= 25; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'episode', 'Anime', ?, 'Frieren', '2026-08-03T10:00:00Z', 1, 1440, '2026-08-03T10:00:00Z', '2026-08-03T10:00:00Z')
+      `).run(35 + i, `anime-ep-${i}`, `Anime Episode ${i}`);
+    }
+
+    // 50 audiobook track observations (NO completed books)
+    for (let i = 1; i <= 50; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'track', 'Audiobooks', ?, '2026-08-04T10:00:00Z', 1, 900, '2026-08-04T10:00:00Z', '2026-08-04T10:00:00Z')
+      `).run(60 + i, `ab-track-${i}`, `Track ${i}`);
+    }
+
+    const service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const payload = service.getAchievements({ user: 1 });
+    const results = payload.results;
+
+    // Movie milestones
+    const movieFirst = results.find((r) => r.ruleId === 'movie_first_watch');
+    assert.equal(movieFirst.state, 'earned');
+    assert.equal(movieFirst.progress.unit, 'movie');
+
+    const movie10 = results.find((r) => r.ruleId === 'movie_count_10');
+    assert.equal(movie10.state, 'earned');
+    assert.equal(movie10.progress.current, 10);
+    assert.equal(movie10.progress.unit, 'movie');
+
+    // TV milestones
+    const tvFirst = results.find((r) => r.ruleId === 'tv_first_watch');
+    assert.equal(tvFirst.state, 'earned');
+    assert.equal(tvFirst.progress.unit, 'episode');
+
+    const tv25 = results.find((r) => r.ruleId === 'tv_count_25');
+    assert.equal(tv25.state, 'earned');
+    assert.equal(tv25.progress.current, 25);
+    assert.equal(tv25.progress.unit, 'episode');
+
+    // Anime milestones
+    const animeFirst = results.find((r) => r.ruleId === 'anime_first_watch');
+    assert.equal(animeFirst.state, 'earned');
+    assert.equal(animeFirst.progress.unit, 'episode');
+
+    const anime25 = results.find((r) => r.ruleId === 'anime_count_25');
+    assert.equal(anime25.state, 'earned');
+    assert.equal(anime25.progress.current, 25);
+    assert.equal(anime25.progress.unit, 'episode');
+
+    // Audiobook milestones: observations are plays, NEVER books
+    const abFirst = results.find((r) => r.ruleId === 'audiobook_first_watch');
+    assert.equal(abFirst.state, 'earned');
+    assert.equal(abFirst.progress.unit, 'play');
+
+    const abBook1 = results.find((r) => r.ruleId === 'audiobook_count_1');
+    assert.equal(abBook1.state, 'not_earned');
+    assert.equal(abBook1.progress.current, 0, 'Audiobook track observations must not be counted as completed books');
+    assert.equal(abBook1.progress.unit, 'audiobook_book');
+
+    const abBook5 = results.find((r) => r.ruleId === 'audiobook_count_5');
+    assert.equal(abBook5.state, 'not_earned');
+    assert.equal(abBook5.progress.current, 0);
+  });
+});
+
+test("3-6-6C Taste & Genre Affinity: calculates hours, plays, and distinct items for Anime Devotee and Sci-Fi Explorer", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (2, 'Justin', 'Justin', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 5 Sci-Fi movies in content_catalog (2 hours each = 7200s)
+    for (let i = 1; i <= 5; i++) {
+      db.prepare(`
+        INSERT INTO content_catalog (rating_key, media_type, title, genres_json, source_provenance, refreshed_at)
+        VALUES (?, 'movie', ?, '["Science Fiction", "Action"]', 'tautulli_stream', '2026-08-01T00:00:00Z')
+      `).run(`scifi-${i}`, `Sci-Fi Film ${i}`);
+
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 2, ?, 'movie', 'Movies', ?, '2026-08-01T10:00:00Z', 1, 7200, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z')
+      `).run(100 + i, `scifi-${i}`, `Sci-Fi Film ${i}`);
+    }
+
+    // 50 Anime episodes (24 mins each = 1440s -> 20 hours total)
+    for (let i = 1; i <= 50; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 2, ?, 'episode', 'Anime', ?, 'Frieren', '2026-08-02T10:00:00Z', 1, 1440, '2026-08-02T10:00:00Z', '2026-08-02T10:00:00Z')
+      `).run(200 + i, `anime-${i}`, `Frieren Ep ${i}`);
+    }
+
+    const service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const payload = service.getAchievements({ user: 2, facet: 'taste_affinity' });
+    const results = payload.results;
+
+    // Anime Devotee
+    const animeDevotee = results.find((r) => r.ruleId === 'taste_anime_devotee');
+    assert.equal(animeDevotee.state, 'earned');
+    assert.equal(animeDevotee.progress.current, 50);
+    assert.equal(animeDevotee.progress.target, 50);
+    assert.equal(animeDevotee.badge.stats.totalHours, 20);
+    assert.equal(animeDevotee.badge.stats.totalPlays, 50);
+    assert.equal(animeDevotee.badge.stats.completedItems, 50);
+
+    // Sci-Fi Explorer
+    const scifi = results.find((r) => r.ruleId === 'taste_scifi_explorer');
+    assert.equal(scifi.state, 'earned');
+    assert.equal(scifi.progress.current, 5);
+    assert.equal(scifi.progress.target, 5);
+    assert.equal(scifi.badge.stats.totalHours, 10);
+    assert.equal(scifi.badge.stats.completedItems, 5);
+
+    // Cinephile (requires 25, has 5)
+    const cinephile = results.find((r) => r.ruleId === 'taste_cinephile');
+    assert.equal(cinephile.state, 'in_progress');
+    assert.equal(cinephile.progress.current, 5);
+    assert.equal(cinephile.progress.target, 25);
+  });
+});
+
+test("3-6-6C Obsession Spotlight: dynamically identifies #1 most-watched series and hours", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 20 episodes of One Piece (1800s each = 10 hours)
+    for (let i = 1; i <= 20; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'episode', 'Anime', ?, 'One Piece', '2026-08-01T10:00:00Z', 1, 1800, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z')
+      `).run(100 + i, `op-${i}`, `One Piece Ep ${i}`);
+    }
+
+    // 5 episodes of Spy x Family (1440s each = 2 hours)
+    for (let i = 1; i <= 5; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'episode', 'Anime', ?, 'Spy x Family', '2026-08-02T10:00:00Z', 1, 1440, '2026-08-02T10:00:00Z', '2026-08-02T10:00:00Z')
+      `).run(200 + i, `sxf-${i}`, `Spy x Family Ep ${i}`);
+    }
+
+    const service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const payload = service.getAchievements({ user: 1, facet: 'obsession_spotlight' });
+    const results = payload.results;
+
+    const obsession = results.find((r) => r.ruleId === 'obsession_top_series');
+    assert.equal(obsession.state, 'earned');
+    assert.equal(obsession.progress.current, 10);
+    assert.equal(obsession.badge.title, 'Series Obsession: One Piece');
+    assert.equal(obsession.badge.stats.topTitle, 'One Piece');
+    assert.equal(obsession.badge.stats.totalHours, 10);
+    assert.equal(obsession.badge.stats.totalPlays, 20);
+    assert.equal(obsession.badge.stats.completedItems, 20);
+    assert.equal(obsession.badge.stats.runnerUpTitle, 'Spy x Family');
+    assert.equal(obsession.badge.stats.runnerUpHours, 2);
+    assert.equal(obsession.badge.stats.runnerUpPlays, 5);
+    assert.ok(obsession.badge.description.includes('Runner-up: Spy x Family'));
+  });
+});
+
+test("3-6-6C Ambiguous media identity blocks affected result and stays explainable", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // Insert 5 movies, one having ambiguous rating key
+    for (let i = 1; i <= 4; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'movie', 'Movies', ?, '2026-08-01T10:00:00Z', 1, 7200, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z')
+      `).run(10 + i, `movie-${i}`, `Movie ${i}`);
+    }
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (15, 1, 'ambiguous-movie-99', 'movie', 'Movies', 'Unresolved Movie', '2026-08-01T10:00:00Z', 1, 7200, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z')
+    `).run();
+
+    const service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const payload = service.getAchievements({ user: 1 });
+    const results = payload.results;
+
+    const movie10 = results.find((r) => r.ruleId === 'movie_count_10');
+    assert.equal(movie10.state, 'blocked');
+    assert.ok(movie10.reason.includes('ambiguous'));
+
+    // TV achievements for Tony remain unblocked
+    const tv25 = results.find((r) => r.ruleId === 'tv_count_25');
+    assert.equal(tv25.state, 'not_earned');
+  });
+});
+
+test("3-6-6C Recovered archive evidence unlocks result with historical provenance without rewriting history", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 2021 recovered archive event
+    db.prepare(`
+      INSERT INTO archive_watch_events (id, user_id, source, source_record_key, title_snapshot, event_time, event_time_precision, completed, resolution_status, captured_at)
+      VALUES (101, 1, 'plex_api_history', 'plex-rec-1', 'The Matrix', '2021-05-20T14:00:00Z', 'second', 1, 'resolved', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 2024 direct playback observation
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (1, 1, 'movie-2024', 'movie', 'Movies', 'Dune Part Two', '2024-03-01T10:00:00Z', 1, 7200, '2024-03-01T10:00:00Z', '2024-03-01T10:00:00Z')
+    `).run();
+
+    const service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const payload = service.getAchievements({ user: 1 });
+    const movieFirst = payload.results.find((r) => r.ruleId === 'movie_first_watch');
+
+    assert.equal(movieFirst.state, 'earned');
+    assert.equal(movieFirst.earnedAt, '2021-05-20T14:00:00Z', 'Earliest earnedAt must come from recovered 2021 archive event');
+    assert.equal(movieFirst.supportingEvidence[0].kind, 'archive_watch_event');
+    assert.equal(movieFirst.supportingEvidence[0].id, 101);
+  });
+});
+
+test("3-6-6C Public contract surface parity: filters hidden listeners and returns clean versioned contract", async () => {
+  await withTestDb(async (db) => {
+    // Seed visible user and hidden user
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+             (2, 'HiddenUser', 'Ghost', 0, 0, 1, 0, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (1, 1, 'movie-1', 'movie', 'Movies', 'Inception', '2026-08-01T10:00:00Z', 1, 7200, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z'),
+             (2, 2, 'movie-2', 'movie', 'Movies', 'Secret Movie', '2026-08-01T10:00:00Z', 1, 7200, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z')
+    `).run();
+
+    const service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const payload = service.getAchievements();
+
+    assert.equal(payload.contractVersion, 1);
+    assert.ok(payload.watermark != null);
+    assert.ok(payload.evaluatedAt != null);
+    assert.ok(Array.isArray(payload.results));
+
+    // Hidden listener MUST NOT appear in results
+    const hiddenResults = payload.results.filter((r) => r.userId === 2);
+    assert.equal(hiddenResults.length, 0, 'Hidden listener must be completely absent from results');
+
+    // Visible listener appears
+    const visibleResults = payload.results.filter((r) => r.userId === 1);
+    assert.ok(visibleResults.length > 0);
+
+    // Private fields verification
+    const jsonString = JSON.stringify(payload);
+    assert.ok(!jsonString.includes('discord_user_id'));
+    assert.ok(!jsonString.includes('plex_token'));
+    assert.ok(!jsonString.includes('file_path'));
+  });
+});
+
+test("3-6-6D Show Mastery & Trophy Shelf: 100% completed series earns poster-backed badge while partial or unknown denominator stays in-progress or unknown", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // Show 1: Complete show (5 episodes, leaf_count = 5)
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, leaf_count, source_provenance, refreshed_at)
+      VALUES ('show-1', 'show', 'Great Show', 5, 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+
+    for (let i = 1; i <= 5; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'show-1', 'episode', 'TV Shows', ?, 'Great Show', '2026-08-01T12:00:00Z', 1, 1800, '2026-08-01T12:00:00Z', '2026-08-01T12:00:00Z')
+      `).run(10 + i, `ep-${i}`, `Episode ${i}`);
+    }
+
+    // Show 2: Incomplete show (leaf_count = 10, watched 3)
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, leaf_count, source_provenance, refreshed_at)
+      VALUES ('show-2', 'show', 'Long Show', 10, 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+
+    for (let i = 1; i <= 3; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'show-2', 'episode', 'TV Shows', ?, 'Long Show', '2026-08-02T12:00:00Z', 1, 1800, '2026-08-02T12:00:00Z', '2026-08-02T12:00:00Z')
+      `).run(20 + i, `long-ep-${i}`, `Long Ep ${i}`);
+    }
+
+    // Show 3: Unknown denominator (no leaf_count, watched 2)
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, leaf_count, source_provenance, refreshed_at)
+      VALUES ('show-3', 'show', 'Mystery Show', NULL, 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+
+    for (let i = 1; i <= 2; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'show-3', 'episode', 'TV Shows', ?, 'Mystery Show', '2026-08-03T12:00:00Z', 1, 1800, '2026-08-03T12:00:00Z', '2026-08-03T12:00:00Z')
+      `).run(30 + i, `myst-ep-${i}`, `Mystery Ep ${i}`);
+    }
+
+    const service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const payload = service.getAchievements({ user: 1, facet: 'trophy_shelf' });
+    const results = payload.results;
+
+    // 1. General show completion rule earned
+    const firstMastery = results.find((r) => r.ruleId === 'show_mastery_first');
+    assert.ok(firstMastery, 'show_mastery_first rule must exist');
+    assert.equal(firstMastery.state, 'earned');
+    assert.equal(firstMastery.progress.current, 1);
+
+    // 2. Dynamic Trophy Shelf badge for Great Show
+    const greatShowBadge = results.find((r) => r.ruleId === 'show_mastery_show-1');
+    assert.ok(greatShowBadge, 'Dynamic badge for show-1 must exist on Trophy Shelf');
+    assert.equal(greatShowBadge.state, 'earned');
+    assert.equal(greatShowBadge.progress.current, 5);
+    assert.equal(greatShowBadge.progress.target, 5);
+    assert.ok(greatShowBadge.badge.posterUrl.includes('show-1'), 'Must include show-1 posterUrl');
+    assert.equal(greatShowBadge.badge.tier, 'bronze');
+
+    // 2b. Dynamic in-progress card for show-2 on Trophy Shelf
+    const show2Dynamic = results.find((r) => r.ruleId === 'show_mastery_show-2');
+    assert.ok(show2Dynamic, 'Dynamic series progress for show-2 must exist on Trophy Shelf');
+    assert.equal(show2Dynamic.state, 'in_progress');
+    assert.equal(show2Dynamic.progress.current, 3);
+    assert.equal(show2Dynamic.progress.target, 10);
+    assert.ok(show2Dynamic.badge.posterUrl.includes('show-2'));
+
+    // 3. Explicit rule for show-2 (in-progress) and show-3 (unknown)
+    const customRules = [
+      ...DEFAULT_ACHIEVEMENT_RULES,
+      {
+        ruleId: 'mastery_long_show',
+        version: 1,
+        family: 'completion',
+        unit: 'episode',
+        threshold: 10,
+        scope: { seriesId: 'show-2' },
+        facet: 'trophy_shelf',
+        badge: { badgeKey: 'long_show', tier: 'bronze', title: 'Long Show Mastery', description: 'Complete Long Show' }
+      },
+      {
+        ruleId: 'mastery_mystery_show',
+        version: 1,
+        family: 'completion',
+        unit: 'episode',
+        threshold: 5,
+        scope: { seriesId: 'show-3' },
+        facet: 'trophy_shelf',
+        badge: { badgeKey: 'mystery_show', tier: 'bronze', title: 'Mystery Show Mastery', description: 'Complete Mystery Show' }
+      }
+    ];
+
+    const customService = new AchievementService(db, customRules);
+    const customPayload = customService.getAchievements({ user: 1 });
+
+    const longShow = customPayload.results.find((r) => r.ruleId === 'mastery_long_show');
+    assert.equal(longShow.state, 'in_progress');
+    assert.equal(longShow.progress.current, 3);
+    assert.equal(longShow.progress.target, 10);
+
+    const mysteryShow = customPayload.results.find((r) => r.ruleId === 'mastery_mystery_show');
+    assert.equal(mysteryShow.state, 'unknown');
+    assert.ok(mysteryShow.reason.includes('Unknown denominator'));
+  });
+});
+
+test("3-6-6D Rewatch Loyalty Ribbons: same-session duplicates never count while distinct replays level up tiers", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 1. Same-session duplicate: Movie watched twice within 20 minutes on same day
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (1, 1, 'movie-dup', 'movie', 'Movies', 'Duplicate Movie', '2026-08-01T10:00:00Z', 1, 7200, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z'),
+             (2, 1, 'movie-dup', 'movie', 'Movies', 'Duplicate Movie', '2026-08-01T10:15:00Z', 1, 7200, '2026-08-01T10:15:00Z', '2026-08-01T10:15:00Z')
+    `).run();
+
+    let service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    let payload = service.getAchievements({ user: 1 });
+    let rewatchFirst = payload.results.find((r) => r.ruleId === 'rewatch_first');
+
+    assert.equal(rewatchFirst.state, 'not_earned', 'Same-session duplicate observations must not count as rewatches');
+    assert.equal(rewatchFirst.progress.current, 0);
+
+    // 2. Distinct replay on a separate viewing day (2026-08-05)
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (3, 1, 'movie-dup', 'movie', 'Movies', 'Duplicate Movie', '2026-08-05T10:00:00Z', 1, 7200, '2026-08-05T10:00:00Z', '2026-08-05T10:00:00Z')
+    `).run();
+
+    service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    payload = service.getAchievements({ user: 1 });
+    rewatchFirst = payload.results.find((r) => r.ruleId === 'rewatch_first');
+
+    assert.equal(rewatchFirst.state, 'earned', 'Distinct replay on separate day must earn rewatch milestone');
+    assert.equal(rewatchFirst.progress.current, 1);
+    assert.equal(rewatchFirst.earnedAt, '2026-08-05T10:00:00Z');
+
+    // 3. Show completed twice (2x rewatch) levels up Trophy Shelf badge to Silver with (2x) ribbon
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, leaf_count, source_provenance, refreshed_at)
+      VALUES ('rewatch-show', 'show', 'Favorite Anime', 2, 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // First completion: 2026-08-01
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (10, 1, 'fav-ep-1', 'rewatch-show', 'episode', 'Anime', 'Ep 1', 'Favorite Anime', '2026-08-01T12:00:00Z', 1, 1440, '2026-08-01T12:00:00Z', '2026-08-01T12:00:00Z'),
+             (11, 1, 'fav-ep-2', 'rewatch-show', 'episode', 'Anime', 'Ep 2', 'Favorite Anime', '2026-08-01T13:00:00Z', 1, 1440, '2026-08-01T13:00:00Z', '2026-08-01T13:00:00Z')
+    `).run();
+
+    // Second completion on distinct days: 2026-08-10 & 2026-08-11
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (12, 1, 'fav-ep-1', 'rewatch-show', 'episode', 'Anime', 'Ep 1', 'Favorite Anime', '2026-08-10T12:00:00Z', 1, 1440, '2026-08-10T12:00:00Z', '2026-08-10T12:00:00Z'),
+             (13, 1, 'fav-ep-2', 'rewatch-show', 'episode', 'Anime', 'Ep 2', 'Favorite Anime', '2026-08-11T13:00:00Z', 1, 1440, '2026-08-11T13:00:00Z', '2026-08-11T13:00:00Z')
+    `).run();
+
+    service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    payload = service.getAchievements({ user: 1, facet: 'trophy_shelf' });
+    const showMastery = payload.results.find((r) => r.ruleId === 'show_mastery_rewatch-show');
+
+    assert.ok(showMastery, 'Show mastery badge must exist');
+    assert.equal(showMastery.state, 'earned');
+    assert.equal(showMastery.badge.tier, 'silver', '2x rewatched show must level up to silver');
+    assert.ok(showMastery.badge.title.includes('(2x)'), 'Title must indicate 2x rewatch ribbon');
+    assert.equal(showMastery.badge.stats.rewatchCount, 1);
+  });
+});
+
+test("3-6-6D Shared Viewing Bonds: confirmed co-watches satisfy rules, clearing revokes immediately, and inferred-only is blocked", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+             (2, 'Justin', 'Justin', 0, 1, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 1. Inferred-only co-watch: prompt is pending, no confirmed co-watch
+    db.prepare(`
+      INSERT INTO watch_events (id, source_user_id, rating_key, media_type, title, watched_at, prompt_status, created_at, updated_at)
+      VALUES (100, 1, 'movie-bond-1', 'movie', 'Bond Movie 1', '2026-08-01T10:00:00Z', 'pending', '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z')
+    `).run();
+
+    let service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    let payload = service.getAchievements({ user: 1, facet: 'cowatch_bond' });
+    let cowatchFirst = payload.results.find((r) => r.ruleId === 'cowatch_first');
+
+    assert.equal(cowatchFirst.state, 'blocked', 'Inferred-only co-watch must block achievement');
+    assert.ok(cowatchFirst.reason.toLowerCase().includes('inferred'));
+
+    // 2. Confirm the co-watch via browser adjudication (decision='yes')
+    db.prepare(`
+      INSERT INTO cowatch_adjudications (id, candidate_id, source_user_id, target_user_id, rating_key, rule_version, supporting_observation_ids_json, decision, actor_kind, method, request_id, created_at)
+      VALUES (1, 'cand-bond-1', 1, 2, 'movie-bond-1', 'v1', '[]', 'yes', 'operator', 'browser', 'req-1', '2026-08-01T11:00:00Z')
+    `).run();
+
+    service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    payload = service.getAchievements({ user: 1, facet: 'cowatch_bond' });
+    cowatchFirst = payload.results.find((r) => r.ruleId === 'cowatch_first');
+
+    assert.equal(cowatchFirst.state, 'earned', 'Confirmed co-watch must satisfy achievement');
+    assert.equal(cowatchFirst.progress.current, 1);
+    assert.equal(cowatchFirst.supportingEvidence[0].kind, 'cowatch_adjudication');
+
+    // Partner (Justin) also earns the co-watch milestone
+    const justinPayload = service.getAchievements({ user: 2, facet: 'cowatch_bond' });
+    const justinFirst = justinPayload.results.find((r) => r.ruleId === 'cowatch_first');
+    assert.equal(justinFirst.state, 'earned');
+    assert.equal(justinFirst.progress.current, 1);
+
+    // 3. Revoke/Clear adjudication (decision='clear')
+    db.prepare(`
+      INSERT INTO cowatch_adjudications (id, candidate_id, source_user_id, target_user_id, rating_key, rule_version, supporting_observation_ids_json, decision, actor_kind, method, request_id, created_at)
+      VALUES (2, 'cand-bond-1', 1, 2, 'movie-bond-1', 'v1', '[]', 'clear', 'operator', 'browser', 'req-2', '2026-08-02T11:00:00Z')
+    `).run();
+
+    // Compute-on-read immediately revokes the achievement on next read without database mutation
+    service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    payload = service.getAchievements({ user: 1, facet: 'cowatch_bond' });
+    cowatchFirst = payload.results.find((r) => r.ruleId === 'cowatch_first');
+
+    assert.equal(cowatchFirst.state, 'blocked', 'Clearing adjudication must immediately revoke achievement on next read');
+    assert.equal(cowatchFirst.progress.current, 0);
+  });
+});
+
+test("3-6-6D Co-watched playback attribution: confirmed co-watching awards playback achievements to both viewers", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+             (2, 'Justin', 'Justin', 0, 1, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+    // 1. Content catalog for mini-series (2 episodes) and movie
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, library_title, title, leaf_count, source_provenance, refreshed_at)
+      VALUES 
+        ('shared-show', 'show', 'Anime', 'Shared Anime', 2, 'plex', '2026-08-01T00:00:00Z'),
+        ('ep-1', 'episode', 'Anime', 'Episode 1', 1, 'plex', '2026-08-01T00:00:00Z'),
+        ('ep-2', 'episode', 'Anime', 'Episode 2', 1, 'plex', '2026-08-01T00:00:00Z'),
+        ('shared-film', 'movie', 'Movies', 'Shared Film', 1, 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 2. Playback observations recorded under User 1 (who streamed on TV)
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, duration, completed, created_at, updated_at)
+      VALUES
+        (10, 1, 'ep-1', 'shared-show', 'episode', 'Anime', 'Episode 1', 'Shared Anime', '2026-08-01T10:00:00Z', 1400000, 1, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z'),
+        (11, 1, 'ep-2', 'shared-show', 'episode', 'Anime', 'Episode 2', 'Shared Anime', '2026-08-01T11:00:00Z', 1400000, 1, '2026-08-01T11:00:00Z', '2026-08-01T11:00:00Z'),
+        (12, 1, 'shared-film', NULL, 'movie', 'Movies', 'Shared Film', NULL, '2026-08-02T10:00:00Z', 7200000, 1, '2026-08-02T10:00:00Z', '2026-08-02T10:00:00Z')
+    `).run();
+
+    // 3. Watch events & Cowatch confirmations linking User 1 and User 2 (Justin)
+    db.prepare(`
+      INSERT INTO watch_events (id, source_user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, created_at, updated_at)
+      VALUES
+        (1, 1, 'ep-1', 'shared-show', 'episode', 'Anime', 'Episode 1', 'Shared Anime', '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z'),
+        (2, 1, 'ep-2', 'shared-show', 'episode', 'Anime', 'Episode 2', 'Shared Anime', '2026-08-01T11:00:00Z', '2026-08-01T11:00:00Z', '2026-08-01T11:00:00Z'),
+        (3, 1, 'shared-film', NULL, 'movie', 'Movies', 'Shared Film', NULL, '2026-08-02T10:00:00Z', '2026-08-02T10:00:00Z', '2026-08-02T10:00:00Z')
+    `).run();
+
+    db.prepare(`
+      INSERT INTO cowatch_confirmations (id, watch_event_id, target_user_id, confirmation_method, status, created_at, updated_at)
+      VALUES
+        (1, 1, 2, 'discord_button', 'confirmed', '2026-08-01T10:05:00Z', '2026-08-01T10:05:00Z'),
+        (2, 2, 2, 'discord_button', 'confirmed', '2026-08-01T11:05:00Z', '2026-08-01T11:05:00Z'),
+        (3, 3, 2, 'discord_button', 'confirmed', '2026-08-02T10:05:00Z', '2026-08-02T10:05:00Z')
+    `).run();
+
+    // 4. Evaluate achievements for both User 1 AND User 2
+    const service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    
+    // User 1 (direct viewer)
+    const u1Payload = service.getAchievements({ user: 1 });
+    const u1Movie = u1Payload.results.find((r) => r.ruleId === 'movie_first_watch');
+    const u1Show = u1Payload.results.find((r) => r.ruleId === 'show_mastery_shared-show');
+    assert.equal(u1Movie.state, 'earned', 'Source viewer earns movie achievement');
+    assert.equal(u1Show.state, 'earned', 'Source viewer earns show mastery on Trophy Shelf');
+
+    // User 2 (co-watching partner without direct Plex stream)
+    const u2Payload = service.getAchievements({ user: 2 });
+    const u2Movie = u2Payload.results.find((r) => r.ruleId === 'movie_first_watch');
+    const u2Show = u2Payload.results.find((r) => r.ruleId === 'show_mastery_shared-show');
+    assert.equal(u2Movie.state, 'earned', 'Co-watching partner must earn movie milestone from confirmed co-watch');
+    assert.equal(u2Show.state, 'earned', 'Co-watching partner must earn show mastery on Trophy Shelf from confirmed co-watch');
+    assert.equal(u2Show.badge.posterUrl, '/api/artwork/shared-show?variant=poster');
+    assert.equal(u2Show.supportingEvidence.length, 2);
+    assert.equal(u2Show.supportingEvidence[0].kind, 'cowatch_confirmation');
+  });
+});
+
+test("3-6-6D Anime classification & in-progress tracking: catalog library fallback and anime genres classify episodes and surface in-progress series", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Justin', 'Justin', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // Show catalog row with library_title='Anime' and genres_json='["Animation","Anime"]'
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, library_title, genres_json, leaf_count, source_provenance, refreshed_at)
+      VALUES ('show-ace', 'show', 'Ace of the Diamond', 'Anime', '["Animation","Anime"]', 126, 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // Episodes in playback_observations where po.library_name is NULL (simulating real observations)
+    for (let i = 1; i <= 25; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'show-ace', 'episode', NULL, ?, 'Ace of the Diamond', '2026-08-01T12:00:00Z', 1, 1440, '2026-08-01T12:00:00Z', '2026-08-01T12:00:00Z')
+      `).run(500 + i, `ace-ep-${i}`, `Episode ${i}`);
+    }
+
+    const service = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const payload = service.getAchievements({ user: 1 });
+
+    // 1. Anime Initiate (25 episodes) must be earned due to catalog library/genres fallback
+    const animeInitiate = payload.results.find((r) => r.ruleId === 'anime_count_25');
+    assert.ok(animeInitiate, 'anime_count_25 rule must exist');
+    assert.equal(animeInitiate.state, 'earned', 'Anime initiate should be earned via library fallback');
+    assert.equal(animeInitiate.progress.current, 25);
+
+    // 2. Dynamic in-progress card for Ace of the Diamond exists on Trophy Shelf
+    const aceShelf = payload.results.find((r) => r.ruleId === 'show_mastery_show-ace');
+    assert.ok(aceShelf, 'Dynamic series progress card for Ace of the Diamond must exist');
+    assert.equal(aceShelf.state, 'in_progress');
+    assert.equal(aceShelf.progress.current, 25);
+    assert.equal(aceShelf.progress.target, 126);
+    assert.equal(aceShelf.badge.iconHint, 'anime');
+    assert.ok(aceShelf.badge.title.includes('Ace of the Diamond'));
+  });
+});
+test("TV episode denominator: canonical episode count distinguishes caught-up on Plex from 100% complete", async () => {
+  await withTestDb(async (db) => {
+    // 1. User
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 2. Partial Show (Ahsoka): 3 of 3 episodes on Plex watched, but canonical total is 8, running series
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, library_title, leaf_count, canonical_total_episodes, series_status, source_provenance, refreshed_at)
+      VALUES ('show-ahsoka', 'show', 'Ahsoka', 'TV Shows', 3, 8, 'running', 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+
+    for (let i = 1; i <= 3; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'show-ahsoka', 'episode', 'TV Shows', ?, 'Ahsoka', '2026-08-01T12:00:00Z', 1, 1800, '2026-08-01T12:00:00Z', '2026-08-01T12:00:00Z')
+      `).run(100 + i, `ahsoka-ep-${i}`, `Ahsoka Part ${i}`);
+    }
+
+    // 3. Fully Completed Show (Breaking Bad): 5 episodes on Plex, 5 canonical episodes, ended series
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, library_title, leaf_count, canonical_total_episodes, series_status, source_provenance, refreshed_at)
+      VALUES ('show-bb', 'show', 'Breaking Bad', 'TV Shows', 5, 5, 'ended', 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+
+    for (let i = 1; i <= 5; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'show-bb', 'episode', 'TV Shows', ?, 'Breaking Bad', '2026-08-02T12:00:00Z', 1, 1800, '2026-08-02T12:00:00Z', '2026-08-02T12:00:00Z')
+      `).run(200 + i, `bb-ep-${i}`, `BB Ep ${i}`);
+    }
+
+    const dashboardService = new DashboardService(db);
+    const progress = dashboardService.getProgress({});
+
+    // Verify Ahsoka in Progress
+    const ahsokaGroup = progress.recentlyActive.items.find((x) => x.title === "Ahsoka");
+    assert.ok(ahsokaGroup, "Ahsoka must exist in progress groups");
+    assert.equal(ahsokaGroup.availableOnPlex, 3, "Available on Plex must be 3");
+    assert.equal(ahsokaGroup.canonicalTotalItems, 8, "Canonical total items must be 8");
+    assert.equal(ahsokaGroup.totalItems, 8, "totalItems must report canonical total");
+    assert.equal(ahsokaGroup.totalKnown, true, "totalKnown must be true");
+    assert.equal(ahsokaGroup.missingOffServerCount, 5, "missingOffServerCount must be 5");
+    assert.equal(ahsokaGroup.isCaughtUpOnPlex, true, "isCaughtUpOnPlex must be true when 3/3 watched but 5 missing");
+    assert.equal(ahsokaGroup.isSeriesComplete, false, "isSeriesComplete must be false");
+
+    // Partial show must NOT be in recentlyCompleted
+    const inCompleted = progress.recentlyCompleted.items.some((x) => x.title === "Ahsoka");
+    assert.equal(inCompleted, false, "Caught-up show with unacquired episodes must NOT be in recentlyCompleted");
+
+    // Partial show MUST be in continue watching
+    const inContinue = progress.continue.items.some((x) => x.title === "Ahsoka");
+    assert.equal(inContinue, true, "Caught-up show must remain in continue watching");
+
+    // Verify Breaking Bad in Progress
+    const bbGroup = progress.recentlyActive.items.find((x) => x.title === "Breaking Bad");
+    assert.ok(bbGroup, "Breaking Bad must exist in progress groups");
+    assert.equal(bbGroup.availableOnPlex, 5);
+    assert.equal(bbGroup.canonicalTotalItems, 5);
+    assert.equal(bbGroup.missingOffServerCount, 0);
+    assert.equal(bbGroup.isCaughtUpOnPlex, false);
+    assert.equal(bbGroup.isSeriesComplete, true);
+
+    const bbInCompleted = progress.recentlyCompleted.items.some((x) => x.title === "Breaking Bad");
+    assert.equal(bbInCompleted, true, "Ended show with 100% completed episodes must be in recentlyCompleted");
+
+    // Verify Detail Workspace summary for Ahsoka
+    const ahsokaDetail = dashboardService.getDetailWorkspace(ahsokaGroup.groupKey);
+    assert.ok(ahsokaDetail.ok, "Detail workspace must resolve");
+    assert.equal(ahsokaDetail.data.progressSummary.isCaughtUpOnPlex, true);
+    assert.equal(ahsokaDetail.data.progressSummary.availableOnPlex, 3);
+    assert.equal(ahsokaDetail.data.progressSummary.canonicalTotalItems, 8);
+    assert.equal(ahsokaDetail.data.progressSummary.missingOffServerCount, 5);
+    assert.equal(ahsokaDetail.data.progressSummary.isSeriesComplete, false);
+
+    // Verify Achievements: Ahsoka should NOT earn show mastery trophy
+    const achievementService = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const trophyShelf = achievementService.getAchievements({ user: 1, facet: 'trophy_shelf' });
+    const ahsokaTrophy = trophyShelf.results.find((r) => r.ruleId === 'show_mastery_show-ahsoka');
+    assert.ok(ahsokaTrophy, "Ahsoka trophy shelf entry must exist");
+    assert.notEqual(ahsokaTrophy.state, 'earned', "Ahsoka must NOT earn completion trophy when 5 episodes are missing");
+    assert.equal(ahsokaTrophy.state, 'in_progress');
+    assert.equal(ahsokaTrophy.progress.current, 3);
+    assert.equal(ahsokaTrophy.progress.target, 8);
+    assert.equal(ahsokaTrophy.badge.stats.isCaughtUpOnPlex, true);
+    assert.equal(ahsokaTrophy.badge.stats.availableOnPlex, 3);
+    assert.equal(ahsokaTrophy.badge.stats.missingOffServerCount, 5);
+
+    // Breaking Bad should earn trophy
+    const bbTrophy = trophyShelf.results.find((r) => r.ruleId === 'show_mastery_show-bb');
+    assert.ok(bbTrophy, "Breaking Bad trophy shelf entry must exist");
+    assert.equal(bbTrophy.state, 'earned', "Breaking Bad must earn completion trophy");
+    assert.equal(bbTrophy.progress.current, 5);
+    assert.equal(bbTrophy.progress.target, 5);
+  });
+});
 
 let passed = 0;
 for (const { name, fn } of tests) {

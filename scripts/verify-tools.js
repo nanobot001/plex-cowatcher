@@ -27,7 +27,8 @@ const expectedTools = [
   "project.audiobook_backfill",
   "project.tautulli_backfill",
   "project.archive_plex_view_recovery",
-  "project.audiobook_proof"
+  "project.audiobook_proof",
+  "project.achievements"
 ];
 
 for (const tool of expectedTools) {
@@ -52,7 +53,8 @@ const expectedCliCommands = [
   "audiobook-backfill",
   "tautulli-backfill",
   "archive-plex-import",
-  "audiobook-proof"
+  "audiobook-proof",
+  "achievements"
 ];
 
 for (const cmd of expectedCliCommands) {
@@ -73,7 +75,8 @@ const expectedRoutes = [
   "/api/watch-history",
   "/api/watch-summary",
   "/api/viewing-sessions",
-  "/api/cowatching"
+  "/api/cowatching",
+  "/api/achievements"
 ];
 
 for (const route of expectedRoutes) {

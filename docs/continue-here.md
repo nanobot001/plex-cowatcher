@@ -1,5 +1,95 @@
 # Continue Here
 
+## 2026-10-11 — Block 3-6-6D Implemented and Verified; Ready for Block 3-6-6E / 3-6-6F
+
+Current state:
+- **Block 3-6-6D (Rewatch And Confirmed Co-Watch Rules)** is fully implemented and verified on branch `codex/3-6-6d-rewatch-and-confirmed-cowatch-rules`.
+- Implemented **The Trophy Shelf**, **Rewatch Loyalty Ribbons**, and **Shared Viewing Bonds**:
+  - *Show Mastery & Trophy Shelf*: Dynamic poster-backed series badges with `/api/artwork/:ratingKey?variant=poster`. 100% completion verified against `content_catalog.leaf_count` / catalog episode count. Partial progress remains `in_progress`; unknown denominator remains `unknown`.
+  - *Rewatch Loyalty Ribbons*: Multi-tier rewatch ribbons/badges (Bronze -> Silver for 2x, Gold for 3x, Platinum for 4x+). Evidence reader groups completed plays into distinct sessions (>=2 hours or different viewing day), ensuring same-session duplicate observations never count toward replays.
+  - *Shared Viewing Bonds & Co-Watch Playback Attribution*: Confirmed co-watch milestones (`cowatch_first`, `cowatch_count_5`, `cowatch_count_25`) reconciled across Discord confirmations and browser adjudications. Confirmed co-watched plays are attributed to both viewers (deduplicating against existing direct observations), ensuring both viewers earn playback credit for co-watched movies, episodes, show completion trophies, and genre devotion. Inferred-only candidates are strictly blocked. Reversible: clearing an adjudication immediately un-earns/revokes the achievement on the next read.
+- Architecture remains strictly compute-on-read with zero database writes, zero migrations, and zero Express/dashboard dependencies in `src/achievements/`.
+- Deterministic verification: 169/169 tests pass in `tests/run-tests.mjs`. 79 Playwright dashboard regression specs pass. `node --check src/web/static/dashboard.js` and `npm run verify:tools` pass.
+
+Next step:
+- Commit and push `codex/3-6-6d-rewatch-and-confirmed-cowatch-rules`.
+- Proceed to **Block 3-6-6E: Series, Genre, And Library Completion Rules** or **Block 3-6-6F: Achievements Dashboard Prototype (People Cards)**.
+
+## 2026-10-11 — Block 3-6-6C Implemented and Verified; Ready for Block 3-6-6D
+
+Current state:
+- **Block 3-6-6C (First-Watch and Watch-Count Rules)** is fully implemented and verified on branch `codex/3-6-6c-first-watch-and-watch-count-rules`.
+- Rule catalog (`src/achievements/ruleCatalog.ts`) and evaluator (`src/achievements/evaluator.ts`) expanded:
+  - **Volume Milestones**: First-watch and threshold rules for movies, TV, anime, and audiobooks. Unit tracking ensures tracks are never counted as books (`audiobook_position_evidence` evaluated for completed books).
+  - **Taste & Genre Affinity**: Devotion rules (`taste_anime_devotee`, `taste_scifi_explorer`, `taste_cinephile`) dynamically calculate hours logged, completed items, and total plays.
+  - **Obsession Spotlight**: Dynamically identifies the #1 series/show per listener by duration logged (hours, plays, completed count).
+  - **Explainability & Identity**: Ambiguous rating keys block only the affected achievement rule and explain why. Recovered archive evidence accurately unlocks historical achievements with original event timestamps.
+- Contract parity surface:
+  - Read-only HTTP route `GET /api/achievements` registered in `src/server/routes.ts`.
+  - CLI subcommand `plex-cowatch achievements` registered in `src/cli/cli.ts`.
+  - Both filter hidden users, strip private fields, and provide identical payload structure.
+  - Tool contracts registered in `docs/tool-manifest.yaml`, `docs/tool-surface.md`, `docs/permissions.md`, verified by `scripts/verify-tools.js`.
+- Deterministic verification: 165/165 tests pass in `tests/run-tests.mjs`. `node --check src/web/static/dashboard.js` and `npm run verify:tools` pass.
+
+Next step:
+- Commit and push `codex/3-6-6c-first-watch-and-watch-count-rules`.
+- Proceed to **Block 3-6-6D: The Trophy Shelf, Rewatch Loyalty Ribbons, and Co-Watching Bonds**.
+
+## 2026-10-09 — Block 3-6-6A Contract, Evaluator, and Media Showcase Architecture Locked
+
+Current state:
+- **Block 3-6-1 (Archive Provenance Contract)**: Implemented and closed. A live audit confirmed 100% of production observations have valid source timestamps. Patched `tautulliAdapter.ts`, `watcher.ts`, and `ingestionService.ts` so missing source timestamps evaluate to explicit `unknown` provenance rather than fabricating current execution time (`Date.now()`).
+- **Block 3-7 (Operations Readiness)**: Closed administratively as an operational reference. Single-service PM2 daemon supervision, backups, and recovery procedures are already running and active in production.
+- **Block 3-2o (Dashboard Accessibility & Release Gate)**: Closed administratively as satisfied. Continuous Playwright browser regressions (80 specs across 320px–1440px) enforce cross-surface responsiveness, modal trapping, focus management, and data boundary protection.
+- Deterministic verification: 155/155 backend unit/service tests pass.
+
+## 2026-10-09 — Block 3-6-6A Contract, Evaluator, and Media Showcase Architecture Locked
+
+Current state:
+- **Block 3-6-6A** is implemented and verified on branch `codex/3-6-6a-achievements-contract-and-evaluator`.
+- Built the isolated achievements engine (`src/achievements/`):
+  - Declarative rule catalog schema with badge descriptors (`badgeKey`, `tier`, `title`, `description`, `posterUrl`, `stats`), `ShowcaseFacet` union (`trophy_shelf`, `taste_affinity`, `obsession_spotlight`, `cowatch_bond`), and result contract (`contractVersion: 1`, `watermark`, `earnedAt`, `supportingEvidence`).
+  - Pure deterministic evaluator function `(rules, evidence, context) => results` with stable sorting and byte-identical determinism.
+  - SQLite evidence reader (`AchievementEvidenceReader`) reconciling canonical merged play streams (deduplicating linked archive rows), replay semantics (`evaluateReplaySemantics`), and People co-watch attribution (reconciling Discord confirmations with browser adjudications).
+  - Mirror-current-evidence retraction policy verified: clearing an adjudication immediately un-earns/reverts co-watch milestones without stored state.
+  - Published public contract and evidence-eligibility matrix in `docs/data/achievements-contract.md`.
+  - Zero imports from Express, dashboard services, or browser code to ensure complete portability for future standalone app clients.
+- Locked **Personal Media Showcase & Identity Passport** product philosophy into architecture and child block docs (`docs/design/achievements-product-direction.md`, `docs/blocks/block-3-6-6*`, `docs/blocks/README.md`):
+  - *The Trophy Shelf*: Completed series/anime/audiobooks using Plex poster artwork (`posterUrl`) with rewatch loyalty ribbons.
+  - *Taste & Genre Affinity*: Devotion metrics (hours logged per genre, started vs completed ratios).
+  - *The Obsession Spotlight*: Superlative highlighting listener's #1 most-watched show/franchise by hours.
+  - *Shared Viewing Bonds*: Badges celebrating series watched 100% together.
+- Verification: `npm run verify:block` passed cleanly (159/159 unit tests, 79 browser regression specs, syntax, tools).
+
+Next step:
+- Commit and push `codex/3-6-6a-achievements-contract-and-evaluator`.
+- Branch to `codex/3-6-6c-first-watch-and-watch-count-rules` and implement **Block 3-6-6C: First-Watch And Watch-Count Rules** (volume milestones, genre affinity, obsession spotlight rules + read-only HTTP/CLI contract surface).
+
+## 2026-08-21 — 3-2n-6F-B Movie Session Progress Implemented and Verified
+
+Current state:
+- **Block 3-2n-6F-B** is implemented and verified on `codex/3-2n-6f-b-movie-session-progress`.
+- Expanded Movie Overview session cards now include an additive per-session movie progress projection: explicitly completed movies render a 100% completed gradient bar (`Completed`), source-backed partial sessions render approximate percentage bars (`Approximate progress · <percent>%`), and missing evidence remains visibly unknown (`Progress unavailable`) without fabricating 0% or modifying raw database records.
+- UI presentation matches the shared `.digest-progress-track` design, gradient, accessibility attributes, and responsive layout established for episodic and audiobook media.
+- Verification passed: `npm run verify:block` passed with 154/154 service tests, 79/79 browser regressions (1 intentional skip), syntax checks, and tool contracts.
+- Live verification passed: `npm run verify:live-dashboard` passed against the live deployment.
+
+Next step:
+- Review/publish PR for **3-2n-6F-B**.
+- Follow recommended closure order from modernized planning: **Block 3-6-1: Archive Evidence and Provenance Contract**, then **Block 3-7: Operational Readiness & Recovery**, followed by the **Block 3-2o: Final Dashboard Release Gate**.
+
+## 2026-08-21 — 3-2n-6F-A TV And Anime Session Episode Progress Implemented and Verified
+
+Current state:
+- **Block 3-2n-6F-A** is implemented and verified on `codex/3-2n-6f-a-tv-anime-session-progress`.
+- Overview session cards now include an additive per-episode progress projection for TV, Classic TV, and Anime: explicitly completed episodes render a 100% completed bar, partial episodes render source-honest approximate percentages, and missing evidence remains visibly unknown without fabricating 0% or modifying raw database records.
+- Deterministic verification passed: `npm run verify:block` passed with 153/153 service tests, 77/77 browser regressions (1 intentional skip), syntax checks, and tool contracts.
+- Live verification passed: `npm run verify:live-dashboard` passed against the live deployment.
+
+Next step:
+- Review/publish PR for **3-2n-6F-A**.
+- Follow recommended closure order from modernized planning: **Block 3-6-1: Archive Evidence and Provenance Contract**, then **Block 3-7: Operational Readiness & Recovery**, followed by the **Block 3-2o: Final Dashboard Release Gate**.
+
 ## 2026-08-20 — Remaining Block Inventory Modernized
 
 Current state:

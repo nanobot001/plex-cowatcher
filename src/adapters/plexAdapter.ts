@@ -545,7 +545,30 @@ export class HttpPlexAdapter extends MockPlexAdapter {
     };
 
     if (mediaType === "show") {
-      metadata.leafCount = attr(tag, "leafCount") ? Number(attr(tag, "leafCount")) : undefined;
+      let leafCount = attr(tag, "leafCount") ? Number(attr(tag, "leafCount")) : undefined;
+      try {
+        const seasonsResponse = await plexFetch(`/library/metadata/${activeKey}/children`);
+        if (seasonsResponse.ok) {
+          const seasonsXml = await seasonsResponse.text();
+          const directoryTags = seasonsXml.match(/<Directory\b[^>]*>/g) ?? [];
+          let regularLeafCount = 0;
+          let foundRegularSeasons = false;
+          for (const sTag of directoryTags) {
+            const sType = attr(sTag, "type");
+            const sIndex = attr(sTag, "index");
+            const sTitle = attr(sTag, "title");
+            const sLeafCount = attr(sTag, "leafCount") ? Number(attr(sTag, "leafCount")) : 0;
+            if (sType === "season" && sIndex !== "0" && sTitle !== "Specials") {
+              regularLeafCount += sLeafCount;
+              foundRegularSeasons = true;
+            }
+          }
+          if (foundRegularSeasons) {
+            leafCount = regularLeafCount;
+          }
+        }
+      } catch {}
+      metadata.leafCount = leafCount;
     }
 
     return metadata;
