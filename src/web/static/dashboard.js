@@ -797,7 +797,7 @@ function applyRoute(route){
   }
   syncFormToState();
   save();
-  loadGlobals();
+  if (state.layout !== "overview") loadGlobals();
   render();
 }
 
@@ -1815,7 +1815,7 @@ async function loadDetailWorkspaceHierarchy(workspace, signal) {
 // ----------------------------------------------------
 // Global summary stats and sidebars
 // ----------------------------------------------------
-async function loadGlobals() {
+async function loadGlobals(preloadedOverview) {
   try {
     fetchJson("/api/dashboard/users").then(ud => {
       const user = form.elements.user;
@@ -1825,7 +1825,7 @@ async function loadGlobals() {
         if (state.filters.user) user.value = state.filters.user;
       }
     }).catch(() => {});
-    const d = await fetchJson("/api/dashboard/overview?" + query({ limit: 1 }));
+    const d = preloadedOverview || await fetchJson("/api/dashboard/overview?" + query({ limit: 1 }));
     state.totals = d.totals;
     state.users = d.users;
     state.libraries = d.libraries;
@@ -1891,6 +1891,7 @@ async function renderOverview() {
 
   if (overview.status === "rejected") throw overview.reason;
   const d = overview.value;
+  loadGlobals(d);
   const auditList = audit.status === "fulfilled" ? (Array.isArray(audit.value) ? audit.value : audit.value?.audit || audit.value?.data || []) : [];
 
   const healthData = health.status === "fulfilled" ? health.value : null;
@@ -2974,7 +2975,7 @@ form.addEventListener("change",()=>{
   state.progress={recentlyActiveOffset:0,continueOffset:0,recentlyCompletedOffset:0,selected:""};
   save();
   render();
-  loadGlobals();
+  if (state.layout !== "overview") loadGlobals();
 });
 
 form.addEventListener("submit",(e)=>{
@@ -2989,7 +2990,7 @@ form.addEventListener("submit",(e)=>{
   state.progress={recentlyActiveOffset:0,continueOffset:0,recentlyCompletedOffset:0,selected:""};
   save();
   render();
-  loadGlobals();
+  if (state.layout !== "overview") loadGlobals();
 });
 
 form.addEventListener("reset",()=>setTimeout(()=>{
@@ -2999,7 +3000,7 @@ form.addEventListener("reset",()=>setTimeout(()=>{
   state.progress={recentlyActiveOffset:0,continueOffset:0,recentlyCompletedOffset:0,selected:""};
   save();
   render();
-  loadGlobals();
+  if (state.layout !== "overview") loadGlobals();
 },0));
 
 content.addEventListener("click",async e=>{
@@ -3446,5 +3447,5 @@ window.addEventListener("popstate",()=>{
 restoreLocationState();
 syncFormToState();
 
-loadGlobals();
+if (state.layout !== "overview") loadGlobals();
 render();

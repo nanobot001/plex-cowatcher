@@ -111,6 +111,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
   created_at TEXT NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log (created_at DESC);
+
 CREATE TABLE IF NOT EXISTS sync_failures (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   action TEXT NOT NULL,

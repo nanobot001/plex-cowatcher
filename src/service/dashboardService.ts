@@ -1271,10 +1271,12 @@ export class DashboardService {
     const total = directTotal + archiveRows.length;
 
     const cowatchMap = new Map<number, { event: any; participant: any }>();
-    if (rows.length > 0) {
-      let minDate = rows[0].watched_at;
-      let maxDate = rows[0].watched_at;
-      for (const row of rows) {
+    if (rows.length > 0 && (input as any)?.includeCowatching !== false) {
+      const cowatchLimit = Math.min(rows.length, Number((input as any)?.cowatchingLimit) || rows.length);
+      const cowatchRows = rows.slice(0, cowatchLimit);
+      let minDate = cowatchRows[0].watched_at;
+      let maxDate = cowatchRows[0].watched_at;
+      for (const row of cowatchRows) {
         if (row.watched_at < minDate) minDate = row.watched_at;
         if (row.watched_at > maxDate) maxDate = row.watched_at;
       }
@@ -1331,14 +1333,14 @@ export class DashboardService {
     return isHouseholdCategory(category) && (!p.category || p.category === category);
   }
 
-  getContinueWatching(input: unknown) {
-    return this.getContinueConsuming({ ...(input as object), offset: 0 }).items;
+  getContinueWatching(input: unknown, preloadedItems?: DashboardActivityItem[]) {
+    return this.getContinueConsuming({ ...(input as object), offset: 0 }, preloadedItems).items;
   }
 
-  getContinueConsuming(input: unknown) {
+  getContinueConsuming(input: unknown, preloadedItems?: DashboardActivityItem[]) {
     const p = parseFilters(input);
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const all = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0, sort: "recent", includeAudiobookProgress: false }).items;
+    const all = preloadedItems ?? this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0, sort: "recent", includeAudiobookProgress: false }).items;
     const groups = new Map<string, any>();
     for (const item of all) {
       if (!isRecognizedExplorerItem(item) || (item.completed && item.category !== "audiobook")) continue;
@@ -1474,7 +1476,13 @@ export class DashboardService {
   getOverview(input: unknown) {
     const timed = withTiming(() => {
       const filters = parseFilters(input);
-      const sampledActivity = this.getActivity({ ...(input as object), limit: SUMMARY_SAMPLE_LIMIT, offset: 0, includeAudiobookProgress: false });
+      const sampledActivity = this.getActivity({
+        ...(input as object),
+        limit: SUMMARY_SAMPLE_LIMIT,
+        offset: 0,
+        includeAudiobookProgress: false,
+        cowatchingLimit: 48
+      });
       const all = sampledActivity.items;
       const baseActivity = {
         items: this.attachAudiobookSessionProjections(all.slice(0, 48)),
@@ -1655,7 +1663,7 @@ export class DashboardService {
       });
 
       const recentPlayback = this.attachAudiobookSessionProjections(this.buildRecentPlaybackCards(all, 24));
-      const recentPlaybackDigests = this.buildRecentPlaybackDigests(all, 24, observedSecondsByItem);
+      const recentPlaybackDigests = this.buildRecentPlaybackDigests(all.slice(0, 150), 24, observedSecondsByItem);
       const householdActivity = [...householdActivityMap.values()]
         .map((item) => ({
           ...item,
@@ -1694,7 +1702,7 @@ export class DashboardService {
         categories: [...categoryStats.values()].map(s => ({ category: s.category, count: s.plays })),
         users,
         libraries: [...new Set(all.map((item) => item.libraryName).filter(Boolean))].sort(),
-        continueWatching: this.getContinueWatching({ ...(input as object), limit: OVERVIEW_CONTINUE_LIMIT }),
+        continueWatching: this.getContinueWatching({ ...(input as object), limit: OVERVIEW_CONTINUE_LIMIT }, all),
         categoryStats: statsList,
         topTitles: Object.fromEntries(topTitlesByCategory),
         heatmaps: Object.fromEntries(heatmaps),
