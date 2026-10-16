@@ -8,6 +8,8 @@
  * - Watermark computation over highest evidence IDs
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import type { Db } from '../db/database.js';
 import { evaluateReplaySemantics, type ReplayObservation } from '../service/replaySemantics.js';
 import { readShowOverrides, cleanShowTitle } from '../service/tvCanonicalMetadataService.js';
@@ -18,7 +20,10 @@ import type {
   EvidenceWatermark,
   SupportingEvidenceRef,
   ShowProgressEvidence,
-  EpisodeReplayDetail
+  EpisodeReplayDetail,
+  AudiobookProgressEvidence,
+  MovieCollectionEvidence,
+  MovieReplayEvidence
 } from './types.js';
 
 export interface ReadEvidenceOptions {
@@ -73,6 +78,8 @@ export class AchievementEvidenceReader {
     const coWatchesByUser = this.readConfirmedCoWatches(visibleUserIds);
     const inferredOnlyByUser = this.checkInferredCoWatchOnly(visibleUserIds, coWatchesByUser);
     const audiobookCountsByUser = this.readCompletedAudiobookCounts(visibleUserIds);
+    const { progressByUser: audiobookProgressByUser, secondsByUser: audiobookSecondsByUser } = this.readAudiobookProgress(visibleUserIds, playsByUser);
+    const { collectionsByUser: movieCollectionsByUser, replaysByUser: movieReplaysByUser } = this.readMovieCollectionsAndReplays(visibleUserIds, playsByUser);
 
     const subjects: SubjectEvidence[] = [];
 
@@ -83,6 +90,10 @@ export class AchievementEvidenceReader {
       const completedAudiobookCount = audiobookCountsByUser.get(user.id) ?? 0;
       const hasInferredCoWatchOnly = inferredOnlyByUser.has(user.id);
       const showProgress = this.calculateShowProgress(plays, replaysByRatingKey);
+      const audiobookProgress = audiobookProgressByUser.get(user.id);
+      const totalAudiobookSeconds = audiobookSecondsByUser.get(user.id) ?? 0;
+      const movieCollectionProgress = movieCollectionsByUser.get(user.id);
+      const movieReplayProgress = movieReplaysByUser.get(user.id);
 
       subjects.push({
         userId: user.id,
@@ -94,6 +105,10 @@ export class AchievementEvidenceReader {
         confirmedCoWatches,
         completedAudiobookCount,
         showProgress,
+        audiobookProgress,
+        totalAudiobookSeconds,
+        movieCollectionProgress,
+        movieReplayProgress,
         hasInferredCoWatchOnly
       });
     }
@@ -945,7 +960,7 @@ export class AchievementEvidenceReader {
     const countsByUser = new Map<number, number>();
 
     // Audiobook books milestone: NEVER count individual track observations as books.
-    // Query audiobook_position_evidence for completed books (view_offset_ms >= duration_ms).
+    // Query audiobook_position_evidence for completed books (view_offset_ms >= duration_ms * 0.95).
     const tableExists = this.db.prepare(`
       SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audiobook_position_evidence'
     `).get();
@@ -956,7 +971,7 @@ export class AchievementEvidenceReader {
     const rows = this.db.prepare(`
       SELECT user_id, COUNT(DISTINCT audiobook_id) as count
       FROM audiobook_position_evidence
-      WHERE duration_ms > 0 AND view_offset_ms >= duration_ms
+      WHERE duration_ms > 0 AND (view_offset_ms >= duration_ms OR view_offset_ms >= (duration_ms * 0.95))
       GROUP BY user_id
     `).all() as Array<{ user_id: number; count: number }>;
 
@@ -968,6 +983,272 @@ export class AchievementEvidenceReader {
     }
 
     return countsByUser;
+  }
+
+  private readAudiobookProgress(
+    visibleUserIds: Set<number>,
+    playsByUser: Map<number, CanonicalPlay[]>
+  ): {
+    progressByUser: Map<number, Map<number, AudiobookProgressEvidence>>;
+    secondsByUser: Map<number, number>;
+  } {
+    const progressByUser = new Map<number, Map<number, AudiobookProgressEvidence>>();
+    const secondsByUser = new Map<number, number>();
+
+    const tableExists = this.db.prepare(`
+      SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audiobook_position_evidence'
+    `).get();
+
+    if (tableExists) {
+      try {
+        const rows = this.db.prepare(`
+          SELECT
+            ape.user_id,
+            ape.audiobook_id,
+            MAX(ape.view_offset_ms) as max_offset_ms,
+            MAX(ape.duration_ms) as max_duration_ms,
+            MIN(ape.observed_at) as first_observed_at,
+            MAX(ape.observed_at) as latest_observed_at,
+            COUNT(ape.id) as stop_count,
+            ab.title,
+            ab.subtitle,
+            ab.authors_json,
+            ab.series_title,
+            ab.series_index,
+            ab.cover_url,
+            ab.total_duration_seconds,
+            ab.chapter_count
+          FROM audiobook_position_evidence ape
+          JOIN audiobook_books ab ON ab.id = ape.audiobook_id
+          WHERE ape.duration_ms > 0
+          GROUP BY ape.user_id, ape.audiobook_id
+        `).all() as any[];
+
+        for (const row of rows) {
+          const userId = Number(row.user_id);
+          if (!visibleUserIds.has(userId)) continue;
+
+          let authors: string[] = [];
+          if (row.authors_json) {
+            try {
+              const parsed = JSON.parse(row.authors_json);
+              if (Array.isArray(parsed)) authors = parsed.map(String);
+            } catch {}
+          }
+
+          const offsetMs = Number(row.max_offset_ms ?? 0);
+          const durationMs = Number(row.max_duration_ms ?? 0);
+          const totalDurationSeconds = durationMs > 0 ? Math.round(durationMs / 1000) : Number(row.total_duration_seconds ?? 0);
+          const viewOffsetSeconds = Math.round(offsetMs / 1000);
+          const percentComplete = durationMs > 0 ? Math.min(100, Math.round((offsetMs / durationMs) * 100)) : 0;
+          const isCompleted = offsetMs >= durationMs || percentComplete >= 95;
+
+          if (percentComplete >= 2 || isCompleted) {
+            const userMap = progressByUser.get(userId) ?? new Map<number, AudiobookProgressEvidence>();
+            userMap.set(Number(row.audiobook_id), {
+              audiobookId: Number(row.audiobook_id),
+              title: String(row.title ?? ''),
+              subtitle: row.subtitle ? String(row.subtitle) : null,
+              authors,
+              seriesTitle: row.series_title ? String(row.series_title) : null,
+              seriesIndex: row.series_index != null ? Number(row.series_index) : null,
+              totalDurationSeconds,
+              viewOffsetSeconds,
+              percentComplete,
+              chapterCount: row.chapter_count != null ? Number(row.chapter_count) : null,
+              completedChaptersCount: null,
+              isCompleted,
+              relistenCount: 0,
+              firstCompletedAt: isCompleted ? (row.latest_observed_at ?? null) : null,
+              latestWatchedAt: row.latest_observed_at ?? null,
+              coverUrl: row.cover_url ?? null,
+              posterUrl: `/api/artwork/${encodeURIComponent(`audiobook:${row.audiobook_id}`)}?variant=poster`
+            });
+            progressByUser.set(userId, userMap);
+          }
+        }
+      } catch {}
+    }
+
+    // Compute listening seconds per user across plays and position evidence
+    for (const userId of visibleUserIds) {
+      let totalSeconds = 0;
+      const plays = playsByUser.get(userId) ?? [];
+      for (const play of plays) {
+        if (play.category === 'audiobook' && play.durationSeconds) {
+          totalSeconds += play.durationSeconds;
+        }
+      }
+
+      const userBooks = progressByUser.get(userId);
+      if (userBooks) {
+        let positionSeconds = 0;
+        for (const book of userBooks.values()) {
+          positionSeconds += book.viewOffsetSeconds;
+        }
+        totalSeconds = Math.max(totalSeconds, positionSeconds);
+      }
+
+      secondsByUser.set(userId, totalSeconds);
+    }
+
+    return { progressByUser, secondsByUser };
+  }
+
+  private readMovieCollectionsAndReplays(
+    visibleUserIds: Set<number>,
+    playsByUser: Map<number, CanonicalPlay[]>
+  ): {
+    collectionsByUser: Map<number, Map<string, MovieCollectionEvidence>>;
+    replaysByUser: Map<number, Map<string, MovieReplayEvidence>>;
+  } {
+    const collectionsByUser = new Map<number, Map<string, MovieCollectionEvidence>>();
+    const replaysByUser = new Map<number, Map<string, MovieReplayEvidence>>();
+
+    // 1. Movie Replay Favorites (movies with replayCount >= 1 via evaluateReplaySemantics)
+    for (const userId of visibleUserIds) {
+      const plays = playsByUser.get(userId) ?? [];
+      const moviePlays = plays.filter((p) => p.category === 'movie' && p.completed);
+      const { replaysByRatingKey } = this.calculateReplays(moviePlays);
+      const userReplays = new Map<string, MovieReplayEvidence>();
+
+      const playsByKey = new Map<string, CanonicalPlay[]>();
+      for (const p of moviePlays) {
+        const list = playsByKey.get(p.ratingKey) ?? [];
+        list.push(p);
+        playsByKey.set(p.ratingKey, list);
+      }
+
+      for (const [ratingKey, keyPlays] of playsByKey.entries()) {
+        const repCount = replaysByRatingKey.get(ratingKey) ?? 0;
+        if (repCount >= 1) {
+          const sample = keyPlays[0];
+          userReplays.set(ratingKey, {
+            ratingKey,
+            title: sample.title,
+            posterUrl: `/api/artwork/${encodeURIComponent(ratingKey)}?variant=poster`,
+            year: null,
+            playCount: keyPlays.length,
+            replayCount: repCount,
+            firstWatchedAt: keyPlays[0]?.watchedAt ?? null,
+            latestWatchedAt: keyPlays[keyPlays.length - 1]?.watchedAt ?? null,
+            allCompletedPlays: keyPlays
+          });
+        }
+      }
+
+      replaysByUser.set(userId, userReplays);
+    }
+
+    // 2. Movie Franchises / Collections
+    let movieCollectionsConfig: Record<string, {
+      title: string;
+      canonicalTotalFilms?: number;
+      films: Array<{ title: string; year?: number; ratingKey?: string }>;
+    }> = {};
+
+    try {
+      const configPath = path.resolve('config/movie_collections.json');
+      if (fs.existsSync(configPath)) {
+        movieCollectionsConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      }
+    } catch {}
+
+    let catalogMovies: Array<{ rating_key: string; title: string; genres_json?: string }> = [];
+    try {
+      catalogMovies = this.db.prepare(`
+        SELECT rating_key, title, genres_json
+        FROM content_catalog
+        WHERE media_type = 'movie'
+      `).all() as any[];
+    } catch {}
+
+    for (const userId of visibleUserIds) {
+      const plays = playsByUser.get(userId) ?? [];
+      const completedMoviePlays = plays.filter((p) => p.category === 'movie' && p.completed);
+      const completedTitles = new Set(completedMoviePlays.map((p) => p.title.trim().toLowerCase()));
+      const completedKeys = new Set(completedMoviePlays.map((p) => p.ratingKey));
+      const userCollections = new Map<string, MovieCollectionEvidence>();
+
+      for (const [colKey, col] of Object.entries(movieCollectionsConfig)) {
+        const totalFilms = col.canonicalTotalFilms || col.films.length;
+        let availableOnPlex = 0;
+        const completedFilmKeys = new Set<string>();
+        const filmDetails: MovieCollectionEvidence['filmDetails'] = [];
+        const matchingCompletedPlays: CanonicalPlay[] = [];
+        let firstPosterRatingKey: string | null = null;
+
+        for (const film of col.films) {
+          const lowerFilmTitle = film.title.trim().toLowerCase();
+          const catalogMatch = catalogMovies.find(
+            (m) => m.title.trim().toLowerCase() === lowerFilmTitle || (film.ratingKey && m.rating_key === film.ratingKey)
+          );
+          const isOnPlex = Boolean(catalogMatch);
+          if (isOnPlex) availableOnPlex += 1;
+
+          const isCompleted = completedTitles.has(lowerFilmTitle) || (catalogMatch && completedKeys.has(catalogMatch.rating_key));
+          const ratingKey = catalogMatch ? catalogMatch.rating_key : (film.ratingKey || `missing-${lowerFilmTitle}`);
+
+          if (isOnPlex && !firstPosterRatingKey) {
+            firstPosterRatingKey = ratingKey;
+          }
+
+          if (isCompleted) {
+            completedFilmKeys.add(ratingKey);
+            const playsForFilm = completedMoviePlays.filter(
+              (p) => p.title.trim().toLowerCase() === lowerFilmTitle || (catalogMatch && p.ratingKey === catalogMatch.rating_key)
+            );
+            matchingCompletedPlays.push(...playsForFilm);
+            const playCount = playsForFilm.length;
+            filmDetails.push({
+              ratingKey,
+              title: film.title,
+              year: film.year ?? null,
+              availableOnPlex: isOnPlex,
+              completed: true,
+              playCount,
+              firstWatchedAt: playsForFilm[0]?.watchedAt ?? null,
+              lastWatchedAt: playsForFilm[playsForFilm.length - 1]?.watchedAt ?? null
+            });
+          } else {
+            filmDetails.push({
+              ratingKey,
+              title: film.title,
+              year: film.year ?? null,
+              availableOnPlex: isOnPlex,
+              completed: false,
+              playCount: 0,
+              firstWatchedAt: null,
+              lastWatchedAt: null
+            });
+          }
+        }
+
+        if (completedFilmKeys.size > 0) {
+          matchingCompletedPlays.sort((a, b) => (a.watchedAt || '').localeCompare(b.watchedAt || ''));
+          const posterUrl = firstPosterRatingKey
+            ? `/api/artwork/${encodeURIComponent(firstPosterRatingKey)}?variant=poster`
+            : null;
+
+          userCollections.set(colKey, {
+            collectionKey: colKey,
+            collectionTitle: col.title,
+            posterUrl,
+            totalFilms,
+            availableOnPlex,
+            missingOffServerCount: Math.max(0, totalFilms - availableOnPlex),
+            completedFilmKeys,
+            allCompletedPlays: matchingCompletedPlays,
+            filmDetails,
+            latestWatchedAt: matchingCompletedPlays[matchingCompletedPlays.length - 1]?.watchedAt ?? null
+          });
+        }
+      }
+
+      collectionsByUser.set(userId, userCollections);
+    }
+
+    return { collectionsByUser, replaysByUser };
   }
 
   private normalizeCategory(

@@ -1,7 +1,7 @@
 # Block 3-6-6G: Audiobook Mastery, In-Progress Book Trophies, And Series Collections
 
-> Status: Planned (created 2026-10-16).
-> Result: Not implemented.
+> Status: Implemented (2026-10-16).
+> Result: Implemented and verified via deterministic test gate (`npm run verify:block`) and live smoke gate.
 > Dependency: Blocks 3-6-6A, 3-6-6C, 3-6-6D, and canonical audiobook position evidence (`3-2n-6H` / `3-2n-6I`) implemented and verified.
 > Direction: `docs/design/achievements-product-direction.md`.
 

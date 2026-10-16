@@ -51,6 +51,26 @@ export interface BadgeFlavorStats {
   firstCompletedEpisodeNumber?: number | null;
   nextTierProgress?: NextTierProgress | null;
   episodeReplayDetails?: EpisodeReplayDetail[];
+  mediaCategory?: 'tv' | 'anime' | 'classic_tv' | 'audiobook' | 'movie' | 'movie_collection';
+  audiobookId?: number | null;
+  authors?: string[];
+  narrators?: string[];
+  seriesTitle?: string | null;
+  seriesIndex?: number | null;
+  totalDurationSeconds?: number | null;
+  viewOffsetSeconds?: number | null;
+  percentComplete?: number | null;
+  chapterCount?: number | null;
+  completedChaptersCount?: number | null;
+  collectionKey?: string | null;
+  collectionFilms?: Array<{
+    ratingKey: string;
+    title: string;
+    year?: number | null;
+    completed: boolean;
+    playCount: number;
+    availableOnPlex: boolean;
+  }>;
 }
 
 export interface BadgeDescriptor {
@@ -222,6 +242,60 @@ export interface ShowProgressEvidence {
   episodeReplayDetails?: EpisodeReplayDetail[];
 }
 
+export interface AudiobookProgressEvidence {
+  audiobookId: number;
+  title: string;
+  subtitle?: string | null;
+  authors: string[];
+  seriesTitle?: string | null;
+  seriesIndex?: number | null;
+  totalDurationSeconds: number;
+  viewOffsetSeconds: number;
+  percentComplete: number;
+  chapterCount?: number | null;
+  completedChaptersCount?: number | null;
+  isCompleted: boolean;
+  relistenCount: number;
+  firstCompletedAt?: string | null;
+  latestWatchedAt?: string | null;
+  coverUrl?: string | null;
+  posterUrl: string | null;
+}
+
+export interface MovieCollectionEvidence {
+  collectionKey: string;
+  collectionTitle: string;
+  posterUrl: string | null;
+  totalFilms: number;
+  availableOnPlex: number;
+  missingOffServerCount: number;
+  completedFilmKeys: Set<string>;
+  allCompletedPlays: CanonicalPlay[];
+  filmDetails: Array<{
+    ratingKey: string;
+    title: string;
+    year?: number | null;
+    availableOnPlex: boolean;
+    completed: boolean;
+    playCount: number;
+    firstWatchedAt: string | null;
+    lastWatchedAt: string | null;
+  }>;
+  latestWatchedAt?: string | null;
+}
+
+export interface MovieReplayEvidence {
+  ratingKey: string;
+  title: string;
+  posterUrl: string | null;
+  year?: number | null;
+  playCount: number;
+  replayCount: number;
+  firstWatchedAt: string | null;
+  latestWatchedAt: string | null;
+  allCompletedPlays: CanonicalPlay[];
+}
+
 export interface SubjectEvidence {
   userId: number;
   username: string;
@@ -232,6 +306,11 @@ export interface SubjectEvidence {
   confirmedCoWatches: ConfirmedCoWatch[];
   completedAudiobookCount: number;
   showProgress?: Map<string, ShowProgressEvidence>;
+  audiobookProgress?: Map<number, AudiobookProgressEvidence>;
+  totalAudiobookSeconds?: number;
+  movieCollectionProgress?: Map<string, MovieCollectionEvidence>;
+  movieReplayProgress?: Map<string, MovieReplayEvidence>;
   hasInferredCoWatchOnly?: boolean;
   hasUnknownDenominator?: boolean;
 }
+

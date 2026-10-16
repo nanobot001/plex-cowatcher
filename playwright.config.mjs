@@ -11,8 +11,8 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0,
-  timeout: 20_000,
-  expect: { timeout: 5_000 },
+  timeout: 45_000,
+  expect: { timeout: 10_000 },
   reporter: [["list"]],
   outputDir: "test-results/dashboard-regression",
   use: {

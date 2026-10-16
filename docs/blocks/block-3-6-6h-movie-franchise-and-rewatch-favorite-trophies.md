@@ -1,7 +1,7 @@
 # Block 3-6-6H: Movie Franchise Collections, Rewatch Favorites, And Expanded Genre/Era Tiers
 
-> Status: Planned (created 2026-10-16).
-> Result: Not implemented.
+> Status: Implemented (2026-10-16).
+> Result: Implemented and verified via deterministic test gate (`npm run verify:block`) and live smoke gate.
 > Dependency: Blocks 3-6-6A, 3-6-6C, and 3-6-6D implemented and verified.
 > Direction: `docs/design/achievements-product-direction.md`.
 

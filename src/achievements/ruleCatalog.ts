@@ -205,6 +205,118 @@ export const DEFAULT_ACHIEVEMENT_RULES: AchievementRule[] = [
       iconHint: 'audiobook'
     }
   },
+  {
+    ruleId: 'audiobook_count_10',
+    version: 1,
+    family: 'watch_count',
+    unit: 'audiobook_book',
+    threshold: 10,
+    scope: { category: 'audiobook' },
+    facet: 'trophy_shelf',
+    badge: {
+      badgeKey: 'audiobook_book_10',
+      tier: 'gold',
+      title: 'Chapter & Verse',
+      description: 'Completed 10 full audiobook books.',
+      iconHint: 'audiobook'
+    }
+  },
+  {
+    ruleId: 'audiobook_count_25',
+    version: 1,
+    family: 'watch_count',
+    unit: 'audiobook_book',
+    threshold: 25,
+    scope: { category: 'audiobook' },
+    facet: 'trophy_shelf',
+    badge: {
+      badgeKey: 'audiobook_book_25',
+      tier: 'platinum',
+      title: 'Walking Library',
+      description: 'Completed 25 full audiobook books.',
+      iconHint: 'audiobook'
+    }
+  },
+  {
+    ruleId: 'audiobook_hours_25',
+    version: 1,
+    family: 'watch_count',
+    unit: 'hour',
+    threshold: 25,
+    scope: { category: 'audiobook' },
+    facet: 'trophy_shelf',
+    badge: {
+      badgeKey: 'audiobook_hours_25',
+      tier: 'bronze',
+      title: 'Attentive Ear',
+      description: 'Listened to 25 hours of audiobooks.',
+      iconHint: 'audiobook'
+    }
+  },
+  {
+    ruleId: 'audiobook_hours_100',
+    version: 1,
+    family: 'watch_count',
+    unit: 'hour',
+    threshold: 100,
+    scope: { category: 'audiobook' },
+    facet: 'trophy_shelf',
+    badge: {
+      badgeKey: 'audiobook_hours_100',
+      tier: 'silver',
+      title: 'Centurion Listener',
+      description: 'Listened to 100 hours of audiobooks.',
+      iconHint: 'audiobook'
+    }
+  },
+  {
+    ruleId: 'audiobook_hours_250',
+    version: 1,
+    family: 'watch_count',
+    unit: 'hour',
+    threshold: 250,
+    scope: { category: 'audiobook' },
+    facet: 'trophy_shelf',
+    badge: {
+      badgeKey: 'audiobook_hours_250',
+      tier: 'gold',
+      title: 'Audiobook Voyager',
+      description: 'Listened to 250 hours of audiobooks.',
+      iconHint: 'audiobook'
+    }
+  },
+  {
+    ruleId: 'movie_count_100',
+    version: 1,
+    family: 'watch_count',
+    unit: 'movie',
+    threshold: 100,
+    scope: { category: 'movie' },
+    facet: 'trophy_shelf',
+    badge: {
+      badgeKey: 'movie_100',
+      tier: 'gold',
+      title: 'Centurion Cinephile',
+      description: 'Watched 100 distinct movies.',
+      iconHint: 'movie'
+    }
+  },
+  {
+    ruleId: 'movie_count_250',
+    version: 1,
+    family: 'watch_count',
+    unit: 'movie',
+    threshold: 250,
+    scope: { category: 'movie' },
+    facet: 'trophy_shelf',
+    badge: {
+      badgeKey: 'movie_250',
+      tier: 'platinum',
+      title: 'Silver Screen Master',
+      description: 'Watched 250 distinct movies.',
+      iconHint: 'movie'
+    }
+  },
 
   // --- Taste & Genre Affinity (Personal Devotion) ---
   {
@@ -236,6 +348,118 @@ export const DEFAULT_ACHIEVEMENT_RULES: AchievementRule[] = [
       tier: 'bronze',
       title: 'Sci-Fi Explorer',
       description: 'Journeyed through 5 science fiction films.',
+      iconHint: 'movie'
+    }
+  },
+  {
+    ruleId: 'taste_scifi_voyager',
+    version: 1,
+    family: 'watch_count',
+    unit: 'movie',
+    threshold: 15,
+    scope: { category: 'movie', genre: 'Science Fiction' },
+    facet: 'taste_affinity',
+    badge: {
+      badgeKey: 'scifi_voyager',
+      tier: 'silver',
+      title: 'Sci-Fi Voyager',
+      description: 'Journeyed through 15 science fiction films.',
+      iconHint: 'movie'
+    }
+  },
+  {
+    ruleId: 'taste_action_initiate',
+    version: 1,
+    family: 'watch_count',
+    unit: 'movie',
+    threshold: 5,
+    scope: { category: 'movie', genre: 'Action' },
+    facet: 'taste_affinity',
+    badge: {
+      badgeKey: 'action_initiate',
+      tier: 'bronze',
+      title: 'Action Initiate',
+      description: 'Watched 5 high-octane action films.',
+      iconHint: 'movie'
+    }
+  },
+  {
+    ruleId: 'taste_action_hero',
+    version: 1,
+    family: 'watch_count',
+    unit: 'movie',
+    threshold: 15,
+    scope: { category: 'movie', genre: 'Action' },
+    facet: 'taste_affinity',
+    badge: {
+      badgeKey: 'action_hero',
+      tier: 'silver',
+      title: 'Action Hero',
+      description: 'Watched 15 high-octane action films.',
+      iconHint: 'movie'
+    }
+  },
+  {
+    ruleId: 'taste_comedy_regular',
+    version: 1,
+    family: 'watch_count',
+    unit: 'movie',
+    threshold: 5,
+    scope: { category: 'movie', genre: 'Comedy' },
+    facet: 'taste_affinity',
+    badge: {
+      badgeKey: 'comedy_regular',
+      tier: 'bronze',
+      title: 'Comedy Regular',
+      description: 'Enjoyed 5 comedy films.',
+      iconHint: 'movie'
+    }
+  },
+  {
+    ruleId: 'taste_comedy_connoisseur',
+    version: 1,
+    family: 'watch_count',
+    unit: 'movie',
+    threshold: 15,
+    scope: { category: 'movie', genre: 'Comedy' },
+    facet: 'taste_affinity',
+    badge: {
+      badgeKey: 'comedy_connoisseur',
+      tier: 'silver',
+      title: 'Comedy Connoisseur',
+      description: 'Enjoyed 15 comedy films.',
+      iconHint: 'movie'
+    }
+  },
+  {
+    ruleId: 'taste_drama_seeker',
+    version: 1,
+    family: 'watch_count',
+    unit: 'movie',
+    threshold: 5,
+    scope: { category: 'movie', genre: 'Drama' },
+    facet: 'taste_affinity',
+    badge: {
+      badgeKey: 'drama_seeker',
+      tier: 'bronze',
+      title: 'Drama Seeker',
+      description: 'Experienced 5 compelling dramatic features.',
+      iconHint: 'movie'
+    }
+  },
+  {
+    ruleId: 'taste_drama_devotee',
+    version: 1,
+    family: 'watch_count',
+    unit: 'movie',
+    threshold: 15,
+    scope: { category: 'movie', genre: 'Drama' },
+    facet: 'taste_affinity',
+    badge: {
+      badgeKey: 'drama_devotee',
+      tier: 'silver',
+      title: 'Drama Devotee',
+      description: 'Experienced 15 compelling dramatic features.',
       iconHint: 'movie'
     }
   },

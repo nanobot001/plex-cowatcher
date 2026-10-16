@@ -8006,6 +8006,242 @@ test("TV broadcast progress: aired_episodes_count, 6-hour release grace period, 
   });
 });
 
+test("3-6-6G Audiobook Mastery: dynamic cover-art Book Mastery trophies (in_progress and earned) and listening-hour milestones", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    db.prepare(`
+      INSERT INTO audiobook_books (id, folder_key, title, authors_json, total_duration_seconds, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES
+        (101, 'sanderson-mistborn-1', 'The Final Empire', '["Brandon Sanderson"]', 36000, 'test', 'enriched', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+        (102, 'sanderson-mistborn-2', 'The Well of Ascension', '["Brandon Sanderson"]', 36000, 'test', 'enriched', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+        (103, 'sanderson-mistborn-3', 'The Hero of Ages', '["Brandon Sanderson"]', 36000, 'test', 'enriched', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // Book 101: 100% completed in position evidence (10 hours = 36,000,000 ms)
+    db.prepare(`
+      INSERT INTO audiobook_position_evidence
+        (id, source_type, source_event_key, source_user_key, source_session_key, user_id, audiobook_id, rating_key, observed_at, session_stopped_at, view_offset_ms, duration_ms, capture_reason, payload_digest, created_at)
+      VALUES
+        (1, 'tautulli_stop', 'ev-1', 'u-1', 's-1', 1, 101, 'rk-101', '2026-08-10T12:00:00Z', '2026-08-10T12:00:00Z', 36000000, 36000000, 'playback_stop', 'hash1', '2026-08-10T12:00:00Z')
+    `).run();
+
+    // Book 102: 50% in progress (18,000,000 ms / 36,000,000 ms)
+    db.prepare(`
+      INSERT INTO audiobook_position_evidence
+        (id, source_type, source_event_key, source_user_key, source_session_key, user_id, audiobook_id, rating_key, observed_at, session_stopped_at, view_offset_ms, duration_ms, capture_reason, payload_digest, created_at)
+      VALUES
+        (2, 'tautulli_stop', 'ev-2', 'u-1', 's-2', 1, 102, 'rk-102', '2026-08-12T12:00:00Z', '2026-08-12T12:00:00Z', 18000000, 36000000, 'playback_stop', 'hash2', '2026-08-12T12:00:00Z')
+    `).run();
+
+    // Book 103: 1% (< 2% threshold) -> should not create trophy
+    db.prepare(`
+      INSERT INTO audiobook_position_evidence
+        (id, source_type, source_event_key, source_user_key, source_session_key, user_id, audiobook_id, rating_key, observed_at, session_stopped_at, view_offset_ms, duration_ms, capture_reason, payload_digest, created_at)
+      VALUES
+        (3, 'tautulli_stop', 'ev-3', 'u-1', 's-3', 1, 103, 'rk-103', '2026-08-13T12:00:00Z', '2026-08-13T12:00:00Z', 360000, 36000000, 'playback_stop', 'hash3', '2026-08-13T12:00:00Z')
+    `).run();
+
+    const achievementService = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const achievements = achievementService.getAchievements({ user: 1 });
+
+    // Verify Book 101 (Completed Trophy)
+    const book101Trophy = achievements.results.find((r) => r.ruleId === 'book_mastery_101');
+    assert.ok(book101Trophy, "Book 101 mastery trophy must exist");
+    assert.equal(book101Trophy.state, 'earned');
+    assert.equal(book101Trophy.badge.stats.mediaCategory, 'audiobook');
+    assert.equal(book101Trophy.badge.stats.percentComplete, 100);
+    assert.equal(book101Trophy.badge.iconHint, 'audiobook');
+    assert.ok(book101Trophy.badge.posterUrl.includes('audiobook%3A101'));
+
+    // Verify Book 102 (In Progress Trophy)
+    const book102Trophy = achievements.results.find((r) => r.ruleId === 'book_mastery_102');
+    assert.ok(book102Trophy, "Book 102 in-progress trophy must exist");
+    assert.equal(book102Trophy.state, 'in_progress');
+    assert.equal(book102Trophy.badge.stats.percentComplete, 50);
+    assert.equal(book102Trophy.badge.stats.mediaCategory, 'audiobook');
+
+    // Verify Book 103 (< 2% progress)
+    const book103Trophy = achievements.results.find((r) => r.ruleId === 'book_mastery_103');
+    assert.equal(book103Trophy, undefined, "Book with < 2% progress must NOT generate a trophy card");
+
+    // Verify Audiobook Hours Milestone: 10 hrs + 5 hrs = 15 hrs (under 25h threshold)
+    const hours25 = achievements.results.find((r) => r.ruleId === 'audiobook_hours_25');
+    assert.ok(hours25, "audiobook_hours_25 rule must evaluate");
+    assert.equal(hours25.state, 'in_progress');
+    assert.equal(hours25.progress.current, 15);
+    assert.equal(hours25.progress.target, 25);
+  });
+});
+
+test("3-6-6H Movie Franchises & Rewatch Favorites: dynamic collection mastery and cult-classic rewatch favorite trophies", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // Catalog movies for Dune collection and a standalone cult classic
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, library_title, genres_json, source_provenance, refreshed_at)
+      VALUES
+        ('dune-1', 'movie', 'Dune', 'Movies', '["Science Fiction", "Adventure"]', 'plex', '2026-08-01T00:00:00Z'),
+        ('dune-2', 'movie', 'Dune: Part Two', 'Movies', '["Science Fiction", "Adventure"]', 'plex', '2026-08-01T00:00:00Z'),
+        ('fav-thor', 'movie', 'Thor', 'Movies', '["Action", "Fantasy"]', 'plex', '2026-08-01T00:00:00Z'),
+        ('once-1917', 'movie', '1917', 'Movies', '["War", "Drama"]', 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // User watched Dune (1 of 2 films in Dune Collection)
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (701, 1, 'dune-1', 'movie', 'Movies', 'Dune', '2026-08-10T20:00:00Z', 1, 9000, '2026-08-10T20:00:00Z', '2026-08-10T20:00:00Z')
+    `).run();
+
+    // User watched Thor 2 times across distinct viewing days (cult classic rewatch favorite!)
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES
+        (702, 1, 'fav-thor', 'movie', 'Movies', 'Thor', '2026-08-11T20:00:00Z', 1, 6900, '2026-08-11T20:00:00Z', '2026-08-11T20:00:00Z'),
+        (703, 1, 'fav-thor', 'movie', 'Movies', 'Thor', '2026-08-20T20:00:00Z', 1, 6900, '2026-08-20T20:00:00Z', '2026-08-20T20:00:00Z')
+    `).run();
+
+    // User watched 1917 only once
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (704, 1, 'once-1917', 'movie', 'Movies', '1917', '2026-08-15T20:00:00Z', 1, 7100, '2026-08-15T20:00:00Z', '2026-08-15T20:00:00Z')
+    `).run();
+
+    const achievementService = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    let shelf = achievementService.getAchievements({ user: 1, facet: 'trophy_shelf' });
+
+    // 1. Dune Collection Trophy (In Progress: 1 of 2 films)
+    const duneTrophy = shelf.results.find((r) => r.ruleId === 'collection_mastery_dune');
+    assert.ok(duneTrophy, "Dune collection trophy must exist on Trophy Shelf");
+    assert.equal(duneTrophy.state, 'in_progress');
+    assert.equal(duneTrophy.progress.current, 1);
+    assert.equal(duneTrophy.progress.target, 2);
+    assert.equal(duneTrophy.badge.stats.mediaCategory, 'movie_collection');
+
+    // 2. Thor Rewatch Favorite (Silver 2x Replay)
+    const thorFavorite = shelf.results.find((r) => r.ruleId === 'movie_favorite_fav-thor');
+    assert.ok(thorFavorite, "Thor rewatch favorite trophy must exist");
+    assert.equal(thorFavorite.state, 'earned');
+    assert.equal(thorFavorite.badge.tier, 'silver');
+    assert.equal(thorFavorite.badge.stats.rewatchCount, 1);
+    assert.equal(thorFavorite.badge.stats.mediaCategory, 'movie');
+
+    // 3. 1917 watched once -> must NOT clutter Trophy Shelf
+    const onceTrophy = shelf.results.find((r) => r.ruleId === 'movie_favorite_once-1917');
+    assert.equal(onceTrophy, undefined, "1x standalone movie watches must NOT generate individual trophy cards");
+
+    // Complete Dune: Part Two -> now 2 of 2 films completed -> Franchise Mastery Earned!
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (705, 1, 'dune-2', 'movie', 'Movies', 'Dune: Part Two', '2026-08-25T20:00:00Z', 1, 9900, '2026-08-25T20:00:00Z', '2026-08-25T20:00:00Z')
+    `).run();
+
+    shelf = achievementService.getAchievements({ user: 1, facet: 'trophy_shelf' });
+    const duneCompleted = shelf.results.find((r) => r.ruleId === 'collection_mastery_dune');
+    assert.equal(duneCompleted.state, 'earned');
+    assert.equal(duneCompleted.progress.current, 2);
+    assert.equal(duneCompleted.progress.target, 2);
+    assert.equal(duneCompleted.badge.stats.completedItems, 2);
+  });
+});
+
+test("3-6-6I Multi-Media Trophy Shelf Filters, Modal Presenters, and Obsession Parity", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 1. Catalog & Audiobooks: An audiobook listening session
+    db.prepare(`
+      INSERT INTO audiobook_books (id, folder_key, title, authors_json, total_duration_seconds, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES (101, 'weir-project-hail-mary', 'Project Hail Mary', '["Andy Weir"]', 57600, 'test', 'enriched', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+    db.prepare(`
+      INSERT INTO audiobook_position_evidence
+        (id, source_type, source_event_key, source_user_key, source_session_key, user_id, audiobook_id, rating_key, observed_at, session_stopped_at, view_offset_ms, duration_ms, capture_reason, payload_digest, created_at)
+      VALUES
+        (800, 'tautulli_stop', 'ev-800', 'u-1', 's-800', 1, 101, 'rk-101', '2026-08-20T12:00:00Z', '2026-08-20T12:00:00Z', 57600000, 57600000, 'playback_stop', 'hash800', '2026-08-20T12:00:00Z')
+    `).run();
+
+    // 2. Catalog & Movies: Dune Collection & Thor Cult Classic Favorite
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, library_title, genres_json, source_provenance, refreshed_at)
+      VALUES
+        ('dune-1', 'movie', 'Dune', 'Movies', '["Science Fiction"]', 'plex', '2026-08-01T00:00:00Z'),
+        ('fav-thor', 'movie', 'Thor', 'Movies', '["Action"]', 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES
+        (801, 1, 'dune-1', 'movie', 'Movies', 'Dune', '2026-08-10T20:00:00Z', 1, 9000, '2026-08-10T20:00:00Z', '2026-08-10T20:00:00Z'),
+        (802, 1, 'fav-thor', 'movie', 'Movies', 'Thor', '2026-08-11T20:00:00Z', 1, 6900, '2026-08-11T20:00:00Z', '2026-08-11T20:00:00Z'),
+        (803, 1, 'fav-thor', 'movie', 'Movies', 'Thor', '2026-08-22T20:00:00Z', 1, 6900, '2026-08-22T20:00:00Z', '2026-08-22T20:00:00Z')
+    `).run();
+
+    // 3. Catalog & TV: Severance (1 ep watched, leaf_count = 9)
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, leaf_count, source_provenance, refreshed_at)
+      VALUES ('sev-show', 'show', 'Severance', 9, 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (804, 1, 'sev-1', 'sev-show', 'episode', 'TV Shows', 'Good News About Hell', 'Severance', '2026-08-05T20:00:00Z', 1, 3300, '2026-08-05T20:00:00Z', '2026-08-05T20:00:00Z')
+    `).run();
+
+    const achievementService = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const shelf = achievementService.getAchievements({ user: 1, facet: 'trophy_shelf' });
+
+    // Verify all media categories exist on shelf
+    const bookTrophy = shelf.results.find((r) => r.ruleId === 'book_mastery_101');
+    assert.ok(bookTrophy, "Book mastery trophy must be present on shelf");
+    assert.equal(bookTrophy.badge.stats.mediaCategory, 'audiobook');
+    assert.equal(bookTrophy.badge.stats.totalDurationSeconds, 57600);
+    assert.equal(bookTrophy.badge.stats.percentComplete, 100);
+
+    const collectionTrophy = shelf.results.find((r) => r.ruleId === 'collection_mastery_dune');
+    assert.ok(collectionTrophy, "Franchise collection trophy must be present");
+    assert.equal(collectionTrophy.badge.stats.mediaCategory, 'movie_collection');
+    assert.ok(Array.isArray(collectionTrophy.badge.stats.collectionFilms), "collectionFilms checklist must be populated");
+    assert.equal(collectionTrophy.badge.stats.collectionFilms.length, 2);
+
+    const favoriteTrophy = shelf.results.find((r) => r.ruleId === 'movie_favorite_fav-thor');
+    assert.ok(favoriteTrophy, "Movie rewatch favorite trophy must be present");
+    assert.equal(favoriteTrophy.badge.stats.mediaCategory, 'movie');
+    assert.equal(favoriteTrophy.badge.stats.rewatchCount, 1);
+    assert.ok(favoriteTrophy.badge.stats.nextTierProgress, "Next tier progress must be defined");
+
+    const tvTrophy = shelf.results.find((r) => r.ruleId === 'show_mastery_sev-show');
+    assert.ok(tvTrophy, "TV show trophy must be present");
+    assert.equal(tvTrophy.badge.stats.mediaCategory, 'tv');
+
+    // Verify Obsession Spotlight contains a top title and valid hours/plays
+    const obsession = achievementService.getAchievements({ user: 1, facet: 'obsession_spotlight' });
+    const topObsession = obsession.results.find((r) => r.facet === 'obsession_spotlight');
+    assert.ok(topObsession, "Obsession spotlight must be evaluated");
+    assert.ok(topObsession.badge.stats.totalHours >= 0, "Obsession totalHours must be valid");
+
+    // Verify dashboard HTML/JS contract contains media filters and presenters
+    const webIndexSource = fs.readFileSync('src/web/index.ts', 'utf-8');
+    assert.ok(webIndexSource.includes('id="media-filters"'), "Media filters container must exist in web index");
+    assert.ok(webIndexSource.includes('data-media="all"'), "All media filter button must exist");
+    assert.ok(webIndexSource.includes('data-media="audiobook"'), "Audiobook filter button must exist");
+    assert.ok(webIndexSource.includes('data-media="movie"'), "Movie filter button must exist");
+    assert.ok(webIndexSource.includes('Listening Progress Summary'), "Audiobook modal presenter must exist");
+    assert.ok(webIndexSource.includes('Franchise Coverage Audit'), "Franchise modal audit must exist");
+    assert.ok(webIndexSource.includes('Franchise Film Checklist'), "Franchise film checklist must exist");
+    assert.ok(webIndexSource.includes('Replay Loyalty Summary'), "Movie favorite modal summary must exist");
+  });
+});
+
+
 let passed = 0;
 for (const { name, fn } of tests) {
   try {
