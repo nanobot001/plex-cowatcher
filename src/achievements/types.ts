@@ -40,6 +40,8 @@ export interface BadgeFlavorStats {
   runnerUpPlays?: number;
   availableOnPlex?: number | null;
   missingOffServerCount?: number | null;
+  airedEpisodesCount?: number | null;
+  nextAirAt?: string | null;
   isCaughtUpOnPlex?: boolean;
   seriesStatus?: string | null;
   latestWatchedAt?: string | null;
@@ -204,6 +206,8 @@ export interface ShowProgressEvidence {
   totalEpisodes: number | null;
   availableOnPlex?: number | null;
   missingOffServerCount?: number | null;
+  airedEpisodesCount?: number | null;
+  nextAirAt?: string | null;
   isCaughtUpOnPlex?: boolean;
   seriesStatus?: string | null;
   completedEpisodeKeys: Set<string>;

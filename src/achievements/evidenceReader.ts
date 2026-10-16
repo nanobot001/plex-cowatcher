@@ -692,7 +692,7 @@ export class AchievementEvidenceReader {
       if (sample.grandparentRatingKey) {
         try {
           catalogRow = this.db.prepare(`
-            SELECT rating_key, title, leaf_count, canonical_total_episodes, series_status, media_type, library_title, genres_json
+            SELECT rating_key, title, leaf_count, canonical_total_episodes, series_status, aired_episodes_count, next_air_at, media_type, library_title, genres_json
             FROM content_catalog
             WHERE rating_key = ?
           `).get(sample.grandparentRatingKey);
@@ -702,7 +702,7 @@ export class AchievementEvidenceReader {
       if (!catalogRow && sample.showTitle) {
         try {
           catalogRow = this.db.prepare(`
-            SELECT rating_key, title, leaf_count, canonical_total_episodes, series_status, media_type, library_title, genres_json
+            SELECT rating_key, title, leaf_count, canonical_total_episodes, series_status, aired_episodes_count, next_air_at, media_type, library_title, genres_json
             FROM content_catalog
             WHERE media_type = 'show' AND title = ?
             LIMIT 1
@@ -718,20 +718,22 @@ export class AchievementEvidenceReader {
       let availableOnPlex: number | null = null;
       let missingOffServerCount: number | null = null;
       let seriesStatus: string | null = (showOverride?.seriesStatus ? String(showOverride.seriesStatus).toLowerCase() : null) ?? catalogRow?.series_status ?? null;
+      const airedEpisodesCount: number | null =
+        showOverride?.airedEpisodesCount !== undefined
+          ? showOverride.airedEpisodesCount
+          : (catalogRow?.aired_episodes_count != null ? Number(catalogRow.aired_episodes_count) : null);
+      const nextAirAt: string | null =
+        showOverride?.nextAirAt !== undefined
+          ? showOverride.nextAirAt
+          : (catalogRow?.next_air_at ?? null);
 
       const leafCount = catalogRow?.leaf_count != null && Number(catalogRow.leaf_count) > 0 ? Number(catalogRow.leaf_count) : null;
       availableOnPlex = leafCount;
 
       if (showOverride?.canonicalTotalEpisodes != null && Number(showOverride.canonicalTotalEpisodes) > 0) {
         totalEpisodes = Number(showOverride.canonicalTotalEpisodes);
-        if (availableOnPlex !== null) {
-          missingOffServerCount = Math.max(0, totalEpisodes - availableOnPlex);
-        }
       } else if (catalogRow?.canonical_total_episodes != null && Number(catalogRow.canonical_total_episodes) > 0) {
         totalEpisodes = Number(catalogRow.canonical_total_episodes);
-        if (availableOnPlex !== null) {
-          missingOffServerCount = Math.max(0, totalEpisodes - availableOnPlex);
-        }
       } else if (leafCount !== null) {
         totalEpisodes = leafCount;
       } else {
@@ -754,6 +756,14 @@ export class AchievementEvidenceReader {
         }
       }
 
+      const effectiveAired = airedEpisodesCount != null
+        ? Math.max(airedEpisodesCount, availableOnPlex ?? 0)
+        : totalEpisodes;
+
+      if (effectiveAired !== null && availableOnPlex !== null) {
+        missingOffServerCount = Math.max(0, effectiveAired - availableOnPlex);
+      }
+
       const showRatingKey = catalogRow?.rating_key || sample.grandparentRatingKey || showKey;
       const showTitle = catalogRow?.title || sample.showTitle || sample.title;
       const posterUrl = `/api/artwork/${encodeURIComponent(showRatingKey)}?variant=poster`;
@@ -768,10 +778,12 @@ export class AchievementEvidenceReader {
         });
 
       const completedEpisodeKeys = new Set<string>();
+      const completedRatingKeys = new Set<string>();
       const replaysByEpisode = new Map<string, number>();
       const firstWatchedByEpisode = new Map<string, CanonicalPlay>();
 
       for (const p of allCompletedPlays) {
+        completedRatingKeys.add(p.ratingKey);
         const epKey = (p.seasonNumber != null && p.episodeNumber != null)
           ? `s${p.seasonNumber}e${p.episodeNumber}`
           : p.ratingKey;
@@ -853,9 +865,41 @@ export class AchievementEvidenceReader {
         firstCompletedEpisodeNumber = crossingPlay?.episodeNumber ?? null;
       }
 
+      // Rolling-storage protection: if the user has watched more episodes historically than currently exist on Plex
+      // (e.g. old seasons were deleted while a new season is on Plex), verify they have either watched all aired
+      // episodes or every cataloged episode currently on the server.
+      let hasUnwatchedRollingStorage = false;
+      if (availableOnPlex !== null && completedEpisodeKeys.size > availableOnPlex) {
+        if (effectiveAired !== null && completedEpisodeKeys.size < effectiveAired) {
+          hasUnwatchedRollingStorage = true;
+        } else {
+          const lookupKey = catalogRow?.rating_key || sample.grandparentRatingKey;
+          if (lookupKey) {
+            try {
+              const currentCatalogEps = this.db.prepare(`
+                SELECT rating_key
+                FROM content_catalog
+                WHERE grandparent_rating_key = ? AND media_type = 'episode'
+                  AND (parent_title IS NULL OR (parent_title NOT LIKE '%Special%' AND parent_title != 'Season 0'))
+              `).all(lookupKey) as Array<{ rating_key: string }>;
+              if (currentCatalogEps.length > 0 && currentCatalogEps.some((ep) => !completedRatingKeys.has(String(ep.rating_key)))) {
+                hasUnwatchedRollingStorage = true;
+              }
+            } catch {}
+          }
+        }
+      }
+
+      const hasUnreleasedOrMissing =
+        hasMissingOffServer ||
+        (totalEpisodes !== null && availableOnPlex !== null && availableOnPlex < totalEpisodes);
+
       const isCaughtUpOnPlex = !isComplete && (
         showOverride?.caughtUp === true ||
-        (availableOnPlex !== null && completedEpisodeKeys.size >= availableOnPlex && hasMissingOffServer)
+        (availableOnPlex !== null &&
+          completedEpisodeKeys.size >= availableOnPlex &&
+          !hasUnwatchedRollingStorage &&
+          hasUnreleasedOrMissing)
       );
 
       let resolvedCategory = sample.category;
@@ -877,6 +921,8 @@ export class AchievementEvidenceReader {
         totalEpisodes,
         availableOnPlex,
         missingOffServerCount,
+        airedEpisodesCount,
+        nextAirAt,
         isCaughtUpOnPlex,
         seriesStatus,
         completedEpisodeKeys,

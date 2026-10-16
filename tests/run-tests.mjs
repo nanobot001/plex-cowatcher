@@ -7929,6 +7929,83 @@ test("TV episode denominator: canonical episode count distinguishes caught-up on
   });
 });
 
+test("TV broadcast progress: aired_episodes_count, 6-hour release grace period, and rolling-storage protection", async () => {
+  const { hasEpisodeAiredWithGrace } = await import("../dist/service/tvCanonicalMetadataService.js");
+
+  // 1. 6-hour release grace period check
+  const airIso = "2026-10-13T15:30:00Z";
+  const airMs = Date.parse(airIso);
+  assert.equal(
+    hasEpisodeAiredWithGrace({ airstamp: airIso }, airMs + 2 * 3600_000),
+    false,
+    "Episode must not be counted as aired 2 hours after broadcast (inside 6-hour grace buffer)"
+  );
+  assert.equal(
+    hasEpisodeAiredWithGrace({ airstamp: airIso }, airMs + 6 * 3600_000 + 1000),
+    true,
+    "Episode must be counted as aired once 6-hour grace buffer has elapsed"
+  );
+
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 2. Actively airing anime (2 of 2 aired on Plex, 12 total scheduled, only 1 watched)
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, library_title, leaf_count, canonical_total_episodes, series_status, aired_episodes_count, next_air_at, source_provenance, refreshed_at)
+      VALUES ('show-mage', 'show', 'Laid-Off Mage', 'Anime', 2, 12, 'running', 2, '2026-10-20T15:30:00Z', 'plex', '2026-10-15T00:00:00Z')
+    `).run();
+
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, season_number, episode_number, watched_at, completed, duration, created_at, updated_at)
+      VALUES (501, 1, 'mage-ep-1', 'show-mage', 'episode', 'Anime', 'Episode 1', 'Laid-Off Mage', 1, 1, '2026-10-12T12:00:00Z', 1, 1440, '2026-10-12T12:00:00Z', '2026-10-12T12:00:00Z')
+    `).run();
+
+    const achievementService = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    let shelf = achievementService.getAchievements({ user: 1, facet: 'trophy_shelf' });
+    let mageCard = shelf.results.find((r) => r.ruleId === 'show_mastery_show-mage');
+    assert.ok(mageCard, "Laid-Off Mage progress card must exist");
+    assert.equal(mageCard.state, 'in_progress');
+    assert.equal(mageCard.progress.current, 1);
+    assert.equal(mageCard.progress.target, 12);
+    assert.equal(mageCard.badge.stats.availableOnPlex, 2);
+    assert.equal(mageCard.badge.stats.airedEpisodesCount, 2);
+    assert.equal(mageCard.badge.stats.missingOffServerCount, 0, "Un-aired future episodes must not be flagged as missing off-server");
+    assert.equal(mageCard.badge.stats.isCaughtUpOnPlex, false, "1 of 2 watched on Plex must NOT be marked caught up");
+
+    // Watch Episode 2 -> now 2 of 2 aired & available watched -> Caught Up on Broadcast!
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, season_number, episode_number, watched_at, completed, duration, created_at, updated_at)
+      VALUES (502, 1, 'mage-ep-2', 'show-mage', 'episode', 'Anime', 'Episode 2', 'Laid-Off Mage', 1, 2, '2026-10-15T12:00:00Z', 1, 1440, '2026-10-15T12:00:00Z', '2026-10-15T12:00:00Z')
+    `).run();
+
+    shelf = achievementService.getAchievements({ user: 1, facet: 'trophy_shelf' });
+    mageCard = shelf.results.find((r) => r.ruleId === 'show_mastery_show-mage');
+    assert.equal(mageCard.badge.stats.isCaughtUpOnPlex, true, "2 of 2 watched on Plex and aired must be marked caught up");
+    assert.equal(mageCard.badge.stats.missingOffServerCount, 0);
+    assert.equal(mageCard.state, 'in_progress', "Series trophy remains locked until all 12 canonical episodes complete");
+
+    // 3. Rolling-storage protection: user watched S1 (4 eps), deleted S1 from Plex, and added S2 (2 eps) unwatched
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, library_title, leaf_count, canonical_total_episodes, series_status, aired_episodes_count, source_provenance, refreshed_at)
+      VALUES ('show-rolling', 'show', 'Rolling Show', 'TV Shows', 2, 10, 'running', 6, 'plex', '2026-10-15T00:00:00Z')
+    `).run();
+    for (let i = 1; i <= 4; i++) {
+      db.prepare(`
+        INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, season_number, episode_number, watched_at, completed, duration, created_at, updated_at)
+        VALUES (?, 1, ?, 'show-rolling', 'episode', 'TV Shows', ?, 'Rolling Show', 1, ?, '2026-09-01T12:00:00Z', 1, 1800, '2026-09-01T12:00:00Z', '2026-09-01T12:00:00Z')
+      `).run(600 + i, `rolling-s1e${i}`, `S1 Ep ${i}`, i);
+    }
+
+    shelf = achievementService.getAchievements({ user: 1, facet: 'trophy_shelf' });
+    const rollingCard = shelf.results.find((r) => r.ruleId === 'show_mastery_show-rolling');
+    assert.ok(rollingCard, "Rolling Show card must exist");
+    assert.equal(rollingCard.badge.stats.isCaughtUpOnPlex, false, "Deleted old watched seasons (4 watched > 2 on Plex, but 6 aired) must NOT falsely report caught up when current season is unwatched");
+  });
+});
+
 let passed = 0;
 for (const { name, fn } of tests) {
   try {

@@ -25,6 +25,8 @@ import {
   type AudiobookPositionCaptureConfig
 } from "../service/audiobookPositionCaptureService.js";
 import { AchievementService } from "../achievements/service.js";
+import { MetadataService } from "../service/metadataService.js";
+import { enrichCatalogShow } from "../service/tvCanonicalMetadataService.js";
 import { appConfig } from "../utils/config.js";
 import { parseDays } from "../utils/time.js";
 
@@ -33,6 +35,7 @@ export type RouterOptions = {
   discordReviewAvailable?: boolean;
   movieProfileAdapter?: MovieProfileAdapterLike;
   audiobookPositionCaptureConfig?: AudiobookPositionCaptureConfig;
+  webhookShowRefreshDebounceMs?: number;
 };
 
 export function buildRouter(
@@ -68,6 +71,8 @@ export function buildRouter(
   const dashboardDetailRefresh = new DashboardDetailRefreshService(db, dashboardService, plex, audit);
   const cowatchAdjudications = new CowatchAdjudicationService(db);
   const audiobookDiscovery = new AudiobookDiscoveryService(db, plex);
+  const metadataService = new MetadataService(db, plex);
+  const showWebhookTimers = new Map<string, NodeJS.Timeout>();
   const achievements = new AchievementService(db);
   const handleDashboardReadError = (error: unknown, res: express.Response, next: express.NextFunction) => {
     if (error instanceof Error && error.message.startsWith("Validation Error:")) {
@@ -869,17 +874,58 @@ export function buildRouter(
       const isAudiobook = libraryTitle.toLowerCase().includes("audiobook") ||
                           metadata.type === "track" && (metadata.guid?.includes("audnexus") || metadata.guid?.includes("audiobook"));
 
-      if (!isAudiobook) return;
+      if (isAudiobook) {
+        if (event === "library.new" || event === "media.play") {
+          const ratingKey = metadata.ratingKey;
+          if (!ratingKey) return;
 
-      if (event === "library.new" || event === "media.play") {
-        const ratingKey = metadata.ratingKey;
-        if (!ratingKey) return;
+          await audiobookDiscovery.run("webhook-item", {
+            library: libraryTitle || appConfig.AUDIOBOOK_LIBRARY,
+            ratingKey,
+            plexGuid: metadata.guid
+          });
+        }
+        return;
+      }
 
-        await audiobookDiscovery.run("webhook-item", {
-          library: libraryTitle || appConfig.AUDIOBOOK_LIBRARY,
-          ratingKey,
-          plexGuid: metadata.guid
-        });
+      if (event === "library.new" || event === "media.scrobble") {
+        const mediaType = String(metadata.type || "").toLowerCase();
+        const showRatingKey =
+          mediaType === "episode" ? String(metadata.grandparentRatingKey || "") :
+          mediaType === "season" ? String(metadata.parentRatingKey || "") :
+          mediaType === "show" ? String(metadata.ratingKey || "") : "";
+        if (!showRatingKey) return;
+
+        const episodeRatingKey = mediaType === "episode" && metadata.ratingKey ? String(metadata.ratingKey) : null;
+        const showGuid = mediaType === "episode"
+          ? (metadata.grandparentGuid ? String(metadata.grandparentGuid) : undefined)
+          : mediaType === "show"
+            ? (metadata.guid ? String(metadata.guid) : undefined)
+            : undefined;
+        const episodeGuid = metadata.guid ? String(metadata.guid) : undefined;
+        const debounceMs = options.webhookShowRefreshDebounceMs ?? 20_000;
+
+        const existingTimer = showWebhookTimers.get(showRatingKey);
+        if (existingTimer) {
+          clearTimeout(existingTimer);
+        }
+
+        const timer = setTimeout(() => {
+          showWebhookTimers.delete(showRatingKey);
+          void (async () => {
+            try {
+              await metadataService.refreshMetadataExplicit(showRatingKey, showGuid);
+              if (episodeRatingKey) {
+                await metadataService.refreshMetadata(episodeRatingKey, episodeGuid);
+              }
+              await enrichCatalogShow(db, showRatingKey, { force: true });
+            } catch (err) {
+              console.warn(`[Webhook] Failed to refresh show ${showRatingKey} on ${event}:`, err);
+            }
+          })();
+        }, debounceMs);
+        timer.unref?.();
+        showWebhookTimers.set(showRatingKey, timer);
       }
     }
   });

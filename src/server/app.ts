@@ -58,6 +58,33 @@ if (isMain) {
   void startDiscordRuntime(app.locals.db);
   void startAudiobookDiscoveryRuntime(app.locals.db);
   void startAudiobookProofRuntime(app.locals.db);
+  void startActiveShowSyncRuntime(app.locals.db);
+}
+
+async function startActiveShowSyncRuntime(db: ReturnType<typeof openMigratedDatabase>): Promise<void> {
+  if (!appConfig.PLEX_TOKEN || appConfig.PLEX_TOKEN === "replace_me") return;
+  const { syncActiveCatalogShows } = await import("../service/tvCanonicalMetadataService.js");
+  const plex = createPlexAdapter();
+  const runSync = async () => {
+    try {
+      const result = await syncActiveCatalogShows(db, plex);
+      if (result.synced > 0) {
+        log("info", {
+          action: "active_show_sync",
+          message: `Synced ${result.synced} active/running catalog shows (${result.failed} failed)`
+        });
+      }
+    } catch (error) {
+      log("error", {
+        action: "active_show_sync_error",
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  };
+  const startupTimer = setTimeout(() => void runSync(), 15_000);
+  startupTimer.unref?.();
+  const intervalTimer = setInterval(() => void runSync(), 12 * 60 * 60 * 1000);
+  intervalTimer.unref?.();
 }
 
 async function startAudiobookProofRuntime(db: ReturnType<typeof openMigratedDatabase>): Promise<void> {

@@ -32,6 +32,8 @@ export function migrateDatabase(db: Db): void {
   ensureColumn(db, "users", "dashboard_shown", "INTEGER NOT NULL DEFAULT 1");
   ensureColumn(db, "content_catalog", "canonical_total_episodes", "INTEGER");
   ensureColumn(db, "content_catalog", "series_status", "TEXT");
+  ensureColumn(db, "content_catalog", "aired_episodes_count", "INTEGER");
+  ensureColumn(db, "content_catalog", "next_air_at", "TEXT");
   migrateDashboardPreferences(db);
   migrateAudiobooks(db);
   normalizeAudiobookSeriesTitles(db);

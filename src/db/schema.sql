@@ -306,7 +306,9 @@ CREATE TABLE IF NOT EXISTS content_catalog (
   last_seen_at TEXT,
   last_seen_scan_id INTEGER,
   canonical_total_episodes INTEGER,
-  series_status TEXT
+  series_status TEXT,
+  aired_episodes_count INTEGER,
+  next_air_at TEXT
 );
 
 INSERT OR IGNORE INTO schema_migrations (version, name)

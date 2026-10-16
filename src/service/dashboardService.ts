@@ -1139,22 +1139,30 @@ export class DashboardService {
     let availableOnPlex: number | null = null;
     let canonicalTotalItems: number | null = null;
     let missingOffServerCount: number | null = null;
+    let airedEpisodesCount: number | null = null;
+    let nextAirAt: string | null = null;
     let isCaughtUpOnPlex = false;
     let isSeriesComplete = false;
     let seriesStatus: string | null = null;
 
     if (identity.kind === "series") {
-      const row = this.db.prepare(`SELECT leaf_count, canonical_total_episodes, series_status FROM content_catalog WHERE rating_key = ? LIMIT 1`).get(identity.grandparentRatingKey) as any;
+      const row = this.db.prepare(`SELECT leaf_count, canonical_total_episodes, series_status, aired_episodes_count, next_air_at FROM content_catalog WHERE rating_key = ? LIMIT 1`).get(identity.grandparentRatingKey) as any;
       const leafCount = row?.leaf_count > 0 ? Number(row.leaf_count) : null;
       availableOnPlex = leafCount;
+      airedEpisodesCount = row?.aired_episodes_count != null ? Number(row.aired_episodes_count) : null;
+      nextAirAt = row?.next_air_at ?? null;
       if (row?.canonical_total_episodes != null && Number(row.canonical_total_episodes) > 0) {
         canonicalTotalItems = Number(row.canonical_total_episodes);
         seriesStatus = row.series_status ?? null;
         totalItems = canonicalTotalItems;
-        missingOffServerCount = Math.max(0, canonicalTotalItems - (leafCount ?? 0));
+        const effectiveAired = airedEpisodesCount != null ? Math.max(airedEpisodesCount, leafCount ?? 0) : canonicalTotalItems;
+        missingOffServerCount = Math.max(0, effectiveAired - (leafCount ?? 0));
+        const hasUnreleasedOrMissing = missingOffServerCount > 0 || (leafCount != null && leafCount < canonicalTotalItems);
+        const rollingStorageUnwatched = leafCount != null && resolvedCompletedItems > leafCount && resolvedCompletedItems < effectiveAired;
         isCaughtUpOnPlex = (leafCount != null && leafCount > 0) &&
           (resolvedCompletedItems >= leafCount) &&
-          (missingOffServerCount > 0);
+          !rollingStorageUnwatched &&
+          hasUnreleasedOrMissing;
         isSeriesComplete = (resolvedCompletedItems >= canonicalTotalItems) &&
           (seriesStatus === "ended");
       } else {
@@ -1194,6 +1202,8 @@ export class DashboardService {
         availableOnPlex,
         canonicalTotalItems,
         missingOffServerCount,
+        airedEpisodesCount,
+        nextAirAt,
         isCaughtUpOnPlex,
         isSeriesComplete,
         seriesStatus
@@ -2880,6 +2890,8 @@ export class DashboardService {
         let availableOnPlex: number | null = null;
         let canonicalTotalItems: number | null = null;
         let missingOffServerCount: number | null = null;
+        let airedEpisodesCount: number | null = null;
+        let nextAirAt: string | null = null;
         let isCaughtUpOnPlex = false;
         let isSeriesComplete = false;
         let seriesStatus: string | null = null;
@@ -2918,22 +2930,28 @@ export class DashboardService {
           progressSourceVerified = true;
           const showKey = first.grandparentRatingKey ?? first.ratingKey;
           const show = this.db.prepare(`
-            SELECT leaf_count, canonical_total_episodes, series_status
+            SELECT leaf_count, canonical_total_episodes, series_status, aired_episodes_count, next_air_at
             FROM content_catalog
             WHERE rating_key = ?
           `).get(showKey) as any;
           if (show) {
             const leafCount = (show.leaf_count && show.leaf_count > 0) ? Number(show.leaf_count) : null;
             availableOnPlex = leafCount;
+            airedEpisodesCount = show.aired_episodes_count != null ? Number(show.aired_episodes_count) : null;
+            nextAirAt = show.next_air_at ?? null;
             if (show.canonical_total_episodes != null && Number(show.canonical_total_episodes) > 0) {
               canonicalTotalItems = Number(show.canonical_total_episodes);
               seriesStatus = show.series_status ?? null;
               totalKnown = true;
               totalItems = canonicalTotalItems;
-              missingOffServerCount = Math.max(0, canonicalTotalItems - (leafCount ?? 0));
+              const effectiveAired = airedEpisodesCount != null ? Math.max(airedEpisodesCount, leafCount ?? 0) : canonicalTotalItems;
+              missingOffServerCount = Math.max(0, effectiveAired - (leafCount ?? 0));
+              const hasUnreleasedOrMissing = missingOffServerCount > 0 || (leafCount != null && leafCount < canonicalTotalItems);
+              const rollingStorageUnwatched = leafCount != null && g.distinctCompleted.size > leafCount && g.distinctCompleted.size < effectiveAired;
               isCaughtUpOnPlex = (leafCount != null && leafCount > 0) &&
                 (g.distinctCompleted.size >= leafCount) &&
-                (missingOffServerCount > 0);
+                !rollingStorageUnwatched &&
+                hasUnreleasedOrMissing;
               isSeriesComplete = (g.distinctCompleted.size >= canonicalTotalItems) &&
                 (seriesStatus === "ended");
             } else {
@@ -3061,6 +3079,8 @@ export class DashboardService {
           availableOnPlex,
           canonicalTotalItems,
           missingOffServerCount,
+          airedEpisodesCount,
+          nextAirAt,
           isCaughtUpOnPlex,
           isSeriesComplete,
           seriesStatus

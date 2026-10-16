@@ -204,6 +204,14 @@ export interface DashboardDetailWorkspaceResponse {
     completedItems: number;
     currentPercent: number | null;
     totalItems: number | null;
+    availableOnPlex?: number | null;
+    canonicalTotalItems?: number | null;
+    missingOffServerCount?: number | null;
+    airedEpisodesCount?: number | null;
+    nextAirAt?: string | null;
+    isCaughtUpOnPlex?: boolean;
+    isSeriesComplete?: boolean;
+    seriesStatus?: string | null;
   };
   audiobookProgress?: AudiobookProgressProjectionSet;
   hierarchy: {
@@ -638,6 +646,8 @@ export interface DashboardProgressGroup {
   availableOnPlex?: number | null;
   canonicalTotalItems?: number | null;
   missingOffServerCount?: number | null;
+  airedEpisodesCount?: number | null;
+  nextAirAt?: string | null;
   isCaughtUpOnPlex?: boolean;
   isSeriesComplete?: boolean;
   seriesStatus?: string | null;

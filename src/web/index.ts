@@ -3212,8 +3212,18 @@ export function registerWebRoutes(router: Router): void {
           container.innerHTML = sortedTrophies.map(t => {
             const isComplete = t.state === 'earned';
             const isCaughtUp = !isComplete && t.badge && t.badge.stats && t.badge.stats.isCaughtUpOnPlex;
-            const missingCount = isCaughtUp ? (t.badge.stats.missingOffServerCount || 0) : 0;
-            const availableCount = isCaughtUp ? (t.badge.stats.availableOnPlex || t.progress.current) : null;
+            const missingCount = (t.badge && t.badge.stats && t.badge.stats.missingOffServerCount != null)
+              ? t.badge.stats.missingOffServerCount
+              : 0;
+            const availableCount = (t.badge && t.badge.stats && t.badge.stats.availableOnPlex != null)
+              ? t.badge.stats.availableOnPlex
+              : (isCaughtUp ? t.progress.current : null);
+            const airedCount = (t.badge && t.badge.stats && t.badge.stats.airedEpisodesCount != null)
+              ? t.badge.stats.airedEpisodesCount
+              : null;
+            const nextAirAt = (t.badge && t.badge.stats && t.badge.stats.nextAirAt) || null;
+            const shortNextAir = nextAirAt ? new Date(nextAirAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : null;
+            const isAiringWithUpcoming = airedCount != null && t.progress && t.progress.target > airedCount;
             const title = t.badge.title.replace('Show Mastery: ', '').replace('Series Progress: ', '');
             const tierStyle = TIER_COLORS[t.badge.tier] || TIER_COLORS.bronze;
             const rewatchCount = t.badge.stats && t.badge.stats.rewatchCount ? t.badge.stats.rewatchCount : 0;
@@ -3228,7 +3238,11 @@ export function registerWebRoutes(router: Router): void {
                         ? '<div style="margin-bottom: 6px;">' +
                             '<div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.7rem; font-weight: bold; color: #34d399; margin-bottom: 2px;">' +
                               '<span style="display: flex; align-items: center; gap: 4px;">⚡ Caught Up</span>' +
-                              '<span style="background: rgba(16, 185, 129, 0.25); color: #6ee7b7; padding: 1px 5px; border-radius: 4px; font-size: 0.65rem;">+' + missingCount + ' off-server</span>' +
+                              '<span style="background: rgba(16, 185, 129, 0.25); color: #6ee7b7; padding: 1px 5px; border-radius: 4px; font-size: 0.65rem;">' +
+                                (isAiringWithUpcoming && missingCount === 0
+                                  ? (airedCount + '/' + t.progress.target + ' aired')
+                                  : ('+' + missingCount + ' off-server')) +
+                              '</span>' +
                             '</div>' +
                             '<div style="display: flex; justify-content: space-between; font-size: 0.65rem; color: #cbd5e1; margin-bottom: 2px;">' +
                               '<span>' + t.progress.current + ' of ' + t.progress.target + ' eps</span>' +
@@ -3240,7 +3254,9 @@ export function registerWebRoutes(router: Router): void {
                           '</div>'
                         : '<div style="margin-bottom: 6px;">' +
                             '<div style="display: flex; justify-content: space-between; font-size: 0.7rem; font-weight: bold; color: #f59e0b; margin-bottom: 2px;">' +
-                              '<span>' + t.progress.current + ' / ' + t.progress.target + ' eps</span>' +
+                              '<span>' + (isAiringWithUpcoming && availableCount != null
+                                ? (t.progress.current + '/' + availableCount + ' on Plex • ' + airedCount + '/' + t.progress.target + ' aired')
+                                : (t.progress.current + ' / ' + t.progress.target + ' eps')) + '</span>' +
                               '<span>' + progressPercent + '%</span>' +
                             '</div>' +
                             '<div style="width: 100%; background: rgba(0,0,0,0.8); height: 5px; border-radius: 999px; overflow: hidden;">' +
@@ -3255,7 +3271,9 @@ export function registerWebRoutes(router: Router): void {
                 (isComplete && rewatchCount > 0
                   ? '<div class="tier-ribbon ' + tierStyle.ribbon + '">' + rewatchCount + 'x Replay</div>'
                   : (isCaughtUp
-                      ? '<div class="tier-ribbon" style="background: rgba(16, 185, 129, 0.3); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.5); font-weight: 700;">Caught Up +' + missingCount + '</div>'
+                      ? '<div class="tier-ribbon" style="background: rgba(16, 185, 129, 0.3); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.5); font-weight: 700;">' +
+                          (isAiringWithUpcoming && missingCount === 0 ? 'Caught Up • Airing' : ('Caught Up +' + missingCount)) +
+                        '</div>'
                       : (!isComplete ? '<div class="tier-ribbon" style="background: rgba(245, 158, 11, 0.3); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.4);">In Progress</div>' : '')
                     )
                 ) +
@@ -3265,9 +3283,17 @@ export function registerWebRoutes(router: Router): void {
               '</div>' +
               '<div style="padding: 10px 12px; background: rgba(13, 17, 23, 0.85); border-top: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; color: var(--text-muted);">' +
                 (isCaughtUp
-                  ? '<span style="color: #34d399; font-weight: 600;">' + t.progress.current + '/' + (availableCount || t.progress.current) + ' on Plex &bull; +' + missingCount + ' missing</span>'
+                  ? '<span style="color: #34d399; font-weight: 600;">' +
+                      (isAiringWithUpcoming && missingCount === 0
+                        ? (t.progress.current + '/' + airedCount + ' aired' + (shortNextAir ? ' &bull; Next: ' + shortNextAir : ' &bull; +' + (t.progress.target - airedCount) + ' upcoming'))
+                        : (t.progress.current + '/' + (availableCount || t.progress.current) + ' on Plex &bull; +' + missingCount + ' missing')) +
+                    '</span>'
                   : (!isComplete
-                      ? '<span style="color: #f59e0b; font-weight: 600;">' + t.progress.current + ' of ' + t.progress.target + ' eps (' + progressPercent + '%)</span>'
+                      ? '<span style="color: #f59e0b; font-weight: 600;">' +
+                          (isAiringWithUpcoming && availableCount != null
+                            ? (t.progress.current + '/' + availableCount + ' on Plex' + (shortNextAir ? ' &bull; Next: ' + shortNextAir : ' &bull; ' + airedCount + '/' + t.progress.target + ' aired'))
+                            : (t.progress.current + ' of ' + t.progress.target + ' eps (' + progressPercent + '%)')) +
+                        '</span>'
                       : '<span>' + (t.badge.stats && t.badge.stats.completedItems ? t.badge.stats.completedItems : (t.progress ? t.progress.current : 0)) + ' eps</span>'
                     )
                 ) +
@@ -3517,7 +3543,7 @@ export function registerWebRoutes(router: Router): void {
             nmHtml +=     '<div style="background: linear-gradient(90deg, ' + tierColor + ', #34d399); width: ' + ntp.percentComplete + '%; height: 100%; border-radius: 999px;"></div>';
             nmHtml +=   '</div>';
             nmHtml +=   '<div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: #94a3b8; flex-wrap: wrap; gap: 6px;">';
-            nmHtml +=     '<span>Rewatched: <strong style="color: #fff;">' + ntp.rewatchedCount + '</strong> of ' + ntp.targetCount + ' episodes</span>';
+            nmHtml +=     '<span>' + (ntp.nextTier === 'bronze' ? 'Watched' : 'Rewatched') + ': <strong style="color: #fff;">' + ntp.rewatchedCount + '</strong> of ' + ntp.targetCount + ' episodes</span>';
             nmHtml +=     '<span style="color: ' + tierColor + '; font-weight: 600;">' + (ntp.remainingCount > 0 ? ntp.remainingCount + ' eps remaining' : 'Ready for upgrade') + '</span>';
             nmHtml +=   '</div>';
             nmHtml +=   '<div style="font-size: 0.72rem; color: #8b949e; background: rgba(0,0,0,0.25); padding: 6px 10px; border-radius: 6px;">';
@@ -3543,34 +3569,52 @@ export function registerWebRoutes(router: Router): void {
             nextMedalCard.style.display = 'none';
           }
 
-          // 3. Stats Box (Coverage Audit for Caught-Up, or standard progress for non-episode achievements)
+          // 3. Stats Box (Coverage Audit for Caught-Up & In-Progress Series, or standard progress for non-episode achievements)
           const statsBox = document.getElementById('modal-stats-box');
           const epDetails = stats && stats.episodeReplayDetails;
           const hasEpDetails = epDetails && epDetails.length > 0;
+          const hasCoverageAudit = isCaughtUp || (!isEarned && isShowMastery && stats && stats.availableOnPlex != null);
 
-          if (isCaughtUp) {
+          if (hasCoverageAudit) {
             statsBox.style.display = 'block';
-            const available = ach.badge.stats.availableOnPlex || ach.progress.current;
-            const missing = ach.badge.stats.missingOffServerCount || (ach.progress.target - ach.progress.current);
+            const available = ach.badge.stats.availableOnPlex != null ? ach.badge.stats.availableOnPlex : ach.progress.current;
+            const missing = ach.badge.stats.missingOffServerCount != null ? ach.badge.stats.missingOffServerCount : Math.max(0, ach.progress.target - available);
+            const aired = ach.badge.stats.airedEpisodesCount != null ? ach.badge.stats.airedEpisodesCount : null;
+            const nextAirAt = ach.badge.stats.nextAirAt || null;
             const watched = ach.progress.current;
             const target = ach.progress.target;
             const pct = Math.round((watched / target) * 100);
+            const isAiringWithUpcoming = aired != null && target > aired;
+            const unairedCount = isAiringWithUpcoming ? Math.max(0, target - aired) : 0;
+            const unwatchedOnPlex = Math.max(0, available - watched);
+            const nextAirLabel = nextAirAt
+              ? new Date(nextAirAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+              : null;
+
+            const boxAccentColor = isCaughtUp ? '#34d399' : '#f59e0b';
+            const boxBg = isCaughtUp ? 'rgba(16, 185, 129, 0.08)' : 'rgba(245, 158, 11, 0.08)';
+            const boxBorder = isCaughtUp ? 'rgba(16, 185, 129, 0.25)' : 'rgba(245, 158, 11, 0.25)';
+            const pillBg = isCaughtUp ? 'rgba(16, 185, 129, 0.2)' : 'rgba(245, 158, 11, 0.2)';
+            const pillText = isCaughtUp ? '#6ee7b7' : '#fcd34d';
+            const statusText = isCaughtUp
+              ? (isAiringWithUpcoming && missing === 0 ? 'Caught Up on Broadcast' : 'Caught Up on Plex')
+              : (unwatchedOnPlex > 0 ? (unwatchedOnPlex + ' Unwatched on Plex') : 'In Progress');
 
             let html = '<div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">';
             html +=   '<div style="display: flex; justify-content: space-between; font-weight: 600; color: #fff;">';
             html +=     '<span>Progress: ' + watched + ' / ' + target + ' episodes</span>';
-            html +=     '<span style="color: #34d399;">' + pct + '% (Caught Up)</span>';
+            html +=     '<span style="color: ' + boxAccentColor + ';">' + pct + '% (' + (isCaughtUp ? 'Caught Up' : 'In Progress') + ')</span>';
             html +=   '</div>';
             html +=   '<div style="width: 100%; background: rgba(0,0,0,0.6); height: 6px; border-radius: 999px; overflow: hidden;">';
-            html +=     '<div style="background: #10b981; width: ' + pct + '%; height: 100%;"></div>';
+            html +=     '<div style="background: ' + (isCaughtUp ? '#10b981' : '#f59e0b') + '; width: ' + pct + '%; height: 100%;"></div>';
             html +=   '</div>';
-            html +=   '<div style="padding: 12px 14px; background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 10px; display: flex; flex-direction: column; gap: 8px;">';
+            html +=   '<div style="padding: 12px 14px; background: ' + boxBg + '; border: 1px solid ' + boxBorder + '; border-radius: 10px; display: flex; flex-direction: column; gap: 8px;">';
             html +=     '<div style="display: flex; justify-content: space-between; align-items: center;">';
-            html +=       '<span style="font-weight: 700; font-size: 0.8rem; color: #34d399; display: flex; align-items: center; gap: 6px;">';
+            html +=       '<span style="font-weight: 700; font-size: 0.8rem; color: ' + boxAccentColor + '; display: flex; align-items: center; gap: 6px;">';
             html +=         '<span>🛡️</span> Server Coverage Audit';
             html +=       '</span>';
-            html +=       '<span style="font-size: 0.7rem; font-weight: 600; background: rgba(16, 185, 129, 0.2); color: #6ee7b7; padding: 2px 8px; border-radius: 999px;">';
-            html +=         'Caught Up on Plex';
+            html +=       '<span style="font-size: 0.7rem; font-weight: 600; background: ' + pillBg + '; color: ' + pillText + '; padding: 2px 8px; border-radius: 999px;">';
+            html +=         statusText;
             html +=       '</span>';
             html +=     '</div>';
             html +=     '<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; font-size: 0.75rem; text-align: center; margin-top: 4px;">';
@@ -3580,13 +3624,24 @@ export function registerWebRoutes(router: Router): void {
             html +=       '</div>';
             html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
             html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Household Watched</div>';
-            html +=         '<div style="font-weight: 700; color: #34d399;">' + watched + ' eps</div>';
+            html +=         '<div style="font-weight: 700; color: ' + boxAccentColor + ';">' + watched + ' eps</div>';
             html +=       '</div>';
             html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
-            html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Missing Off-Server</div>';
-            html +=         '<div style="font-weight: 700; color: #f59e0b;">+' + missing + ' eps</div>';
+            if (isAiringWithUpcoming && missing === 0) {
+              html +=       '<div style="color: #94a3b8; font-size: 0.7rem;">Aired to Date</div>';
+              html +=       '<div style="font-weight: 700; color: #38bdf8;">' + aired + '/' + target + ' eps</div>';
+            } else {
+              html +=       '<div style="color: #94a3b8; font-size: 0.7rem;">Missing Off-Server</div>';
+              html +=       '<div style="font-weight: 700; color: #f59e0b;">+' + missing + ' eps</div>';
+            }
             html +=       '</div>';
             html +=     '</div>';
+            if (isAiringWithUpcoming) {
+              html +=   '<div style="font-size: 0.75rem; color: #93c5fd; display: flex; align-items: center; gap: 6px; margin-top: 2px;">';
+              html +=     '<span>📡</span>';
+              html +=     '<span>Broadcast Schedule: <strong>' + aired + ' of ' + target + '</strong> episodes aired (' + unairedCount + ' upcoming)' + (nextAirLabel ? ' • Next airs <strong>' + nextAirLabel + '</strong>' : '') + '.</span>';
+              html +=   '</div>';
+            }
             html +=     '<div style="font-size: 0.75rem; color: #cbd5e1; display: flex; align-items: center; gap: 6px; margin-top: 2px;">';
             html +=       '<span>🔒</span>';
             html +=       '<span>Series Trophy locked until full canonical series (' + target + ' eps) is acquired on server and completed.</span>';

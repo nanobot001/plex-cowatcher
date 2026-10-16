@@ -157,6 +157,8 @@ export function evaluateSubjectAchievements(
                   rewatchCount,
                   availableOnPlex: show.availableOnPlex ?? null,
                   missingOffServerCount: show.missingOffServerCount ?? 0,
+                  airedEpisodesCount: show.airedEpisodesCount ?? null,
+                  nextAirAt: show.nextAirAt ?? null,
                   isCaughtUpOnPlex: false,
                   seriesStatus: show.seriesStatus ?? null,
                   firstCompletedAt: show.lastCompletedWatchedAt || (show.allCompletedPlays[show.allCompletedPlays.length - 1]?.watchedAt ?? null),
@@ -190,6 +192,9 @@ export function evaluateSubjectAchievements(
             const watchedCount = show.completedEpisodeKeys.size;
             const remainingCount = Math.max(0, targetCount - watchedCount);
             const percentComplete = targetCount > 0 ? Math.min(100, Math.round((watchedCount / targetCount) * 100)) : 0;
+            const missingCount = show.missingOffServerCount ?? 0;
+            const airedCount = show.airedEpisodesCount ?? null;
+            const unairedCount = airedCount != null ? Math.max(0, targetCount - airedCount) : 0;
 
             const nextTierProgress: NextTierProgress = {
               currentTier: 'bronze',
@@ -201,6 +206,17 @@ export function evaluateSubjectAchievements(
               percentComplete
             };
 
+            let progressDescription = `Watched ${watchedCount} of ${show.totalEpisodes} episodes of ${show.showTitle} (${Math.round((watchedCount / show.totalEpisodes) * 100)}%).`;
+            if (isCaughtUp) {
+              if (missingCount === 0 && unairedCount > 0 && airedCount != null) {
+                progressDescription = `Caught up on broadcast (${watchedCount} of ${airedCount} aired on Plex; ${unairedCount} upcoming in season). Series trophy unlocks once all ${show.totalEpisodes} episodes air and are completed.`;
+              } else {
+                progressDescription = `Caught up on Plex (${watchedCount} of ${show.availableOnPlex} available; ${missingCount} off-server). Series trophy locked until full series is acquired and completed.`;
+              }
+            } else if (airedCount != null && airedCount < show.totalEpisodes && show.availableOnPlex != null) {
+              progressDescription = `Watched ${watchedCount} of ${show.availableOnPlex} available on Plex (${airedCount} of ${show.totalEpisodes} aired to date; ${unairedCount} upcoming).`;
+            }
+
             results.push({
               userId: subject.userId,
               ruleId: dynamicRuleId,
@@ -210,9 +226,7 @@ export function evaluateSubjectAchievements(
                 badgeKey: `show_mastery_${show.grandparentRatingKey}`,
                 tier: 'bronze',
                 title: `Series Progress: ${show.showTitle}`,
-                description: isCaughtUp
-                  ? `Caught up on Plex (${show.completedEpisodeKeys.size} of ${show.availableOnPlex} available; ${show.missingOffServerCount} off-server). Series trophy locked until full series is acquired and completed.`
-                  : `Watched ${show.completedEpisodeKeys.size} of ${show.totalEpisodes} episodes of ${show.showTitle} (${Math.round((show.completedEpisodeKeys.size / show.totalEpisodes) * 100)}%).`,
+                description: progressDescription,
                 posterUrl: show.posterUrl,
                 iconHint: show.category === 'anime' ? 'anime' : 'series',
                 stats: {
@@ -220,7 +234,9 @@ export function evaluateSubjectAchievements(
                   completedItems: show.completedEpisodeKeys.size,
                   rewatchCount: 0,
                   availableOnPlex: show.availableOnPlex ?? null,
-                  missingOffServerCount: show.missingOffServerCount ?? 0,
+                  missingOffServerCount: missingCount,
+                  airedEpisodesCount: airedCount,
+                  nextAirAt: show.nextAirAt ?? null,
                   isCaughtUpOnPlex: isCaughtUp,
                   seriesStatus: show.seriesStatus ?? null,
                   latestWatchedAt: show.latestWatchedAt || (show.allCompletedPlays[show.allCompletedPlays.length - 1]?.watchedAt ?? null),
@@ -242,8 +258,10 @@ export function evaluateSubjectAchievements(
                 title: p.title
               })),
               reason: isCaughtUp
-                ? `Caught up on Plex (${show.completedEpisodeKeys.size}/${show.availableOnPlex} eps); ${show.missingOffServerCount} off-server`
-                : `${show.completedEpisodeKeys.size} of ${show.totalEpisodes} episodes completed`
+                ? (missingCount === 0 && unairedCount > 0 && airedCount != null
+                    ? `Caught up on broadcast (${watchedCount}/${airedCount} aired on Plex; ${unairedCount} upcoming)`
+                    : `Caught up on Plex (${watchedCount}/${show.availableOnPlex} eps); ${missingCount} off-server`)
+                : `${watchedCount} of ${show.totalEpisodes} episodes completed`
             });
           }
         }
