@@ -26,9 +26,12 @@ Derive small, explainable, reproducible achievements and personal media showcase
 ## Child Blocks (implement in order)
 
 1. **3-6-6A — Contract, Evidence Reader, And Pure Evaluator.** (Implemented 2026-10-09) Rule catalog schema with badge descriptors, result contract, eligibility matrix, single evidence reader reusing existing services, deterministic evaluator.
-2. **3-6-6C — Volume Milestones, Genre Affinity Rules, And Public Contract Surface.** Volume milestones, category/genre devotion rules (hours & counts), and the read-only contract surface (localhost HTTP `/api/achievements`, CLI/tool `plex-cowatch achievements`).
-3. **3-6-6D — Series Mastery, Rewatch Loyalty, And Shared Viewing Bonds.** Dynamic show completion badges using Plex poster artwork, rewatch tier ribbons (1×, 2×, 3×), and confirmed co-watch bond badges.
-4. **3-6-6F — Personal Showcase Dashboard Prototype.** People-card presentation: colorful trophy shelf of poster tiles, genre affinity tags, and the Obsession spotlight over the public contract only.
+2. **3-6-6C — Volume Milestones, Genre Affinity Rules, And Public Contract Surface.** (Implemented 2026-10-10) Volume milestones, category/genre devotion rules (hours & counts), and the read-only contract surface (localhost HTTP `/api/achievements`, CLI/tool `plex-cowatch achievements`).
+3. **3-6-6D — Series Mastery, Rewatch Loyalty, And Shared Viewing Bonds.** (Implemented 2026-10-11) Dynamic show completion badges using Plex poster artwork, rewatch tier ribbons (1×, 2×, 3×), and confirmed co-watch bond badges.
+4. **3-6-6F — Personal Showcase Dashboard Prototype.** (Implemented 2026-10-12) People-card and `/achievements` showcase: colorful trophy shelf of poster tiles, genre affinity tags, and the Obsession spotlight over the public contract only.
+5. **3-6-6G — Audiobook Mastery, In-Progress Book Trophies, And Series Collections.** (Planned 2026-10-16) Dynamic cover-art Book Mastery trophies (`in_progress` and `earned`) from `audiobook_position_evidence`, author/series rollups, and expanded book/hour milestone tiers.
+6. **3-6-6H — Movie Franchise Collections, Rewatch Favorites, And Expanded Genre/Era Tiers.** (Planned 2026-10-16) Dynamic Movie Franchise/Collection trophies (`in_progress`, `caught_up`, `earned`), Cult-Classic Rewatch Favorite movie trophies (`2x+`), and multi-tier movie volume/genre/era badge chains.
+7. **3-6-6I — Multi-Media Trophy Shelf Filters, Modal Presenters, And Cross-Media Obsession Spotlight.** (Planned 2026-10-16) Media category filter pills (`All | TV | Anime | Movies | Audiobooks`), media-appropriate detail modal presenters, and cross-media Obsession Spotlight parity.
 
 Deferred:
 

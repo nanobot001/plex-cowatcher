@@ -151,10 +151,13 @@ The full 3-2m sequence, the 6E shared-detail sequence, 6F/6G, and the canonical 
       2. `block-3-6-5b-canonical-json-csv-export.md`
       3. `block-3-6-5c-verified-backup-restore-and-disaster-recovery.md`
    9. `block-3-6-6-achievements-engine-v1.md` - planned umbrella, restructured 2026-10-09 for Personal Media Showcase & Identity Passport. Compute-on-read, portable module, dashboard prototype. Direction: `docs/design/achievements-product-direction.md`. Implement in order:
-      1. `block-3-6-6a-achievement-evidence-and-versioned-rule-contract.md` - contract, evidence reader, and pure evaluator.
-      2. `block-3-6-6c-first-watch-and-watch-count-rules.md` - volume milestones, genre affinity, obsession spotlight rules + read-only HTTP/CLI contract surface.
-      3. `block-3-6-6d-rewatch-and-confirmed-cowatch-rules.md` - show mastery (Trophy Shelf poster badges), rewatch loyalty ribbons, and shared viewing bonds.
-      4. `block-3-6-6f-achievements-dashboard-prototype.md` - People-card Personal Media Showcase prototype over the public contract.
+      1. `block-3-6-6a-achievement-evidence-and-versioned-rule-contract.md` - contract, evidence reader, and pure evaluator (implemented).
+      2. `block-3-6-6c-first-watch-and-watch-count-rules.md` - volume milestones, genre affinity, obsession spotlight rules + read-only HTTP/CLI contract surface (implemented).
+      3. `block-3-6-6d-rewatch-and-confirmed-cowatch-rules.md` - show mastery (Trophy Shelf poster badges), rewatch loyalty ribbons, and shared viewing bonds (implemented).
+      4. `block-3-6-6f-achievements-dashboard-prototype.md` - People-card and `/achievements` Personal Media Showcase prototype over the public contract (implemented).
+      5. `block-3-6-6g-audiobook-mastery-and-series-trophies.md` - dynamic cover-art Audiobook Mastery trophies (`in_progress` and `earned`), series/author collections, and expanded book/hour tiers.
+      6. `block-3-6-6h-movie-franchise-and-rewatch-favorite-trophies.md` - dynamic Movie Franchise/Collection trophies, Cult-Classic Rewatch Favorite movie trophies (`2x+`), and multi-tier movie volume/genre/era badge chains.
+      7. `block-3-6-6i-multi-media-trophy-shelf-filters-and-obsession-parity.md` - media category filter bar (`All | TV | Anime | Movies | Audiobooks`), category-aware detail modal presenters, and cross-media Obsession Spotlight parity.
       - `block-3-6-6b-deterministic-engine-persistence-and-recalculation.md` - deferred optional earned ledger.
       - `block-3-6-6e-series-genre-and-library-completion-rules.md` - deferred pending denominator/classification evidence.
 - `block-3-2n-5d-automatic-audiobook-chapter-proof-handoff.md` - planned umbrella.
