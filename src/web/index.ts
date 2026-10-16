@@ -2006,12 +2006,290 @@ export function registerWebRoutes(router: Router): void {
   router.get("/achievements", (_req, res) => {
     res.type("html").send(renderPage("Achievements", `
       <style>
+        .app-page > h1 {
+          display: none;
+        }
         .achievements-container {
           max-width: 1400px;
           margin: 0 auto;
           display: flex;
           flex-direction: column;
-          gap: 24px;
+          gap: 16px;
+        }
+        .achievements-hud {
+          position: sticky;
+          top: 76px;
+          z-index: 25;
+          background: rgba(22, 27, 34, 0.94);
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-radius: 14px;
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+          overflow: hidden;
+          transition: all 0.25s ease;
+        }
+        .hud-main-bar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: nowrap;
+          gap: 10px;
+          padding: 6px 14px;
+          min-height: 48px;
+        }
+        @media (max-width: 1100px) {
+          .hud-main-bar {
+            flex-wrap: wrap;
+            gap: 8px;
+          }
+        }
+        .hud-left-group {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-shrink: 0;
+        }
+        .hud-profile-pill {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          background: #0d1117;
+          border: 1px solid #30363d;
+          border-radius: 10px;
+          padding: 4px 10px 4px 5px;
+          cursor: pointer;
+          color: #f0f6fc;
+          transition: all 0.15s ease;
+        }
+        .hud-profile-pill:hover {
+          background: #161b22;
+          border-color: #58a6ff;
+        }
+        .hud-avatar {
+          width: 28px;
+          height: 28px;
+          border-radius: 8px;
+          background: #1f6feb;
+          color: #fff;
+          font-weight: 700;
+          font-size: 0.9rem;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid rgba(88, 166, 255, 0.4);
+          flex-shrink: 0;
+        }
+        .hud-profile-meta {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+        }
+        .hud-profile-name {
+          font-weight: 700;
+          font-size: 0.88rem;
+          color: #fff;
+          white-space: nowrap;
+        }
+        .hud-chevron {
+          font-size: 0.75rem;
+          color: #8b949e;
+          transition: transform 0.2s ease;
+          display: inline-block;
+        }
+        .hud-chevron.open {
+          transform: rotate(180deg);
+        }
+        .hud-trophies-badge {
+          border-left: 1px solid #30363d;
+          padding-left: 8px;
+          font-size: 0.8rem;
+          font-weight: 700;
+          color: #fbbf24;
+          white-space: nowrap;
+        }
+        .hud-quick-stats {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          background: #0d1117;
+          border: 1px solid #30363d;
+          border-radius: 8px;
+          padding: 4px 10px;
+          font-size: 0.78rem;
+          color: #8b949e;
+          white-space: nowrap;
+        }
+        .hud-quick-stats strong {
+          color: #f0f6fc;
+        }
+        .hud-stat-caughtup {
+          color: #34d399 !important;
+          font-weight: 600;
+        }
+        .hud-stat-inprogress {
+          color: #fbbf24 !important;
+          font-weight: 600;
+        }
+        .hud-facet-filters {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          background: #0d1117;
+          border: 1px solid #30363d;
+          border-radius: 10px;
+          padding: 3px 4px;
+          flex-wrap: nowrap;
+        }
+        .hud-facet-filters .btn-facet {
+          padding: 4px 9px;
+          font-size: 0.78rem;
+          border-radius: 6px;
+          white-space: nowrap;
+        }
+        .hud-right-group {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          flex-shrink: 0;
+        }
+        .hud-state-filters {
+          display: flex;
+          align-items: center;
+          gap: 3px;
+          background: #0d1117;
+          border: 1px solid #30363d;
+          border-radius: 8px;
+          padding: 3px 4px;
+        }
+        .hud-state-filters .btn-state {
+          padding: 4px 8px;
+          font-size: 0.74rem;
+          border-radius: 5px;
+          white-space: nowrap;
+        }
+        .hud-sort-controls {
+          display: flex;
+          align-items: center;
+        }
+        .hud-sort-controls select {
+          background: #0d1117;
+          color: #f0f6fc;
+          border: 1px solid #30363d;
+          border-radius: 8px;
+          padding: 4px 8px;
+          font-size: 0.75rem;
+          font-weight: 600;
+          cursor: pointer;
+          outline: none;
+          color-scheme: dark;
+          max-width: 145px;
+          transition: border-color 0.15s ease;
+        }
+        .hud-sort-controls select:hover {
+          border-color: #58a6ff;
+        }
+        .hud-refresh-btn {
+          padding: 4px 9px;
+          font-size: 0.82rem;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: #0d1117;
+          border: 1px solid #30363d;
+          border-radius: 8px;
+        }
+        .hud-profile-drawer {
+          border-top: 1px solid rgba(255, 255, 255, 0.08);
+          background: #0d1117;
+          padding: 12px 16px;
+          animation: drawerSlideDown 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        @keyframes drawerSlideDown {
+          from { opacity: 0; transform: translateY(-8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .hud-drawer-inner {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .hud-drawer-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+        .hud-drawer-title {
+          font-size: 0.75rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          color: var(--text-muted);
+        }
+        .hud-user-tabs {
+          display: flex;
+          gap: 8px;
+          overflow-x: auto;
+          padding: 4px 2px 8px 2px;
+          scroll-behavior: smooth;
+        }
+        .hud-drawer-hero {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 12px;
+          padding: 10px 14px;
+          background: rgba(22, 27, 34, 0.7);
+          border: 1px solid rgba(99, 102, 241, 0.2);
+          border-radius: 10px;
+        }
+        .hud-drawer-stats {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .hud-mini-stat {
+          background: #0d1117;
+          border: 1px solid #30363d;
+          border-radius: 8px;
+          padding: 4px 10px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          min-width: 60px;
+        }
+        .hud-mini-stat-val {
+          font-size: 1.05rem;
+          font-weight: 700;
+          line-height: 1.1;
+        }
+        .hud-mini-stat-lbl {
+          font-size: 0.65rem;
+          color: var(--text-muted);
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          margin-top: 1px;
+        }
+        .text-blue { color: #58a6ff; }
+        .text-amber { color: #f59e0b; }
+        .text-emerald { color: #10b981; }
+        .text-muted { color: #8b949e; }
+        @media (max-width: 900px) {
+          .hud-main-bar {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 8px;
+            padding: 8px 10px;
+          }
+          .hud-left-group, .hud-right-group, .hud-facet-filters {
+            justify-content: space-between;
+            width: 100%;
+          }
         }
         .user-tab {
           display: flex;
@@ -2193,122 +2471,176 @@ export function registerWebRoutes(router: Router): void {
         .ribbon-silver { background: #94a3b8; color: #0f172a; }
         .ribbon-gold { background: #eab308; color: #422006; }
         .ribbon-platinum { background: #38bdf8; color: #082f49; }
+        .modal-ep-tab {
+          padding: 6px 12px;
+          border-radius: 8px;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          background: rgba(22, 27, 34, 0.75);
+          color: #94a3b8;
+          font-size: 0.75rem;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.15s ease;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .modal-ep-tab:hover {
+          color: #fff;
+          background: rgba(255, 255, 255, 0.08);
+        }
+        .modal-ep-tab.active {
+          color: #fff;
+          background: #1f6feb;
+          border-color: #388bfd;
+        }
+        .modal-ep-row {
+          display: grid;
+          grid-template-columns: 75px minmax(0, 1fr) 55px 95px 95px;
+          gap: 8px;
+          align-items: center;
+          padding: 7px 10px;
+          background: #0d1117;
+          border: 1px solid #21262d;
+          border-radius: 8px;
+          font-size: 0.78rem;
+          transition: background 0.15s ease;
+        }
+        .modal-ep-row:hover {
+          background: #161b22;
+          border-color: #30363d;
+        }
+        @media (max-width: 600px) {
+          .modal-ep-row {
+            grid-template-columns: 60px minmax(0, 1fr) 50px 85px;
+          }
+          .modal-ep-row .hide-mobile {
+            display: none;
+          }
+        }
       </style>
 
       <div class="achievements-container">
-        <!-- Header Banner -->
-        <section class="card" style="padding: 20px 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">
-          <div>
-            <div style="display: flex; align-items: center; gap: 10px;">
-              <span style="font-size: 1.8rem;">🏆</span>
-              <div>
-                <h2 style="margin: 0; font-size: 1.4rem;">Personal Media Passport</h2>
-                <p style="margin: 4px 0 0; color: var(--text-muted); font-size: 0.95rem;">
-                  Live Household Showcase: Trophy Shelf, Obsession Spotlight, Taste Affinity &amp; Viewing Bonds
-                </p>
-              </div>
-            </div>
-          </div>
-          <div style="display: flex; align-items: center; gap: 12px;">
-            <span class="badge" id="live-status-badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 600; padding: 6px 12px; border-radius: 8px;">
-              ● Live Engine (Compute-On-Read)
-            </span>
-            <button id="btn-refresh-achievements" class="btn" style="display: flex; align-items: center; gap: 6px; padding: 8px 16px; cursor: pointer;">
-              🔄 Refresh
-            </button>
-          </div>
-        </section>
-
-        <!-- User Selector Tabs (Draggable & Scrollable Bubble Row) -->
-        <section id="user-bubbles-container" class="card" style="padding: 14px 20px; display: flex; flex-direction: column; gap: 10px; background: rgba(22, 27, 34, 0.7); border: 1px solid var(--border-color, #30363d); border-radius: 16px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
-            <div style="display: flex; align-items: center; gap: 10px;">
-              <span style="font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);">
-                Household Profiles
-              </span>
-              <span class="badge" style="font-size: 0.7rem; padding: 2px 8px; background: rgba(99, 102, 241, 0.15); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 999px;">
-                ⇄ Movable / Drag to reorder
-              </span>
-            </div>
-            <div style="display: flex; align-items: center; gap: 6px;">
-              <button type="button" id="btn-scroll-tabs-left" class="btn" style="padding: 4px 10px; font-size: 0.85rem; line-height: 1; border-radius: 6px;" title="Scroll left">‹</button>
-              <button type="button" id="btn-scroll-tabs-right" class="btn" style="padding: 4px 10px; font-size: 0.85rem; line-height: 1; border-radius: 6px;" title="Scroll right">›</button>
-              <button type="button" id="btn-reset-user-order" class="btn" style="padding: 4px 10px; font-size: 0.75rem; color: var(--text-muted); background: transparent; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; cursor: pointer;" title="Reset profiles to default order">Reset Order</button>
-            </div>
-          </div>
-          <div id="user-tabs" style="display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 8px 2px; scroll-behavior: smooth;" class="thin-scroll">
-            <div style="color: var(--text-muted); font-size: 0.9rem;">Loading household profiles...</div>
-          </div>
-        </section>
-
-        <!-- Active User Hero Banner -->
-        <section id="user-hero" class="card" style="padding: 24px; border: 1px solid rgba(99, 102, 241, 0.3); background: linear-gradient(135deg, rgba(30, 27, 75, 0.3) 0%, rgba(22, 27, 34, 0.9) 100%);">
-          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 20px;">
-            <div style="display: flex; align-items: center; gap: 16px;">
-              <div id="user-avatar" style="width: 60px; height: 60px; border-radius: 16px; background: #1f6feb; display: flex; align-items: center; justify-content: center; font-size: 1.6rem; font-weight: bold; color: white; border: 2px solid rgba(88, 166, 255, 0.4); box-shadow: 0 4px 14px rgba(0,0,0,0.4);">
-                ?
-              </div>
-              <div>
-                <div style="display: flex; align-items: center; gap: 10px;">
-                  <h2 id="user-name" style="margin: 0; font-size: 1.6rem; color: #fff;">Loading...</h2>
-                  <span class="badge" style="background: rgba(99, 102, 241, 0.2); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); font-size: 0.75rem; padding: 3px 8px; border-radius: 999px;">Household Viewer</span>
+        <!-- Option 3: Sticky HUD + Expandable Profile Drawer -->
+        <section id="achievements-hud" class="achievements-hud">
+          <!-- Main Persistent Bar (Height ~52px) -->
+          <div class="hud-main-bar">
+            <!-- Left: Profile Pill with Drawer Toggle & Quick Stats -->
+            <div class="hud-left-group">
+              <button type="button" id="btn-toggle-profile-drawer" class="hud-profile-pill" title="Click to switch household profile">
+                <div id="user-avatar" class="hud-avatar">?</div>
+                <div class="hud-profile-meta">
+                  <span id="user-name" class="hud-profile-name">Loading...</span>
+                  <span id="drawer-chevron" class="hud-chevron">▼</span>
                 </div>
-                <p id="user-summary" style="margin: 6px 0 0; color: var(--text-muted); font-size: 0.9rem;"></p>
+                <div id="hud-pill-trophies" class="hud-trophies-badge">0 🏆</div>
+              </button>
+
+              <div id="hud-quick-stats" class="hud-quick-stats">
+                <span id="hud-stat-earned-pill" style="cursor: pointer;" title="Filter by Earned"><strong>0</strong> Earned</span>
+                <span style="opacity: 0.35;">•</span>
+                <span id="hud-stat-caughtup-pill" class="hud-stat-caughtup" style="display: none; cursor: pointer;" title="Filter by Caught Up"><strong>0</strong> Caught Up</span>
+                <span id="hud-stat-sep-inprogress" style="opacity: 0.35; display: none;">•</span>
+                <span id="hud-stat-inprogress-pill" class="hud-stat-inprogress" style="display: none; cursor: pointer;" title="Filter by In Progress"><strong>0</strong> In Progress</span>
               </div>
             </div>
-            <!-- Quick Stats Matrix -->
-            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; text-align: center;">
-              <div style="background: rgba(13, 17, 23, 0.7); border: 1px solid #30363d; border-radius: 12px; padding: 10px 16px;">
-                <div id="stat-earned" style="font-size: 1.4rem; font-weight: bold; color: #58a6ff;">0</div>
-                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; margin-top: 2px;">Earned</div>
+
+            <!-- Center: Facet Switcher Tabs -->
+            <div id="facet-filters" class="hud-facet-filters">
+              <button data-facet="all" class="btn-facet active">All</button>
+              <button data-facet="trophy_shelf" class="btn-facet">🏆 Trophies</button>
+              <button data-facet="badges" class="btn-facet">🎖️ Badges</button>
+              <button data-facet="obsession_spotlight" class="btn-facet">🔥 Obsession</button>
+              <button data-facet="taste_affinity" class="btn-facet">📊 Taste</button>
+              <button data-facet="cowatch_bond" class="btn-facet">🤝 Bonds</button>
+            </div>
+
+            <!-- Right: State Filters, Sort & Actions -->
+            <div class="hud-right-group">
+              <div id="state-filters" class="hud-state-filters">
+                <button data-state="earned" class="btn-state active">Earned</button>
+                <button data-state="caught_up" class="btn-state">Caught Up</button>
+                <button data-state="in_progress" class="btn-state">In Progress</button>
+                <button data-state="all" class="btn-state">All</button>
               </div>
-              <div style="background: rgba(13, 17, 23, 0.7); border: 1px solid #30363d; border-radius: 12px; padding: 10px 16px;">
-                <div id="stat-trophies" style="font-size: 1.4rem; font-weight: bold; color: #e3b341;">0</div>
-                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; margin-top: 2px;">Show Trophies</div>
+
+              <div id="sort-controls" class="hud-sort-controls">
+                <select id="sort-badges-select" title="Sort badges and trophies">
+                  <option value="default">⇅ Default</option>
+                  <option value="date-desc">⇅ Date (Newest)</option>
+                  <option value="date-asc">⇅ Date (Oldest)</option>
+                  <option value="name-asc">⇅ Name (A–Z)</option>
+                  <option value="name-desc">⇅ Name (Z–A)</option>
+                  <option value="progress-desc">⇅ Progress %</option>
+                  <option value="tier-desc">⇅ Tier</option>
+                </select>
               </div>
-              <div style="background: rgba(13, 17, 23, 0.7); border: 1px solid #30363d; border-radius: 12px; padding: 10px 16px;">
-                <div id="stat-cowatches" style="font-size: 1.4rem; font-weight: bold; color: #3fb950;">0</div>
-                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; margin-top: 2px;">Co-Watches</div>
+
+              <button id="btn-refresh-achievements" class="btn hud-refresh-btn" title="Refresh Live Achievements">
+                🔄
+              </button>
+            </div>
+          </div>
+
+          <!-- Expandable Slide-Down Drawer (#hud-profile-drawer) -->
+          <div id="hud-profile-drawer" class="hud-profile-drawer" style="display: none;">
+            <div class="hud-drawer-inner">
+              <div class="hud-drawer-header">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span class="hud-drawer-title">Personal Media Passport • Household Profiles</span>
+                  <span class="badge" style="font-size: 0.7rem; padding: 2px 8px; background: rgba(99, 102, 241, 0.15); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 999px;">
+                    ⇄ Drag to reorder
+                  </span>
+                  <span class="badge" id="live-status-badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 600; font-size: 0.7rem; padding: 2px 8px; border-radius: 999px;">
+                    ● Live Engine
+                  </span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <button type="button" id="btn-scroll-tabs-left" class="btn" style="padding: 3px 8px; font-size: 0.8rem; line-height: 1; border-radius: 6px;" title="Scroll left">‹</button>
+                  <button type="button" id="btn-scroll-tabs-right" class="btn" style="padding: 3px 8px; font-size: 0.8rem; line-height: 1; border-radius: 6px;" title="Scroll right">›</button>
+                  <button type="button" id="btn-reset-user-order" class="btn" style="padding: 3px 8px; font-size: 0.72rem; color: var(--text-muted); background: transparent; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; cursor: pointer;" title="Reset profiles to default order">Reset Order</button>
+                  <button type="button" id="btn-close-drawer" class="btn" style="padding: 3px 8px; font-size: 0.72rem; color: var(--text-muted); background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; cursor: pointer;">✕ Close</button>
+                </div>
               </div>
-              <div style="background: rgba(13, 17, 23, 0.7); border: 1px solid #30363d; border-radius: 12px; padding: 10px 16px;">
-                <div id="stat-inprogress" style="font-size: 1.4rem; font-weight: bold; color: #79c0ff;">0</div>
-                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; margin-top: 2px;">In Progress</div>
+
+              <!-- Draggable Profile Bubbles Container -->
+              <div id="user-bubbles-container">
+                <div id="user-tabs" class="thin-scroll hud-user-tabs">
+                  <div style="color: var(--text-muted); font-size: 0.85rem;">Loading household profiles...</div>
+                </div>
+              </div>
+
+              <!-- Active User Detailed Summary Row & Full Stats Matrix -->
+              <div id="user-hero" class="hud-drawer-hero">
+                <div style="flex: 1; min-width: 0;">
+                  <p id="user-summary" style="margin: 0; color: var(--text-muted); font-size: 0.82rem; line-height: 1.4;"></p>
+                </div>
+                <div class="hud-drawer-stats">
+                  <div class="hud-mini-stat">
+                    <span id="stat-earned" class="hud-mini-stat-val text-blue">0</span>
+                    <span class="hud-mini-stat-lbl">Earned</span>
+                  </div>
+                  <div class="hud-mini-stat">
+                    <span id="stat-trophies" class="hud-mini-stat-val text-amber">0</span>
+                    <span class="hud-mini-stat-lbl">Trophies</span>
+                  </div>
+                  <div class="hud-mini-stat">
+                    <span id="stat-badges" class="hud-mini-stat-val text-indigo" style="color: #818cf8;">0</span>
+                    <span class="hud-mini-stat-lbl">Badges</span>
+                  </div>
+                  <div class="hud-mini-stat">
+                    <span id="stat-cowatches" class="hud-mini-stat-val text-emerald">0</span>
+                    <span class="hud-mini-stat-lbl">Co-Watches</span>
+                  </div>
+                  <div class="hud-mini-stat">
+                    <span id="stat-inprogress" class="hud-mini-stat-val text-muted">0</span>
+                    <span class="hud-mini-stat-lbl">In Progress</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         </section>
-
-        <!-- Filter & Sort Controls -->
-        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
-          <div id="facet-filters" style="display: flex; gap: 6px; flex-wrap: wrap; background: rgba(22, 27, 34, 0.85); padding: 4px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.12);">
-            <button data-facet="all" class="btn-facet active">All Showcases</button>
-            <button data-facet="trophy_shelf" class="btn-facet">🏆 Trophy Shelf</button>
-            <button data-facet="obsession_spotlight" class="btn-facet">🔥 Obsession Spotlight</button>
-            <button data-facet="taste_affinity" class="btn-facet">📊 Taste Devotion</button>
-            <button data-facet="cowatch_bond" class="btn-facet">🤝 Viewing Bonds</button>
-          </div>
-          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-            <div id="sort-controls">
-              <label for="sort-badges-select" style="font-size: 0.8rem; font-weight: 600; color: #8b949e; display: flex; align-items: center; gap: 4px;">
-                <span>⇅</span> Sort:
-              </label>
-              <select id="sort-badges-select">
-                <option value="default">Default Order</option>
-                <option value="date-desc">Date Completed (Newest First)</option>
-                <option value="date-asc">Date Completed (Oldest First)</option>
-                <option value="name-asc">Badge Name (A–Z)</option>
-                <option value="name-desc">Badge Name (Z–A)</option>
-                <option value="progress-desc">Highest Progress %</option>
-                <option value="tier-desc">Tier (Platinum → Bronze)</option>
-              </select>
-            </div>
-            <div id="state-filters" style="display: flex; gap: 6px; background: rgba(22, 27, 34, 0.85); padding: 4px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.12);">
-              <button data-state="earned" class="btn-state active">Earned Only</button>
-              <button data-state="caught_up" class="btn-state">Caught Up on Plex</button>
-              <button data-state="all" class="btn-state">All States</button>
-            </div>
-          </div>
-        </div>
 
         <!-- Obsession Spotlight Featured Card -->
         <div id="obsession-container"></div>
@@ -2332,11 +2664,13 @@ export function registerWebRoutes(router: Router): void {
 
         <!-- Badges Section -->
         <section id="badges-section" style="display: flex; flex-direction: column; gap: 16px;">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div style="display: flex; align-items: center; gap: 8px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
               <span style="font-size: 1.3rem;">🎖️</span>
               <h3 id="badges-heading" style="margin: 0; font-size: 1.25rem;">Milestones, Devotion &amp; Bonds</h3>
+              <span id="badges-count-badge" class="badge" style="background: rgba(99, 102, 241, 0.2); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); font-size: 0.75rem; padding: 2px 8px; border-radius: 999px;">0 Earned</span>
             </div>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">Platform, Genre &amp; Household Milestones</span>
           </div>
           <div id="badges-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;"></div>
         </section>
@@ -2344,29 +2678,50 @@ export function registerWebRoutes(router: Router): void {
 
       <!-- Detail Modal -->
       <div id="detail-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px); z-index: 1000; align-items: center; justify-content: center; padding: 16px;">
-        <div style="background: #161b22; border: 1px solid #30363d; border-radius: 16px; max-width: 540px; width: 100%; padding: 24px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); position: relative; display: flex; flex-direction: column; gap: 16px; max-height: 90vh;">
-          <button id="modal-close" style="position: absolute; top: 16px; right: 16px; background: none; border: none; color: #8b949e; font-size: 1.5rem; cursor: pointer;">&times;</button>
-          <div style="display: flex; gap: 16px; align-items: flex-start;">
+        <div style="background: #161b22; border: 1px solid #30363d; border-radius: 16px; max-width: min(640px, 94vw); width: 100%; padding: 24px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); position: relative; display: flex; flex-direction: column; gap: 16px; max-height: 90vh;">
+          <button id="modal-close" style="position: absolute; top: 16px; right: 16px; background: none; border: none; color: #8b949e; font-size: 1.5rem; cursor: pointer; line-height: 1; z-index: 2;">&times;</button>
+          
+          <!-- Modal Header -->
+          <div style="display: flex; gap: 16px; align-items: flex-start; padding-right: 28px; flex-shrink: 0;">
             <div id="modal-icon" style="width: 60px; height: 75px; border-radius: 12px; background: #0d1117; display: flex; align-items: center; justify-content: center; font-size: 2rem; border: 1px solid #30363d; flex-shrink: 0; overflow: hidden;"></div>
             <div style="flex: 1; min-width: 0;">
-              <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 4px;">
+              <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 4px; flex-wrap: wrap;">
                 <span id="modal-tier" class="badge" style="text-transform: uppercase; font-size: 0.7rem; font-weight: 700;"></span>
                 <span id="modal-state" class="badge" style="font-size: 0.7rem; font-weight: 600;"></span>
               </div>
-              <h3 id="modal-title" style="margin: 0; font-size: 1.15rem; color: #fff;"></h3>
+              <h3 id="modal-title" style="margin: 0; font-size: 1.15rem; color: #fff; word-break: break-word;"></h3>
               <p id="modal-facet" style="margin: 4px 0 0; font-size: 0.8rem; color: #58a6ff; font-weight: 500;"></p>
             </div>
           </div>
-          <p id="modal-desc" style="margin: 0; font-size: 0.9rem; color: #c9d1d9; line-height: 1.5;"></p>
-          <div id="modal-stats-box" style="background: rgba(13, 17, 23, 0.8); border: 1px solid #30363d; border-radius: 12px; padding: 12px; font-size: 0.85rem;"></div>
-          <div>
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; color: #8b949e;">
-              <span>Supporting Evidence Trail</span>
-              <span id="evidence-count" style="font-weight: 400; color: #6e7681;"></span>
+
+          <!-- Modal Scroll Body -->
+          <div id="modal-scroll-body" class="thin-scroll" style="flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding-right: 4px;">
+            <p id="modal-desc" style="margin: 0; font-size: 0.9rem; color: #c9d1d9; line-height: 1.5;"></p>
+
+            <!-- Prominent First Completion Milestone Banner -->
+            <div id="modal-first-completion" style="display: none;"></div>
+
+            <!-- Next Medal Progress Card -->
+            <div id="modal-next-medal" style="display: none;"></div>
+
+            <!-- Stats Box (Coverage Audit / Generic Progress) -->
+            <div id="modal-stats-box" style="background: rgba(13, 17, 23, 0.8); border: 1px solid #30363d; border-radius: 12px; padding: 12px; font-size: 0.85rem;"></div>
+
+            <!-- Episode Repeat Watch Breakdown -->
+            <div id="modal-episodes-section" style="display: none;"></div>
+
+            <!-- Evidence Section -->
+            <div id="modal-evidence-section">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; color: #8b949e;">
+                <span>Supporting Evidence Trail</span>
+                <span id="evidence-count" style="font-weight: 400; color: #6e7681;"></span>
+              </div>
+              <div id="modal-evidence-list" style="max-height: 180px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; font-size: 0.8rem;" class="thin-scroll"></div>
             </div>
-            <div id="modal-evidence-list" style="max-height: 180px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; font-size: 0.8rem;" class="thin-scroll"></div>
           </div>
-          <div style="border-top: 1px solid #30363d; padding-top: 12px; display: flex; justify-content: space-between; align-items: center;">
+
+          <!-- Modal Footer -->
+          <div style="flex-shrink: 0; border-top: 1px solid #30363d; padding-top: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
             <span id="modal-earned-at" style="font-size: 0.75rem; color: #6e7681;"></span>
             <button id="modal-dismiss" class="btn" style="padding: 6px 16px;">Close</button>
           </div>
@@ -2393,6 +2748,38 @@ export function registerWebRoutes(router: Router): void {
           platinum: { bg: 'rgba(56, 189, 248, 0.15)', border: '#38bdf8', text: '#7dd3fc', ribbon: 'ribbon-platinum', badge: 'border: 1px solid #38bdf8; color: #7dd3fc;' }
         };
 
+        function getItemActivityTimestamp(item) {
+          if (item.badge?.stats?.latestWatchedAt) {
+            const t = new Date(item.badge.stats.latestWatchedAt).getTime();
+            if (!isNaN(t) && t > 0) return t;
+          }
+          if (item.earnedAt) {
+            const t = new Date(item.earnedAt).getTime();
+            if (!isNaN(t) && t > 0) return t;
+          }
+          if (item.badge?.stats?.firstCompletedAt) {
+            const t = new Date(item.badge.stats.firstCompletedAt).getTime();
+            if (!isNaN(t) && t > 0) return t;
+          }
+          if (item.badge?.stats?.episodeReplayDetails && item.badge.stats.episodeReplayDetails.length > 0) {
+            let maxT = 0;
+            for (const ep of item.badge.stats.episodeReplayDetails) {
+              const t = ep.lastWatchedAt ? new Date(ep.lastWatchedAt).getTime() : 0;
+              if (t > maxT) maxT = t;
+            }
+            if (maxT > 0) return maxT;
+          }
+          if (item.supportingEvidence && item.supportingEvidence.length > 0) {
+            let maxT = 0;
+            for (const ev of item.supportingEvidence) {
+              const t = ev.eventTime ? new Date(ev.eventTime).getTime() : 0;
+              if (t > maxT) maxT = t;
+            }
+            if (maxT > 0) return maxT;
+          }
+          return 0;
+        }
+
         function sortAchievements(items, sortKey) {
           const list = [...items];
           const TIER_ORDER = { platinum: 4, gold: 3, silver: 2, bronze: 1 };
@@ -2404,16 +2791,18 @@ export function registerWebRoutes(router: Router): void {
           }
           if (sortKey === 'date-desc') {
             return list.sort((a, b) => {
-              const timeA = a.earnedAt ? new Date(a.earnedAt).getTime() : 0;
-              const timeB = b.earnedAt ? new Date(b.earnedAt).getTime() : 0;
-              return timeB - timeA;
+              const timeA = getItemActivityTimestamp(a);
+              const timeB = getItemActivityTimestamp(b);
+              if (timeB !== timeA) return timeB - timeA;
+              return (a.badge?.title || '').localeCompare(b.badge?.title || '');
             });
           }
           if (sortKey === 'date-asc') {
             return list.sort((a, b) => {
-              const timeA = a.earnedAt ? new Date(a.earnedAt).getTime() : Infinity;
-              const timeB = b.earnedAt ? new Date(b.earnedAt).getTime() : Infinity;
-              return timeA - timeB;
+              const timeA = getItemActivityTimestamp(a) || Infinity;
+              const timeB = getItemActivityTimestamp(b) || Infinity;
+              if (timeA !== timeB) return timeA - timeB;
+              return (a.badge?.title || '').localeCompare(b.badge?.title || '');
             });
           }
           if (sortKey === 'progress-desc') {
@@ -2464,7 +2853,11 @@ export function registerWebRoutes(router: Router): void {
             if (userData.ok && userData.users) {
               usersData = applySavedUserOrder(userData.users);
               renderUserTabs();
-              const defaultUser = usersData.find(u => u.plex_username === 'Tony') || usersData[0];
+              const defaultUser = usersData.find(u =>
+                (u.alias && u.alias.toLowerCase().includes('tony')) ||
+                (u.display_name && u.display_name.toLowerCase().includes('tony')) ||
+                (u.plex_username && u.plex_username.toLowerCase().includes('tony'))
+              ) || usersData[0];
               if (defaultUser) {
                 selectUser(defaultUser.id);
               }
@@ -2554,9 +2947,26 @@ export function registerWebRoutes(router: Router): void {
           });
         }
 
+        let isDrawerOpen = false;
+        function toggleProfileDrawer(forceState) {
+          const drawer = document.getElementById('hud-profile-drawer');
+          const chevron = document.getElementById('drawer-chevron');
+          if (!drawer) return;
+
+          isDrawerOpen = typeof forceState === 'boolean' ? forceState : !isDrawerOpen;
+          if (isDrawerOpen) {
+            drawer.style.display = 'block';
+            if (chevron) chevron.classList.add('open');
+          } else {
+            drawer.style.display = 'none';
+            if (chevron) chevron.classList.remove('open');
+          }
+        }
+
         async function selectUser(userId, forceRefresh = false) {
           activeUserId = userId;
           renderUserTabs();
+          toggleProfileDrawer(false);
           await loadAchievements(userId, forceRefresh);
           renderAll();
         }
@@ -2597,25 +3007,86 @@ export function registerWebRoutes(router: Router): void {
           const results = achievementsStore[activeUserId] || [];
           const name = userObj ? (userObj.alias || userObj.display_name || userObj.plex_username) : 'Viewer';
 
-          document.getElementById('user-avatar').textContent = name.slice(0, 1).toUpperCase();
-          document.getElementById('user-name').textContent = name;
+          const avatarEl = document.getElementById('user-avatar');
+          if (avatarEl) avatarEl.textContent = name.slice(0, 1).toUpperCase();
+          const nameEl = document.getElementById('user-name');
+          if (nameEl) nameEl.textContent = name;
 
           const earnedList = results.filter(r => r.state === 'earned');
           const inProgList = results.filter(r => r.state === 'in_progress');
           const trophies = earnedList.filter(r => r.facet === 'trophy_shelf' && r.badge && r.badge.posterUrl);
+          const badges = earnedList.filter(r => !(r.facet === 'trophy_shelf' && r.badge && r.badge.posterUrl) && r.facet !== 'obsession_spotlight');
           const cowatches = earnedList.filter(r => r.facet === 'cowatch_bond');
-          const caughtUpList = results.filter(r => r.badge && r.badge.stats && r.badge.stats.isCaughtUpOnPlex);
+          const pureInProgressList = inProgList.filter(r => !r.badge?.stats?.isCaughtUpOnPlex);
+          const caughtUpList = results.filter(r => r.badge && r.badge.stats && r.badge.stats.isCaughtUpOnPlex && r.state !== 'earned');
 
-          document.getElementById('stat-earned').textContent = earnedList.length;
-          document.getElementById('stat-trophies').textContent = trophies.length;
-          document.getElementById('stat-cowatches').textContent = cowatches.length;
-          document.getElementById('stat-inprogress').textContent = inProgList.length;
+          const statEarned = document.getElementById('stat-earned');
+          if (statEarned) statEarned.textContent = earnedList.length;
+          const statTrophies = document.getElementById('stat-trophies');
+          if (statTrophies) statTrophies.textContent = trophies.length;
+          const statBadges = document.getElementById('stat-badges');
+          if (statBadges) statBadges.textContent = badges.length;
+          const statCowatches = document.getElementById('stat-cowatches');
+          if (statCowatches) statCowatches.textContent = cowatches.length;
+          const statInprog = document.getElementById('stat-inprogress');
+          if (statInprog) statInprog.textContent = inProgList.length;
+
+          // Sticky HUD Profile Pill & Quick Stats
+          const hudTrophies = document.getElementById('hud-pill-trophies');
+          if (hudTrophies) {
+            hudTrophies.innerHTML = trophies.length + ' 🏆 <span style="opacity: 0.4; margin: 0 1px;">•</span> ' + badges.length + ' 🎖️';
+            hudTrophies.title = trophies.length + ' Series Trophies, ' + badges.length + ' Milestone & Devotion Badges';
+          }
+
+          const hudEarnedPill = document.getElementById('hud-stat-earned-pill');
+          if (hudEarnedPill) {
+            hudEarnedPill.innerHTML = '<strong>' + earnedList.length + '</strong> Earned';
+            hudEarnedPill.onclick = () => {
+              document.querySelectorAll('#state-filters button').forEach(b => b.classList.remove('active'));
+              const targetBtn = document.querySelector('#state-filters button[data-state="earned"]');
+              if (targetBtn) targetBtn.classList.add('active');
+              activeState = 'earned';
+              renderAll();
+            };
+          }
+
+          const hudCaughtUpPill = document.getElementById('hud-stat-caughtup-pill');
+          if (hudCaughtUpPill) {
+            hudCaughtUpPill.innerHTML = '<strong>' + caughtUpList.length + '</strong> Caught Up';
+            hudCaughtUpPill.style.display = caughtUpList.length > 0 ? 'inline' : 'none';
+            hudCaughtUpPill.onclick = () => {
+              document.querySelectorAll('#state-filters button').forEach(b => b.classList.remove('active'));
+              const targetBtn = document.querySelector('#state-filters button[data-state="caught_up"]');
+              if (targetBtn) targetBtn.classList.add('active');
+              activeState = 'caught_up';
+              renderAll();
+            };
+          }
+
+          const hudInProgressPill = document.getElementById('hud-stat-inprogress-pill');
+          const hudSepInProgress = document.getElementById('hud-stat-sep-inprogress');
+          if (hudInProgressPill) {
+            hudInProgressPill.innerHTML = '<strong>' + pureInProgressList.length + '</strong> In Progress';
+            hudInProgressPill.style.display = pureInProgressList.length > 0 ? 'inline' : 'none';
+            if (hudSepInProgress) hudSepInProgress.style.display = pureInProgressList.length > 0 ? 'inline' : 'none';
+            hudInProgressPill.onclick = () => {
+              document.querySelectorAll('#state-filters button').forEach(b => b.classList.remove('active'));
+              const targetBtn = document.querySelector('#state-filters button[data-state="in_progress"]');
+              if (targetBtn) targetBtn.classList.add('active');
+              activeState = 'in_progress';
+              renderAll();
+            };
+          }
 
           let summaryText = earnedList.length + ' milestones unlocked across movie, series, anime, and household viewing.';
           if (caughtUpList.length > 0) {
             summaryText += ' • ' + caughtUpList.length + ' series caught up on server library.';
           }
-          document.getElementById('user-summary').textContent = summaryText;
+          if (pureInProgressList.length > 0) {
+            summaryText += ' • ' + pureInProgressList.length + ' in progress.';
+          }
+          const summaryEl = document.getElementById('user-summary');
+          if (summaryEl) summaryEl.textContent = summaryText;
         }
 
         function renderObsession() {
@@ -2667,9 +3138,18 @@ export function registerWebRoutes(router: Router): void {
 
           const allTrophies = results.filter(r => r.facet === 'trophy_shelf' && r.badge && r.badge.posterUrl);
           const earnedTrophies = allTrophies.filter(t => t.state === 'earned');
-          const caughtUpTrophies = allTrophies.filter(t => t.badge && t.badge.stats && t.badge.stats.isCaughtUpOnPlex);
+          const caughtUpTrophies = allTrophies.filter(t => t.state !== 'earned' && t.badge && t.badge.stats && t.badge.stats.isCaughtUpOnPlex);
+          const inProgressTrophies = allTrophies.filter(t => t.state === 'in_progress' && (!t.badge.stats || !t.badge.stats.isCaughtUpOnPlex));
 
-          badgeCount.textContent = earnedTrophies.length + ' Earned';
+          if (activeState === 'earned') {
+            badgeCount.textContent = earnedTrophies.length + ' Earned';
+          } else if (activeState === 'caught_up') {
+            badgeCount.textContent = caughtUpTrophies.length + ' Caught Up';
+          } else if (activeState === 'in_progress') {
+            badgeCount.textContent = inProgressTrophies.length + ' In Progress';
+          } else {
+            badgeCount.textContent = allTrophies.length + ' Total';
+          }
 
           const caughtUpBadge = document.getElementById('trophy-caught-up-badge');
           if (caughtUpBadge) {
@@ -2713,14 +3193,17 @@ export function registerWebRoutes(router: Router): void {
 
           const showTrophies = allTrophies.filter(r => {
             if (activeState === 'earned' && r.state !== 'earned') return false;
-            if (activeState === 'caught_up' && (!r.badge.stats || !r.badge.stats.isCaughtUpOnPlex)) return false;
+            if (activeState === 'caught_up' && (r.state === 'earned' || !r.badge.stats || !r.badge.stats.isCaughtUpOnPlex)) return false;
+            if (activeState === 'in_progress' && (r.state !== 'in_progress' || (r.badge.stats && r.badge.stats.isCaughtUpOnPlex))) return false;
             return true;
           });
 
           if (showTrophies.length === 0) {
             const msg = activeState === 'caught_up'
               ? 'No in-progress series currently caught up on server library.'
-              : 'No series completed matching filters.';
+              : activeState === 'in_progress'
+                ? 'No series currently in progress.'
+                : 'No series completed matching filters.';
             container.innerHTML = '<div style="grid-column: 1 / -1; padding: 32px; text-align: center; color: var(--text-muted); background: var(--bg-card); border-radius: 12px; border: 1px solid var(--border-color);">' + msg + '</div>';
             return;
           }
@@ -2766,8 +3249,8 @@ export function registerWebRoutes(router: Router): void {
                           '</div>'
                       )
                   ) +
-                  '<span style="font-size: 0.85rem; font-weight: bold; color: #fff; line-height: 1.2;">' + title + '</span>' +
-                '</div>' +
+                  '<span style="font-size: 0.85rem; font-weight: bold; color: #fff; line-height: 1.2; display: block;">' + title + '</span>' +
+                '</div> ' +
                 '<img src="' + t.badge.posterUrl + '" alt="' + title + '" onerror="this.style.display=\\'none\\'" />' +
                 (isComplete && rewatchCount > 0
                   ? '<div class="tier-ribbon ' + tierStyle.ribbon + '">' + rewatchCount + 'x Replay</div>'
@@ -2777,13 +3260,16 @@ export function registerWebRoutes(router: Router): void {
                     )
                 ) +
                 '<div class="tier-pill" style="' + (isComplete ? tierStyle.badge : (isCaughtUp ? 'border: 1px solid #059669; color: #34d399;' : 'border: 1px solid #d97706; color: #f59e0b;')) + '">' +
-                  (isComplete ? t.badge.tier : (t.badge.iconHint === 'anime' ? 'Anime' : 'TV')) +
+                  (isComplete ? t.badge.tier : ('🎯 ' + (t.badge.tier || 'bronze') + '<span style="opacity: 0.5; margin: 0 4px;">•</span>' + (t.badge.iconHint === 'anime' ? 'Anime' : 'TV'))) +
                 '</div>' +
               '</div>' +
               '<div style="padding: 10px 12px; background: rgba(13, 17, 23, 0.85); border-top: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; color: var(--text-muted);">' +
                 (isCaughtUp
                   ? '<span style="color: #34d399; font-weight: 600;">' + t.progress.current + '/' + (availableCount || t.progress.current) + ' on Plex &bull; +' + missingCount + ' missing</span>'
-                  : '<span>' + (t.badge.stats && t.badge.stats.completedItems ? t.badge.stats.completedItems : (t.progress ? t.progress.current : 0)) + ' eps</span>'
+                  : (!isComplete
+                      ? '<span style="color: #f59e0b; font-weight: 600;">' + t.progress.current + ' of ' + t.progress.target + ' eps (' + progressPercent + '%)</span>'
+                      : '<span>' + (t.badge.stats && t.badge.stats.completedItems ? t.badge.stats.completedItems : (t.progress ? t.progress.current : 0)) + ' eps</span>'
+                    )
                 ) +
                 '<span style="color: #58a6ff; font-weight: 500;">Details &rarr;</span>' +
               '</div>' +
@@ -2803,16 +3289,55 @@ export function registerWebRoutes(router: Router): void {
           const container = document.getElementById('badges-grid');
           const results = achievementsStore[activeUserId] || [];
 
+          if (activeFacet === 'trophy_shelf' || activeFacet === 'obsession_spotlight') {
+            document.getElementById('badges-section').style.display = 'none';
+            return;
+          }
+          document.getElementById('badges-section').style.display = 'flex';
+
           let list = results.filter(r => {
             if (r.facet === 'trophy_shelf' && r.badge && r.badge.posterUrl) return false;
             if (r.facet === 'obsession_spotlight') return false;
-            if (activeFacet !== 'all' && r.facet !== activeFacet) return false;
+            if (activeFacet === 'badges') {
+              // Show all non-trophy badges (milestones, taste devotions, bonds)
+            } else if (activeFacet !== 'all' && r.facet !== activeFacet) {
+              return false;
+            }
             if (activeState === 'earned' && r.state !== 'earned') return false;
-            if (activeState === 'caught_up' && (!r.badge.stats || !r.badge.stats.isCaughtUpOnPlex)) return false;
+            if (activeState === 'caught_up' && (r.state === 'earned' || !r.badge.stats || !r.badge.stats.isCaughtUpOnPlex)) return false;
+            if (activeState === 'in_progress' && (r.state !== 'in_progress' || (r.badge.stats && r.badge.stats.isCaughtUpOnPlex))) return false;
             return true;
           });
 
+          const badgesCountEl = document.getElementById('badges-count-badge');
+          if (badgesCountEl) {
+            badgesCountEl.textContent = list.length + (activeState === 'earned' ? ' Earned' : activeState === 'in_progress' ? ' In Progress' : ' Badges');
+          }
+
           if (list.length === 0) {
+            if (activeState === 'in_progress') {
+              const allEarnedCount = results.filter(r => !(r.facet === 'trophy_shelf' && r.badge?.posterUrl) && r.facet !== 'obsession_spotlight' && r.state === 'earned').length;
+              container.innerHTML = '<div style="grid-column: 1 / -1; padding: 28px; text-align: center; color: var(--text-muted); background: var(--bg-card); border-radius: 12px; border: 1px solid var(--border-color); display: flex; flex-direction: column; align-items: center; gap: 8px;">' +
+                '<span style="font-size: 1.5rem;">🎉</span>' +
+                '<div style="font-weight: 600; color: #e2e8f0;">No Badges Currently In Progress</div>' +
+                '<div style="font-size: 0.85rem; color: #94a3b8;">All ' + allEarnedCount + ' milestone, taste devotion, and co-watch badges have already been unlocked for this profile!</div>' +
+                '<button type="button" id="btn-empty-view-earned-badges" class="btn" style="margin-top: 6px; padding: 5px 14px; font-size: 0.8rem; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; cursor: pointer;">View Earned Badges (' + allEarnedCount + ') &rarr;</button>' +
+              '</div>';
+              document.getElementById('btn-empty-view-earned-badges')?.addEventListener('click', () => {
+                document.querySelectorAll('#state-filters button').forEach(b => b.classList.remove('active'));
+                const targetBtn = document.querySelector('#state-filters button[data-state="earned"]');
+                if (targetBtn) targetBtn.classList.add('active');
+                activeState = 'earned';
+                renderAll();
+              });
+              return;
+            }
+            if (activeState === 'caught_up') {
+              container.innerHTML = '<div style="grid-column: 1 / -1; padding: 24px; text-align: center; color: var(--text-muted); background: var(--bg-card); border-radius: 12px; border: 1px solid var(--border-color);">' +
+                'Caught-up status applies specifically to episodic series on the Trophy Shelf.' +
+              '</div>';
+              return;
+            }
             container.innerHTML = '<div style="grid-column: 1 / -1; padding: 32px; text-align: center; color: var(--text-muted); background: var(--bg-card); border-radius: 12px; border: 1px solid var(--border-color);">No badges matching current filter criteria.</div>';
             return;
           }
@@ -2915,70 +3440,274 @@ export function registerWebRoutes(router: Router): void {
             iconContainer.innerHTML = '<span>' + icon + '</span>';
           }
 
-          const statsBox = document.getElementById('modal-stats-box');
-          if (ach.badge.stats || ach.progress) {
-            statsBox.style.display = 'block';
-            let html = '';
-            if (isCaughtUp) {
-              const available = ach.badge.stats.availableOnPlex || ach.progress.current;
-              const missing = ach.badge.stats.missingOffServerCount || (ach.progress.target - ach.progress.current);
-              const watched = ach.progress.current;
-              const target = ach.progress.target;
-              const pct = Math.round((watched / target) * 100);
+          const stats = ach.badge && ach.badge.stats;
+          const isEarned = ach.state === 'earned';
+          const isShowMastery = ach.badge && ach.badge.badgeKey && ach.badge.badgeKey.startsWith('show_mastery');
+          const firstCompletedAt = stats && stats.firstCompletedAt ? stats.firstCompletedAt : (isEarned && isShowMastery ? ach.earnedAt : null);
 
-              html += '<div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">';
-              html +=   '<div style="display: flex; justify-content: space-between; font-weight: 600; color: #fff;">';
-              html +=     '<span>Progress: ' + watched + ' / ' + target + ' episodes</span>';
-              html +=     '<span style="color: #34d399;">' + pct + '% (Caught Up)</span>';
-              html +=   '</div>';
-              html +=   '<div style="width: 100%; background: rgba(0,0,0,0.6); height: 6px; border-radius: 999px; overflow: hidden;">';
-              html +=     '<div style="background: #10b981; width: ' + pct + '%; height: 100%;"></div>';
-              html +=   '</div>';
-              html +=   '<div style="padding: 12px 14px; background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 10px; display: flex; flex-direction: column; gap: 8px;">';
-              html +=     '<div style="display: flex; justify-content: space-between; align-items: center;">';
-              html +=       '<span style="font-weight: 700; font-size: 0.8rem; color: #34d399; display: flex; align-items: center; gap: 6px;">';
-              html +=         '<span>🛡️</span> Server Coverage Audit';
-              html +=       '</span>';
-              html +=       '<span style="font-size: 0.7rem; font-weight: 600; background: rgba(16, 185, 129, 0.2); color: #6ee7b7; padding: 2px 8px; border-radius: 999px;">';
-              html +=         'Caught Up on Plex';
-              html +=       '</span>';
-              html +=     '</div>';
-              html +=     '<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; font-size: 0.75rem; text-align: center; margin-top: 4px;">';
-              html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
-              html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Server Library</div>';
-              html +=         '<div style="font-weight: 700; color: #e2e8f0;">' + available + '/' + available + ' eps</div>';
-              html +=       '</div>';
-              html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
-              html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Household Watched</div>';
-              html +=         '<div style="font-weight: 700; color: #34d399;">' + watched + ' eps</div>';
-              html +=       '</div>';
-              html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
-              html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Missing Off-Server</div>';
-              html +=         '<div style="font-weight: 700; color: #f59e0b;">+' + missing + ' eps</div>';
-              html +=       '</div>';
-              html +=     '</div>';
-              html +=     '<div style="font-size: 0.75rem; color: #cbd5e1; display: flex; align-items: center; gap: 6px; margin-top: 2px;">';
-              html +=       '<span>🔒</span>';
-              html +=       '<span>Series Trophy locked until full canonical series (' + target + ' eps) is acquired on server and completed.</span>';
-              html +=     '</div>';
-              html +=   '</div>';
-              html += '</div>';
-            } else {
-              html += '<div style="display: flex; justify-content: space-between; font-weight: 600; color: #fff;">';
-              if (ach.progress) {
-                const pct = Math.round((ach.progress.current / ach.progress.target) * 100);
-                html += '<span>Progress: ' + ach.progress.current + ' / ' + ach.progress.target + ' ' + (ach.progress.unit || 'items') + '</span>';
-                html += '<span>' + pct + '%</span>';
-              } else {
-                html += '<span>' + (ach.reason || 'Criteria met') + '</span>';
-              }
-              html += '</div>';
+          // 1. Prominent First Completion Milestone Banner
+          const firstCompletionBanner = document.getElementById('modal-first-completion');
+          if (firstCompletedAt && isEarned) {
+            const completedDate = new Date(firstCompletedAt);
+            const formattedDate = completedDate.toLocaleDateString(undefined, {
+              weekday: 'short',
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric'
+            }) + ' at ' + completedDate.toLocaleTimeString(undefined, {
+              hour: 'numeric',
+              minute: '2-digit'
+            });
+
+            let epCode = '';
+            if (stats && stats.firstCompletedEpisodeSeason != null && stats.firstCompletedEpisodeNumber != null) {
+              epCode = 'S' + String(stats.firstCompletedEpisodeSeason).padStart(2, '0') + 'E' + String(stats.firstCompletedEpisodeNumber).padStart(2, '0') + ' • ';
             }
+
+            let bannerHtml = '<div style="background: linear-gradient(135deg, rgba(217, 119, 6, 0.12) 0%, rgba(22, 27, 34, 0.95) 100%); border: 1px solid rgba(245, 158, 11, 0.35); border-left: 4px solid #f59e0b; border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px;">';
+            bannerHtml +=   '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">';
+            bannerHtml +=     '<div style="font-weight: 700; font-size: 0.8rem; color: #fbbf24; display: flex; align-items: center; gap: 6px; text-transform: uppercase; letter-spacing: 0.5px;">';
+            bannerHtml +=       '<span>🏆</span> First 100% Series Completion';
+            bannerHtml +=     '</div>';
+            bannerHtml +=     '<span style="font-size: 0.7rem; font-weight: 600; background: rgba(245, 158, 11, 0.2); color: #fde68a; padding: 2px 8px; border-radius: 999px;">';
+            bannerHtml +=       'All ' + (ach.progress ? ach.progress.target : '') + ' Episodes Completed';
+            bannerHtml +=     '</span>';
+            bannerHtml +=   '</div>';
+            bannerHtml +=   '<div style="font-size: 1.05rem; font-weight: 700; color: #fff;">' + formattedDate + '</div>';
+            if (stats && stats.firstCompletedEpisodeTitle) {
+              bannerHtml += '<div style="font-size: 0.8rem; color: #cbd5e1; display: flex; align-items: center; gap: 6px;">';
+              bannerHtml +=   '<span style="color: #34d399;">✓</span>';
+              bannerHtml +=   '<span>Milestone Finale: <strong style="color: #fff;">' + epCode + '"' + stats.firstCompletedEpisodeTitle + '"</strong></span>';
+              bannerHtml += '</div>';
+            }
+            if (stats && stats.rewatchCount > 0) {
+              bannerHtml += '<div style="font-size: 0.75rem; color: #94a3b8; border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 6px; margin-top: 2px;">';
+              bannerHtml +=   '<span>Current Trophy Level: <strong style="color: #cbd5e1;">' + ach.badge.title + '</strong> (' + (stats.rewatchCount + 1) + 'x Total Series Passes)</span>';
+              bannerHtml += '</div>';
+            }
+            bannerHtml += '</div>';
+            firstCompletionBanner.innerHTML = bannerHtml;
+            firstCompletionBanner.style.display = 'block';
+          } else {
+            firstCompletionBanner.style.display = 'none';
+          }
+
+          // 2. Next Medal Progress Card
+          const nextMedalCard = document.getElementById('modal-next-medal');
+          const ntp = stats && stats.nextTierProgress;
+          if (ntp && ntp.nextTier) {
+            const tierColor = ntp.nextTier === 'silver' ? '#cbd5e1' :
+                              ntp.nextTier === 'gold' ? '#fbbf24' :
+                              ntp.nextTier === 'platinum' ? '#7dd3fc' : '#f59e0b';
+            const tierBorder = ntp.nextTier === 'silver' ? 'rgba(148, 163, 184, 0.35)' :
+                               ntp.nextTier === 'gold' ? 'rgba(245, 158, 11, 0.35)' :
+                               ntp.nextTier === 'platinum' ? 'rgba(56, 189, 248, 0.35)' : 'rgba(217, 119, 6, 0.35)';
+
+            let nmHtml = '<div style="background: rgba(13, 17, 23, 0.85); border: 1px solid ' + tierBorder + '; border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">';
+            nmHtml +=   '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">';
+            nmHtml +=     '<div style="display: flex; align-items: center; gap: 8px;">';
+            nmHtml +=       '<span style="font-size: 1.1rem;">🎖️</span>';
+            nmHtml +=       '<span style="font-weight: 700; font-size: 0.85rem; color: #fff;">';
+            nmHtml +=         'Progress to Next Medal: <span style="color: ' + tierColor + ';">' + ntp.nextTierName + '</span>';
+            nmHtml +=       '</span>';
+            nmHtml +=     '</div>';
+            nmHtml +=     '<span style="font-weight: 700; font-size: 0.85rem; color: ' + tierColor + ';">' + ntp.percentComplete + '%</span>';
+            nmHtml +=   '</div>';
+            nmHtml +=   '<div style="width: 100%; background: rgba(0,0,0,0.6); height: 7px; border-radius: 999px; overflow: hidden;">';
+            nmHtml +=     '<div style="background: linear-gradient(90deg, ' + tierColor + ', #34d399); width: ' + ntp.percentComplete + '%; height: 100%; border-radius: 999px;"></div>';
+            nmHtml +=   '</div>';
+            nmHtml +=   '<div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: #94a3b8; flex-wrap: wrap; gap: 6px;">';
+            nmHtml +=     '<span>Rewatched: <strong style="color: #fff;">' + ntp.rewatchedCount + '</strong> of ' + ntp.targetCount + ' episodes</span>';
+            nmHtml +=     '<span style="color: ' + tierColor + '; font-weight: 600;">' + (ntp.remainingCount > 0 ? ntp.remainingCount + ' eps remaining' : 'Ready for upgrade') + '</span>';
+            nmHtml +=   '</div>';
+            nmHtml +=   '<div style="font-size: 0.72rem; color: #8b949e; background: rgba(0,0,0,0.25); padding: 6px 10px; border-radius: 6px;">';
+            nmHtml +=     (ntp.nextTier === 'silver' ? 'Re-watch every episode at least once (2x total plays) to unlock the Silver medal.' :
+                           ntp.nextTier === 'gold' ? 'Re-watch every episode at least 2 times (3x total plays) to unlock the Gold medal.' :
+                           ntp.nextTier === 'platinum' ? 'Re-watch every episode at least 3 times (4x total plays) to unlock the Platinum medal.' :
+                           'Complete remaining episodes to earn the series trophy.');
+            nmHtml +=   '</div>';
+            nmHtml += '</div>';
+
+            nextMedalCard.innerHTML = nmHtml;
+            nextMedalCard.style.display = 'block';
+          } else if (ntp && !ntp.nextTier && stats && stats.rewatchCount >= 3) {
+            nextMedalCard.innerHTML = '<div style="background: rgba(13, 17, 23, 0.85); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 12px; padding: 14px 16px; display: flex; align-items: center; gap: 12px;">' +
+              '<span style="font-size: 1.5rem;">👑</span>' +
+              '<div>' +
+                '<div style="font-weight: 700; font-size: 0.9rem; color: #7dd3fc;">Pinnacle Replay Medal (Platinum) Achieved!</div>' +
+                '<div style="font-size: 0.75rem; color: #94a3b8; margin-top: 2px;">Completed ' + stats.rewatchCount + ' full series rewatches across all episodes.</div>' +
+              '</div>' +
+            '</div>';
+            nextMedalCard.style.display = 'block';
+          } else {
+            nextMedalCard.style.display = 'none';
+          }
+
+          // 3. Stats Box (Coverage Audit for Caught-Up, or standard progress for non-episode achievements)
+          const statsBox = document.getElementById('modal-stats-box');
+          const epDetails = stats && stats.episodeReplayDetails;
+          const hasEpDetails = epDetails && epDetails.length > 0;
+
+          if (isCaughtUp) {
+            statsBox.style.display = 'block';
+            const available = ach.badge.stats.availableOnPlex || ach.progress.current;
+            const missing = ach.badge.stats.missingOffServerCount || (ach.progress.target - ach.progress.current);
+            const watched = ach.progress.current;
+            const target = ach.progress.target;
+            const pct = Math.round((watched / target) * 100);
+
+            let html = '<div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">';
+            html +=   '<div style="display: flex; justify-content: space-between; font-weight: 600; color: #fff;">';
+            html +=     '<span>Progress: ' + watched + ' / ' + target + ' episodes</span>';
+            html +=     '<span style="color: #34d399;">' + pct + '% (Caught Up)</span>';
+            html +=   '</div>';
+            html +=   '<div style="width: 100%; background: rgba(0,0,0,0.6); height: 6px; border-radius: 999px; overflow: hidden;">';
+            html +=     '<div style="background: #10b981; width: ' + pct + '%; height: 100%;"></div>';
+            html +=   '</div>';
+            html +=   '<div style="padding: 12px 14px; background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 10px; display: flex; flex-direction: column; gap: 8px;">';
+            html +=     '<div style="display: flex; justify-content: space-between; align-items: center;">';
+            html +=       '<span style="font-weight: 700; font-size: 0.8rem; color: #34d399; display: flex; align-items: center; gap: 6px;">';
+            html +=         '<span>🛡️</span> Server Coverage Audit';
+            html +=       '</span>';
+            html +=       '<span style="font-size: 0.7rem; font-weight: 600; background: rgba(16, 185, 129, 0.2); color: #6ee7b7; padding: 2px 8px; border-radius: 999px;">';
+            html +=         'Caught Up on Plex';
+            html +=       '</span>';
+            html +=     '</div>';
+            html +=     '<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; font-size: 0.75rem; text-align: center; margin-top: 4px;">';
+            html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
+            html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Server Library</div>';
+            html +=         '<div style="font-weight: 700; color: #e2e8f0;">' + Math.min(watched, available) + '/' + available + ' eps</div>';
+            html +=       '</div>';
+            html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
+            html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Household Watched</div>';
+            html +=         '<div style="font-weight: 700; color: #34d399;">' + watched + ' eps</div>';
+            html +=       '</div>';
+            html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
+            html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Missing Off-Server</div>';
+            html +=         '<div style="font-weight: 700; color: #f59e0b;">+' + missing + ' eps</div>';
+            html +=       '</div>';
+            html +=     '</div>';
+            html +=     '<div style="font-size: 0.75rem; color: #cbd5e1; display: flex; align-items: center; gap: 6px; margin-top: 2px;">';
+            html +=       '<span>🔒</span>';
+            html +=       '<span>Series Trophy locked until full canonical series (' + target + ' eps) is acquired on server and completed.</span>';
+            html +=     '</div>';
+            html +=   '</div>';
+            html += '</div>';
+            statsBox.innerHTML = html;
+          } else if (!hasEpDetails && (ach.badge.stats || ach.progress)) {
+            statsBox.style.display = 'block';
+            let html = '<div style="display: flex; justify-content: space-between; font-weight: 600; color: #fff;">';
+            if (ach.progress) {
+              const pct = Math.round((ach.progress.current / ach.progress.target) * 100);
+              html += '<span>Progress: ' + ach.progress.current + ' / ' + ach.progress.target + ' ' + (ach.progress.unit || 'items') + '</span>';
+              html += '<span>' + pct + '%</span>';
+            } else {
+              html += '<span>' + (ach.reason || 'Criteria met') + '</span>';
+            }
+            html += '</div>';
             statsBox.innerHTML = html;
           } else {
             statsBox.style.display = 'none';
           }
 
+          // 4. Episode Repeat Watch Breakdown
+          const epSection = document.getElementById('modal-episodes-section');
+          if (hasEpDetails) {
+            epSection.style.display = 'block';
+            const totalCount = epDetails.length;
+            const rewatchedCount = epDetails.filter(e => e.replayCount > 0).length;
+            const reqReplays = (stats.rewatchCount || 0) + 1;
+            const neededCount = epDetails.filter(e => e.replayCount < reqReplays).length;
+
+            let epFilter = rewatchedCount > 0 ? 'rewatched' : 'all';
+
+            const renderEpisodeList = () => {
+              let filtered = epDetails;
+              if (epFilter === 'rewatched') {
+                filtered = epDetails.filter(e => e.replayCount > 0);
+              } else if (epFilter === 'needed') {
+                filtered = epDetails.filter(e => e.replayCount < reqReplays);
+              }
+
+              let epHtml = '<div style="display: flex; flex-direction: column; gap: 10px;">';
+              epHtml +=   '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">';
+              epHtml +=     '<div style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; color: #8b949e; letter-spacing: 0.5px;">';
+              epHtml +=       'Episode Repeat Watches & History';
+              epHtml +=     '</div>';
+              epHtml +=     '<div style="display: flex; gap: 6px;">';
+              epHtml +=       '<button type="button" class="modal-ep-tab ' + (epFilter === 'rewatched' ? 'active' : '') + '" data-filter="rewatched">Rewatched (' + rewatchedCount + ')</button>';
+              if (ntp && ntp.nextTier && neededCount > 0) {
+                epHtml +=     '<button type="button" class="modal-ep-tab ' + (epFilter === 'needed' ? 'active' : '') + '" data-filter="needed">Needs Next (' + neededCount + ')</button>';
+              }
+              epHtml +=       '<button type="button" class="modal-ep-tab ' + (epFilter === 'all' ? 'active' : '') + '" data-filter="all">All (' + totalCount + ')</button>';
+              epHtml +=     '</div>';
+              epHtml +=   '</div>';
+
+              // Table Header
+              epHtml +=   '<div style="display: grid; grid-template-columns: 75px minmax(0, 1fr) 55px 95px 95px; gap: 8px; padding: 4px 10px; font-size: 0.7rem; font-weight: 700; color: #6e7681; text-transform: uppercase;">';
+              epHtml +=     '<span>Episode</span>';
+              epHtml +=     '<span>Title</span>';
+              epHtml +=     '<span style="text-align: center;">Plays</span>';
+              epHtml +=     '<span>First Seen</span>';
+              epHtml +=     '<span class="hide-mobile">Last Repeat</span>';
+              epHtml +=   '</div>';
+
+              // Table Rows
+              epHtml +=   '<div style="max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px;" class="thin-scroll">';
+              if (filtered.length === 0) {
+                epHtml +=   '<div style="padding: 16px; text-align: center; color: var(--text-muted); font-size: 0.8rem;">No episodes match this filter.</div>';
+              } else {
+                epHtml += filtered.map(ep => {
+                  let epCode = ep.seasonNumber != null && ep.episodeNumber != null
+                    ? 'S' + String(ep.seasonNumber).padStart(2, '0') + 'E' + String(ep.episodeNumber).padStart(2, '0')
+                    : ep.episodeKey;
+
+                  let playBadge = '';
+                  if (ep.playCount >= 4) {
+                    playBadge = '<span class="badge" style="background: rgba(56, 189, 248, 0.2); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.35); font-weight: 700; font-size: 0.72rem; padding: 2px 6px;">' + ep.playCount + 'x</span>';
+                  } else if (ep.playCount === 3) {
+                    playBadge = '<span class="badge" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35); font-weight: 700; font-size: 0.72rem; padding: 2px 6px;">3x</span>';
+                  } else if (ep.playCount === 2) {
+                    playBadge = '<span class="badge" style="background: rgba(148, 163, 184, 0.2); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.35); font-weight: 700; font-size: 0.72rem; padding: 2px 6px;">2x</span>';
+                  } else {
+                    playBadge = '<span class="badge" style="background: rgba(139, 148, 158, 0.12); color: #8b949e; font-weight: 600; font-size: 0.72rem; padding: 2px 6px;">1x</span>';
+                  }
+
+                  const firstDateStr = ep.firstWatchedAt
+                    ? new Date(ep.firstWatchedAt).toLocaleDateString(undefined, { year: '2-digit', month: 'numeric', day: 'numeric' })
+                    : '—';
+                  const lastDateStr = (ep.playCount > 1 && ep.lastWatchedAt)
+                    ? new Date(ep.lastWatchedAt).toLocaleDateString(undefined, { year: '2-digit', month: 'numeric', day: 'numeric' })
+                    : '—';
+
+                  return '<div class="modal-ep-row">' +
+                    '<span style="font-family: monospace; font-weight: 600; color: #58a6ff; font-size: 0.75rem;">' + epCode + '</span>' +
+                    '<span style="color: #e6edf3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + ep.title + '">' + ep.title + '</span>' +
+                    '<span style="text-align: center;">' + playBadge + '</span>' +
+                    '<span style="color: #8b949e; font-size: 0.72rem;">' + firstDateStr + '</span>' +
+                    '<span class="hide-mobile" style="color: ' + (ep.playCount > 1 ? '#34d399' : '#6e7681') + '; font-size: 0.72rem;">' + lastDateStr + '</span>' +
+                  '</div>';
+                }).join('');
+              }
+              epHtml +=   '</div>';
+              epHtml += '</div>';
+
+              epSection.innerHTML = epHtml;
+
+              epSection.querySelectorAll('.modal-ep-tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                  epFilter = tab.dataset.filter;
+                  renderEpisodeList();
+                });
+              });
+            };
+
+            renderEpisodeList();
+          } else {
+            epSection.style.display = 'none';
+          }
+
+          // 5. Evidence Trail
           const evidenceList = document.getElementById('modal-evidence-list');
           const evidenceCount = document.getElementById('evidence-count');
           const evidence = ach.supportingEvidence || [];
@@ -3039,6 +3768,24 @@ export function registerWebRoutes(router: Router): void {
         document.getElementById('modal-dismiss').addEventListener('click', closeModal);
         document.getElementById('detail-modal').addEventListener('click', (e) => {
           if (e.target.id === 'detail-modal') closeModal();
+        });
+
+        // Profile Drawer Controls
+        document.getElementById('btn-toggle-profile-drawer')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          toggleProfileDrawer();
+        });
+        document.getElementById('btn-drawer-toggle-alt')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          toggleProfileDrawer();
+        });
+        document.getElementById('btn-close-drawer')?.addEventListener('click', () => toggleProfileDrawer(false));
+        document.addEventListener('click', (e) => {
+          if (!isDrawerOpen) return;
+          const hud = document.getElementById('achievements-hud');
+          if (hud && !hud.contains(e.target)) {
+            toggleProfileDrawer(false);
+          }
         });
 
         // Bubble Scroll Controls

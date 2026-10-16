@@ -15,7 +15,9 @@ import type {
   SupportingEvidenceRef,
   CanonicalPlay,
   BadgeTier,
-  ShowProgressEvidence
+  ShowProgressEvidence,
+  NextTierProgress,
+  EpisodeReplayDetail
 } from './types.js';
 
 /**
@@ -77,7 +79,11 @@ export function evaluateSubjectAchievements(
       if (show.totalEpisodes !== null && show.completedEpisodeKeys.size > 0) {
         const dynamicRuleId = `show_mastery_${show.grandparentRatingKey}`;
         if (!results.some((r) => r.ruleId === dynamicRuleId)) {
-          const isComplete = show.completedEpisodeKeys.size >= show.totalEpisodes;
+          const isComplete = (show.missingOffServerCount ?? 0) === 0 &&
+            !show.isCaughtUpOnPlex &&
+            show.totalEpisodes !== null &&
+            show.completedEpisodeKeys.size >= show.totalEpisodes &&
+            (show.lastCompletedWatchedAt !== null || show.allCompletedPlays.length > 0);
           if (isComplete) {
             let minReplay = 0;
             if (show.completedEpisodeKeys.size > 0) {
@@ -90,19 +96,48 @@ export function evaluateSubjectAchievements(
             let tier: BadgeTier = 'bronze';
             let rewatchSuffix = '';
             let rewatchDesc = '';
+            let nextTier: BadgeTier | null = 'silver';
+            let nextTierName: string | null = 'Silver (2x Replay)';
+            let nextTierReqReplays = 1;
+
             if (rewatchCount >= 3) {
               tier = 'platinum';
               rewatchSuffix = ' (4x+)';
               rewatchDesc = ` Rewatched ${rewatchCount} times.`;
+              nextTier = null;
+              nextTierName = null;
+              nextTierReqReplays = rewatchCount + 1;
             } else if (rewatchCount === 2) {
               tier = 'gold';
               rewatchSuffix = ' (3x)';
               rewatchDesc = ' Rewatched 2 times.';
+              nextTier = 'platinum';
+              nextTierName = 'Platinum (4x+ Replay)';
+              nextTierReqReplays = 3;
             } else if (rewatchCount === 1) {
               tier = 'silver';
               rewatchSuffix = ' (2x)';
               rewatchDesc = ' Rewatched once.';
+              nextTier = 'gold';
+              nextTierName = 'Gold (3x Replay)';
+              nextTierReqReplays = 2;
             }
+
+            const epList = show.episodeReplayDetails ?? [];
+            const rewatchedCount = epList.filter((ep) => ep.replayCount >= nextTierReqReplays).length;
+            const targetCount = show.totalEpisodes;
+            const remainingCount = nextTier ? Math.max(0, targetCount - rewatchedCount) : 0;
+            const percentComplete = targetCount > 0 ? Math.min(100, Math.round((rewatchedCount / targetCount) * 100)) : 0;
+
+            const nextTierProgress: NextTierProgress | null = nextTier ? {
+              currentTier: tier,
+              nextTier,
+              nextTierName,
+              rewatchedCount,
+              targetCount,
+              remainingCount,
+              percentComplete
+            } : null;
 
             results.push({
               userId: subject.userId,
@@ -123,7 +158,14 @@ export function evaluateSubjectAchievements(
                   availableOnPlex: show.availableOnPlex ?? null,
                   missingOffServerCount: show.missingOffServerCount ?? 0,
                   isCaughtUpOnPlex: false,
-                  seriesStatus: show.seriesStatus ?? null
+                  seriesStatus: show.seriesStatus ?? null,
+                  firstCompletedAt: show.lastCompletedWatchedAt || (show.allCompletedPlays[show.allCompletedPlays.length - 1]?.watchedAt ?? null),
+                  latestWatchedAt: show.latestWatchedAt || (show.allCompletedPlays[show.allCompletedPlays.length - 1]?.watchedAt ?? null),
+                  firstCompletedEpisodeTitle: show.firstCompletedEpisodeTitle ?? null,
+                  firstCompletedEpisodeSeason: show.firstCompletedEpisodeSeason ?? null,
+                  firstCompletedEpisodeNumber: show.firstCompletedEpisodeNumber ?? null,
+                  nextTierProgress,
+                  episodeReplayDetails: epList
                 }
               },
               state: 'earned',
@@ -132,7 +174,7 @@ export function evaluateSubjectAchievements(
                 target: show.totalEpisodes,
                 unit: 'episode'
               },
-              earnedAt: show.lastCompletedWatchedAt,
+              earnedAt: show.lastCompletedWatchedAt || (show.allCompletedPlays[show.allCompletedPlays.length - 1]?.watchedAt ?? new Date().toISOString()),
               supportingEvidence: show.allCompletedPlays.slice(0, 10).map((p) => ({
                 kind: p.sourceKind,
                 id: p.id,
@@ -142,7 +184,23 @@ export function evaluateSubjectAchievements(
               reason: `Completed all ${show.totalEpisodes} episodes of ${show.showTitle}`
             });
           } else {
-            const isCaughtUp = show.isCaughtUpOnPlex ?? false;
+            const isCaughtUp = show.isCaughtUpOnPlex ?? (show.availableOnPlex != null && show.completedEpisodeKeys.size >= show.availableOnPlex);
+            const epList = show.episodeReplayDetails ?? [];
+            const targetCount = show.totalEpisodes || (show.availableOnPlex ?? 0);
+            const watchedCount = show.completedEpisodeKeys.size;
+            const remainingCount = Math.max(0, targetCount - watchedCount);
+            const percentComplete = targetCount > 0 ? Math.min(100, Math.round((watchedCount / targetCount) * 100)) : 0;
+
+            const nextTierProgress: NextTierProgress = {
+              currentTier: 'bronze',
+              nextTier: 'bronze',
+              nextTierName: 'Bronze (100% Completion)',
+              rewatchedCount: watchedCount,
+              targetCount,
+              remainingCount,
+              percentComplete
+            };
+
             results.push({
               userId: subject.userId,
               ruleId: dynamicRuleId,
@@ -164,7 +222,10 @@ export function evaluateSubjectAchievements(
                   availableOnPlex: show.availableOnPlex ?? null,
                   missingOffServerCount: show.missingOffServerCount ?? 0,
                   isCaughtUpOnPlex: isCaughtUp,
-                  seriesStatus: show.seriesStatus ?? null
+                  seriesStatus: show.seriesStatus ?? null,
+                  latestWatchedAt: show.latestWatchedAt || (show.allCompletedPlays[show.allCompletedPlays.length - 1]?.watchedAt ?? null),
+                  nextTierProgress,
+                  episodeReplayDetails: epList
                 }
               },
               state: 'in_progress',
@@ -600,7 +661,7 @@ function evaluateCompletion(rule: AchievementRule, subject: SubjectEvidence): Ac
 
     const current = show.completedEpisodeKeys.size;
     const target = show.totalEpisodes;
-    const earned = current >= target;
+    const earned = current >= target && show.lastCompletedWatchedAt !== null;
 
     let minReplay = 0;
     if (show.completedEpisodeKeys.size > 0) {
@@ -661,7 +722,7 @@ function evaluateCompletion(rule: AchievementRule, subject: SubjectEvidence): Ac
     for (const show of subject.showProgress.values()) {
       if (show.totalEpisodes === null) {
         hasUnknownShow = true;
-      } else if (show.completedEpisodeKeys.size >= show.totalEpisodes) {
+      } else if (show.completedEpisodeKeys.size >= show.totalEpisodes && show.lastCompletedWatchedAt !== null) {
         completedShows.push(show);
       }
     }

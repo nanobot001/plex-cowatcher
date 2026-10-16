@@ -7,6 +7,28 @@
 
 export type BadgeTier = 'bronze' | 'silver' | 'gold' | 'platinum';
 
+export interface EpisodeReplayDetail {
+  ratingKey: string;
+  episodeKey: string;
+  title: string;
+  seasonNumber: number | null;
+  episodeNumber: number | null;
+  playCount: number;
+  replayCount: number;
+  firstWatchedAt: string | null;
+  lastWatchedAt: string | null;
+}
+
+export interface NextTierProgress {
+  currentTier: BadgeTier;
+  nextTier: BadgeTier | null;
+  nextTierName: string | null;
+  rewatchedCount: number;
+  targetCount: number;
+  remainingCount: number;
+  percentComplete: number;
+}
+
 export interface BadgeFlavorStats {
   totalHours?: number;
   totalPlays?: number;
@@ -20,6 +42,13 @@ export interface BadgeFlavorStats {
   missingOffServerCount?: number | null;
   isCaughtUpOnPlex?: boolean;
   seriesStatus?: string | null;
+  latestWatchedAt?: string | null;
+  firstCompletedAt?: string | null;
+  firstCompletedEpisodeTitle?: string | null;
+  firstCompletedEpisodeSeason?: number | null;
+  firstCompletedEpisodeNumber?: number | null;
+  nextTierProgress?: NextTierProgress | null;
+  episodeReplayDetails?: EpisodeReplayDetail[];
 }
 
 export interface BadgeDescriptor {
@@ -182,6 +211,11 @@ export interface ShowProgressEvidence {
   replaysByEpisode: Map<string, number>;
   posterUrl: string | null;
   lastCompletedWatchedAt: string | null;
+  latestWatchedAt?: string | null;
+  firstCompletedEpisodeTitle?: string | null;
+  firstCompletedEpisodeSeason?: number | null;
+  firstCompletedEpisodeNumber?: number | null;
+  episodeReplayDetails?: EpisodeReplayDetail[];
 }
 
 export interface SubjectEvidence {

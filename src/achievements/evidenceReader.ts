@@ -10,13 +10,15 @@
 
 import type { Db } from '../db/database.js';
 import { evaluateReplaySemantics, type ReplayObservation } from '../service/replaySemantics.js';
+import { readShowOverrides, cleanShowTitle } from '../service/tvCanonicalMetadataService.js';
 import type {
   SubjectEvidence,
   CanonicalPlay,
   ConfirmedCoWatch,
   EvidenceWatermark,
   SupportingEvidenceRef,
-  ShowProgressEvidence
+  ShowProgressEvidence,
+  EpisodeReplayDetail
 } from './types.js';
 
 export interface ReadEvidenceOptions {
@@ -681,6 +683,8 @@ export class AchievementEvidenceReader {
       playsByShowKey.set(showKey, list);
     }
 
+    const showOverrides = readShowOverrides();
+
     for (const [showKey, showPlays] of playsByShowKey.entries()) {
       const sample = showPlays[0];
       let catalogRow: any = null;
@@ -706,15 +710,24 @@ export class AchievementEvidenceReader {
         } catch {}
       }
 
+      const rawShowTitle = catalogRow?.title || sample.showTitle || sample.title || '';
+      const cleanTitle = cleanShowTitle(rawShowTitle);
+      const showOverride = showOverrides[rawShowTitle] || (sample.showTitle ? showOverrides[sample.showTitle] : undefined) || showOverrides[cleanTitle];
+
       let totalEpisodes: number | null = null;
       let availableOnPlex: number | null = null;
       let missingOffServerCount: number | null = null;
-      const seriesStatus: string | null = catalogRow?.series_status ?? null;
+      let seriesStatus: string | null = (showOverride?.seriesStatus ? String(showOverride.seriesStatus).toLowerCase() : null) ?? catalogRow?.series_status ?? null;
 
       const leafCount = catalogRow?.leaf_count != null && Number(catalogRow.leaf_count) > 0 ? Number(catalogRow.leaf_count) : null;
       availableOnPlex = leafCount;
 
-      if (catalogRow?.canonical_total_episodes != null && Number(catalogRow.canonical_total_episodes) > 0) {
+      if (showOverride?.canonicalTotalEpisodes != null && Number(showOverride.canonicalTotalEpisodes) > 0) {
+        totalEpisodes = Number(showOverride.canonicalTotalEpisodes);
+        if (availableOnPlex !== null) {
+          missingOffServerCount = Math.max(0, totalEpisodes - availableOnPlex);
+        }
+      } else if (catalogRow?.canonical_total_episodes != null && Number(catalogRow.canonical_total_episodes) > 0) {
         totalEpisodes = Number(catalogRow.canonical_total_episodes);
         if (availableOnPlex !== null) {
           missingOffServerCount = Math.max(0, totalEpisodes - availableOnPlex);
@@ -756,25 +769,94 @@ export class AchievementEvidenceReader {
 
       const completedEpisodeKeys = new Set<string>();
       const replaysByEpisode = new Map<string, number>();
+      const firstWatchedByEpisode = new Map<string, CanonicalPlay>();
+
       for (const p of allCompletedPlays) {
         const epKey = (p.seasonNumber != null && p.episodeNumber != null)
           ? `s${p.seasonNumber}e${p.episodeNumber}`
           : p.ratingKey;
         completedEpisodeKeys.add(epKey);
+        if (!firstWatchedByEpisode.has(epKey)) {
+          firstWatchedByEpisode.set(epKey, p);
+        }
         const rep = replaysByRatingKey.get(p.ratingKey) ?? 0;
         if (rep > 0) {
           replaysByEpisode.set(epKey, Math.max(replaysByEpisode.get(epKey) ?? 0, rep));
         }
       }
 
-      let lastCompletedWatchedAt: string | null = null;
-      const isEnded = seriesStatus ? String(seriesStatus).toLowerCase() === "ended" : true;
-      const isComplete = totalEpisodes != null && completedEpisodeKeys.size >= totalEpisodes && allCompletedPlays.length > 0 && isEnded;
-      if (isComplete) {
-        lastCompletedWatchedAt = allCompletedPlays[allCompletedPlays.length - 1]?.watchedAt ?? null;
+      // Group completed plays by episode key to compute replay details
+      const episodePlaysMap = new Map<string, CanonicalPlay[]>();
+      for (const p of allCompletedPlays) {
+        const epKey = (p.seasonNumber != null && p.episodeNumber != null)
+          ? `s${p.seasonNumber}e${p.episodeNumber}`
+          : p.ratingKey;
+        const list = episodePlaysMap.get(epKey) ?? [];
+        list.push(p);
+        episodePlaysMap.set(epKey, list);
       }
 
-      const isCaughtUpOnPlex = !isComplete && availableOnPlex !== null && totalEpisodes !== null && completedEpisodeKeys.size >= availableOnPlex && (missingOffServerCount ?? 0) > 0;
+      const episodeReplayDetails: EpisodeReplayDetail[] = [];
+      for (const [epKey, plays] of episodePlaysMap.entries()) {
+        const samplePlay = plays[0];
+        const latestPlay = plays[plays.length - 1];
+        const repCount = replaysByEpisode.get(epKey) ?? Math.max(0, plays.length - 1);
+        episodeReplayDetails.push({
+          ratingKey: samplePlay.ratingKey,
+          episodeKey: epKey,
+          title: samplePlay.title || (samplePlay.seasonNumber != null && samplePlay.episodeNumber != null ? `Season ${samplePlay.seasonNumber}, Episode ${samplePlay.episodeNumber}` : `Episode ${epKey}`),
+          seasonNumber: samplePlay.seasonNumber ?? null,
+          episodeNumber: samplePlay.episodeNumber ?? null,
+          playCount: plays.length,
+          replayCount: repCount,
+          firstWatchedAt: samplePlay.watchedAt ?? null,
+          lastWatchedAt: latestPlay.watchedAt ?? samplePlay.watchedAt ?? null
+        });
+      }
+
+      // Sort episodes naturally by season, episode number, then first watched
+      episodeReplayDetails.sort((a, b) => {
+        if (a.seasonNumber != null && b.seasonNumber != null && a.seasonNumber !== b.seasonNumber) {
+          return a.seasonNumber - b.seasonNumber;
+        }
+        if (a.seasonNumber != null && b.seasonNumber == null) return -1;
+        if (a.seasonNumber == null && b.seasonNumber != null) return 1;
+
+        if (a.episodeNumber != null && b.episodeNumber != null && a.episodeNumber !== b.episodeNumber) {
+          return a.episodeNumber - b.episodeNumber;
+        }
+        if (a.episodeNumber != null && b.episodeNumber == null) return -1;
+        if (a.episodeNumber == null && b.episodeNumber != null) return 1;
+
+        return (a.firstWatchedAt || '').localeCompare(b.firstWatchedAt || '');
+      });
+
+      let lastCompletedWatchedAt: string | null = null;
+      let firstCompletedEpisodeTitle: string | null = null;
+      let firstCompletedEpisodeSeason: number | null = null;
+      let firstCompletedEpisodeNumber: number | null = null;
+
+      const hasMissingOffServer = (missingOffServerCount ?? 0) > 0;
+      const isComplete = totalEpisodes != null && completedEpisodeKeys.size >= totalEpisodes && allCompletedPlays.length > 0 && !hasMissingOffServer;
+      if (isComplete && totalEpisodes !== null) {
+        const firstCompletions = [...firstWatchedByEpisode.values()].sort((a, b) => {
+          if (!a.watchedAt && !b.watchedAt) return a.id - b.id;
+          if (!a.watchedAt) return 1;
+          if (!b.watchedAt) return -1;
+          return a.watchedAt.localeCompare(b.watchedAt) || a.id - b.id;
+        });
+        const crossingIndex = Math.min(totalEpisodes - 1, firstCompletions.length - 1);
+        const crossingPlay = firstCompletions[crossingIndex];
+        lastCompletedWatchedAt = crossingPlay?.watchedAt ?? (allCompletedPlays[allCompletedPlays.length - 1]?.watchedAt ?? null);
+        firstCompletedEpisodeTitle = crossingPlay?.title ?? null;
+        firstCompletedEpisodeSeason = crossingPlay?.seasonNumber ?? null;
+        firstCompletedEpisodeNumber = crossingPlay?.episodeNumber ?? null;
+      }
+
+      const isCaughtUpOnPlex = !isComplete && (
+        showOverride?.caughtUp === true ||
+        (availableOnPlex !== null && completedEpisodeKeys.size >= availableOnPlex && hasMissingOffServer)
+      );
 
       let resolvedCategory = sample.category;
       if (catalogRow?.library_title?.toLowerCase().includes('anime')) {
@@ -801,7 +883,12 @@ export class AchievementEvidenceReader {
         allCompletedPlays,
         replaysByEpisode,
         posterUrl,
-        lastCompletedWatchedAt
+        lastCompletedWatchedAt,
+        latestWatchedAt: allCompletedPlays[allCompletedPlays.length - 1]?.watchedAt ?? null,
+        firstCompletedEpisodeTitle,
+        firstCompletedEpisodeSeason,
+        firstCompletedEpisodeNumber,
+        episodeReplayDetails
       });
     }
 

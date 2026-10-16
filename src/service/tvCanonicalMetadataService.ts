@@ -10,6 +10,7 @@ export interface CanonicalTvMetadata {
 export interface ShowOverrideEntry {
   canonicalTotalEpisodes?: number;
   seriesStatus?: string;
+  caughtUp?: boolean;
 }
 
 const overridesConfigPath = "config/show_overrides.json";
@@ -95,10 +96,20 @@ export async function resolveCanonicalTvMetadata(input: {
     const episodes = (await episodesRes.json()) as any[];
     if (!Array.isArray(episodes) || episodes.length === 0) return null;
 
-    // Filter to regular aired episodes where airdate <= today (date-gated to exclude unreleased future seasons)
+    // Identify seasons that have begun airing as of today to exclude future unreleased seasons (e.g. announced S2/S3)
+    // while keeping all scheduled episodes of the current/active seasons.
     const today = new Date().toISOString().slice(0, 10);
-    const airedEpisodes = episodes.filter((ep) => ep.airdate && ep.airdate <= today);
-    const totalEpisodes = airedEpisodes.length > 0 ? airedEpisodes.length : episodes.length;
+    const airedSeasons = new Set(
+      episodes
+        .filter((ep) => ep.airdate && ep.airdate <= today)
+        .map((ep) => ep.season)
+    );
+
+    const activeEpisodes = airedSeasons.size > 0
+      ? episodes.filter((ep) => airedSeasons.has(ep.season))
+      : episodes;
+
+    const totalEpisodes = activeEpisodes.length > 0 ? activeEpisodes.length : episodes.length;
 
     let seriesStatus = "unknown";
     if (show.status) {
@@ -162,3 +173,50 @@ export async function enrichCatalogShow(
 
   return result;
 }
+
+export async function enrichAllCatalogShows(
+  db: Db,
+  options: {
+    force?: boolean;
+    overridesPath?: string;
+    throttleMs?: number;
+    onProgress?: (current: number, total: number, title: string) => void;
+  } = {}
+): Promise<{ enriched: number; skipped: number; failed: number }> {
+  const rows = db.prepare(`
+    SELECT rating_key, title, guid, leaf_count, canonical_total_episodes, series_status
+    FROM content_catalog
+    WHERE media_type = 'show'
+    ORDER BY title ASC
+  `).all() as any[];
+
+  let enriched = 0;
+  let skipped = 0;
+  let failed = 0;
+  const throttle = options.throttleMs ?? 150;
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (!options.force && row.canonical_total_episodes != null && Number(row.canonical_total_episodes) > 0) {
+      skipped++;
+      continue;
+    }
+    options.onProgress?.(i + 1, rows.length, row.title);
+    try {
+      const res = await enrichCatalogShow(db, row.rating_key, options);
+      if (res) {
+        enriched++;
+      } else {
+        failed++;
+      }
+    } catch {
+      failed++;
+    }
+    if (throttle > 0 && i < rows.length - 1) {
+      await new Promise((resolve) => setTimeout(resolve, throttle));
+    }
+  }
+
+  return { enriched, skipped, failed };
+}
+
