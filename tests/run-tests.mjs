@@ -8326,6 +8326,73 @@ test("3-6-6G Unified Audiobook Evidence: revision-backed historical audiobooks e
   });
 });
 
+test("audiobook progress evaluates in-progress status from exact stop captures and ignores transition glitches", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (7, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    db.prepare(`
+      INSERT INTO audiobook_books (id, folder_key, title, authors_json, total_duration_seconds, chapter_count, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES (601, 'sanderson-wor', 'Words of Radiance', '["Brandon Sanderson"]', 173578, 106, 'test', 'enriched', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, title, media_type, library_title, audiobook_id, duration, source_provenance, refreshed_at)
+      VALUES ('rk-wor', 'Words of Radiance', 'audiobook', 'Audiobooks', 601, 173578000, 'test', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // Stale transition webhook glitch from finishing previous book (184s duration, completed=1, percent=94)
+    db.prepare(`
+      INSERT INTO playback_observations (user_id, rating_key, media_type, library_name, title, duration, percent_complete, completed, watched_at, created_at, updated_at)
+      VALUES (7, 'rk-wor', 'track', 'Audiobooks', 'Words of Radiance', 184, 94, 1, '2026-09-09T13:51:59Z', '2026-09-09T13:51:59Z', '2026-09-09T13:51:59Z')
+    `).run();
+
+    // Actual continuous listening observations starting from 0% climbing to 72%
+    db.prepare(`
+      INSERT INTO playback_observations (user_id, rating_key, media_type, library_name, title, duration, percent_complete, completed, watched_at, created_at, updated_at)
+      VALUES
+        (7, 'rk-wor', 'track', 'Audiobooks', 'Words of Radiance', 213, 0, 0, '2026-09-09T13:56:29Z', '2026-09-09T13:56:29Z', '2026-09-09T13:56:29Z'),
+        (7, 'rk-wor', 'track', 'Audiobooks', 'Words of Radiance', 79745, 72, 0, '2026-10-16T00:15:49Z', '2026-10-16T00:15:49Z', '2026-10-16T00:15:49Z')
+    `).run();
+
+    // Position evidence: transition glitch at 94% followed by real listening at 0ms up to 124,183,000ms (~72% / Chapter 78)
+    db.prepare(`
+      INSERT INTO audiobook_position_evidence
+        (id, source_type, source_event_key, source_user_key, source_session_key, user_id, audiobook_id, rating_key, observed_at, session_stopped_at, view_offset_ms, duration_ms, capture_reason, payload_digest, created_at)
+      VALUES
+        (1, 'tautulli_stop', 'ev-1', 'u-1', 's-1', 7, 601, 'rk-wor', '2026-09-09T13:55:03Z', '2026-09-09T13:55:03Z', 163985000, 173578676, 'playback_stop', 'hash1', '2026-09-09T13:55:03Z'),
+        (2, 'tautulli_stop', 'ev-2', 'u-1', 's-2', 7, 601, 'rk-wor', '2026-09-09T14:00:03Z', '2026-09-09T14:00:03Z', 0, 173578676, 'playback_stop', 'hash2', '2026-09-09T14:00:03Z'),
+        (3, 'tautulli_stop', 'ev-3', 'u-1', 's-3', 7, 601, 'rk-wor', '2026-10-16T00:21:09Z', '2026-10-16T00:21:09Z', 124183000, 173578676, 'playback_stop', 'hash3', '2026-10-16T00:21:09Z')
+    `).run();
+
+    // Chapters
+    db.prepare(`
+      INSERT INTO audiobook_chapters (audiobook_id, chapter_index, title, start_offset_ms, end_offset_ms, created_at, updated_at)
+      VALUES
+        (601, 77, 'Chapter 65', 122000000, 123990463, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+        (601, 78, 'Chapter 66 - Stormblessings', 123990463, 125275423, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+        (601, 79, 'Chapter 67', 125275423, 127000000, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    const achievementService = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const achievements = achievementService.getAchievements({ user: 7 });
+
+    const worTrophy = achievements.results.find((r) => r.ruleId === 'book_mastery_601');
+    assert.ok(worTrophy, "Book 601 (Words of Radiance) must generate an in-progress trophy");
+    assert.equal(worTrophy.state, 'in_progress', "In-progress audiobook must NOT be marked earned");
+    assert.equal(worTrophy.badge.stats.percentComplete, 72);
+    assert.equal(worTrophy.progress.current, 124183);
+    assert.equal(worTrophy.progress.target, 173578);
+
+    // Ensure it is not counted as a completed book for volume milestone
+    const bookCount1 = achievements.results.find((r) => r.ruleId === 'audiobook_count_1');
+    assert.equal(bookCount1.state, 'not_earned');
+    assert.equal(bookCount1.progress.current, 0);
+  });
+});
+
 
 let passed = 0;
 for (const { name, fn } of tests) {

@@ -992,204 +992,284 @@ export class AchievementEvidenceReader {
     const hasRevisions = Boolean(this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audiobook_media_revisions'").get());
     const hasRevisionItems = Boolean(this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audiobook_media_revision_items'").get());
     const hasPositionEvidence = Boolean(this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audiobook_position_evidence'").get());
+    const hasChapters = Boolean(this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audiobook_chapters'").get());
+
+    if (!hasAudiobookBooks) {
+      return { progressByUser, secondsByUser };
+    }
 
     const userBookMap = new Map<number, Map<number, AudiobookProgressEvidence>>();
 
-    // 1. Query historical and ongoing playback observations linked through revisions or content_catalog
-    if (hasAudiobookBooks && hasPlaybackObservations) {
+    const books = this.db.prepare(`
+      SELECT id, title, subtitle, authors_json, series_title, series_index,
+             total_duration_seconds, chapter_count, cover_url
+      FROM audiobook_books
+    `).all() as any[];
+
+    const bookMetaMap = new Map<number, {
+      id: number;
+      title: string;
+      subtitle: string | null;
+      authors: string[];
+      seriesTitle: string | null;
+      seriesIndex: number | null;
+      totalDurationSeconds: number;
+      chapterCount: number | null;
+      coverUrl: string | null;
+    }>();
+
+    for (const b of books) {
+      let authors: string[] = [];
+      if (b.authors_json) {
+        try {
+          const parsed = JSON.parse(b.authors_json);
+          if (Array.isArray(parsed)) authors = parsed.map(String);
+        } catch {}
+      }
+      bookMetaMap.set(Number(b.id), {
+        id: Number(b.id),
+        title: String(b.title ?? ''),
+        subtitle: b.subtitle ? String(b.subtitle) : null,
+        authors,
+        seriesTitle: b.series_title ? String(b.series_title) : null,
+        seriesIndex: b.series_index != null ? Number(b.series_index) : null,
+        totalDurationSeconds: Number(b.total_duration_seconds ?? 0),
+        chapterCount: b.chapter_count != null ? Number(b.chapter_count) : null,
+        coverUrl: b.cover_url ?? null
+      });
+    }
+
+    const rkToBookId = new Map<string, number>();
+    const guidToBookId = new Map<string, number>();
+
+    if (hasContentCatalog) {
       try {
-        let obsSql = '';
-        if (hasRevisions && hasRevisionItems && hasContentCatalog) {
-          obsSql = `
-            SELECT
-              po.user_id,
-              COALESCE(cat.audiobook_id, rev.audiobook_id) as audiobook_id,
-              ab.title,
-              ab.subtitle,
-              ab.authors_json,
-              ab.series_title,
-              ab.series_index,
-              ab.cover_url,
-              ab.total_duration_seconds,
-              ab.chapter_count,
-              COUNT(po.id) as play_obs_count,
-              SUM(po.duration) as total_obs_duration_sec,
-              MAX(po.watched_at) as latest_watch,
-              MIN(po.watched_at) as first_watch,
-              MAX(po.percent_complete) as max_percent_complete,
-              MAX(po.view_offset) as max_view_offset,
-              SUM(CASE WHEN po.completed = 1 THEN 1 ELSE 0 END) as completed_obs_count
-            FROM playback_observations po
-            LEFT JOIN content_catalog cat ON cat.rating_key = po.rating_key AND cat.audiobook_id IS NOT NULL
-            LEFT JOIN audiobook_media_revision_items rev_item ON (rev_item.rating_key = po.rating_key OR (po.plex_guid IS NOT NULL AND rev_item.guid = po.plex_guid))
-            LEFT JOIN audiobook_media_revisions rev ON rev.id = rev_item.revision_id
-            JOIN audiobook_books ab ON ab.id = COALESCE(cat.audiobook_id, rev.audiobook_id)
-            WHERE COALESCE(cat.audiobook_id, rev.audiobook_id) IS NOT NULL
-              AND po.media_type IN ('track', 'audiobook')
-            GROUP BY po.user_id, ab.id
-          `;
-        } else if (hasContentCatalog) {
-          obsSql = `
-            SELECT
-              po.user_id,
-              cat.audiobook_id as audiobook_id,
-              ab.title,
-              ab.subtitle,
-              ab.authors_json,
-              ab.series_title,
-              ab.series_index,
-              ab.cover_url,
-              ab.total_duration_seconds,
-              ab.chapter_count,
-              COUNT(po.id) as play_obs_count,
-              SUM(po.duration) as total_obs_duration_sec,
-              MAX(po.watched_at) as latest_watch,
-              MIN(po.watched_at) as first_watch,
-              MAX(po.percent_complete) as max_percent_complete,
-              MAX(po.view_offset) as max_view_offset,
-              SUM(CASE WHEN po.completed = 1 THEN 1 ELSE 0 END) as completed_obs_count
-            FROM playback_observations po
-            JOIN content_catalog cat ON cat.rating_key = po.rating_key AND cat.audiobook_id IS NOT NULL
-            JOIN audiobook_books ab ON ab.id = cat.audiobook_id
-            WHERE po.media_type IN ('track', 'audiobook')
-            GROUP BY po.user_id, ab.id
-          `;
+        const catRows = this.db.prepare(`
+          SELECT rating_key, guid, audiobook_id
+          FROM content_catalog
+          WHERE audiobook_id IS NOT NULL
+        `).all() as any[];
+        for (const row of catRows) {
+          if (row.rating_key) rkToBookId.set(String(row.rating_key), Number(row.audiobook_id));
+          if (row.guid) guidToBookId.set(String(row.guid), Number(row.audiobook_id));
         }
-        if (obsSql) {
-          const obsRows = this.db.prepare(obsSql).all() as any[];
-          for (const row of obsRows) {
-            const userId = Number(row.user_id);
-            if (!visibleUserIds.has(userId)) continue;
-            const bookId = Number(row.audiobook_id);
+      } catch {}
+    }
 
-            let authors: string[] = [];
-            if (row.authors_json) {
-              try {
-                const parsed = JSON.parse(row.authors_json);
-                if (Array.isArray(parsed)) authors = parsed.map(String);
-              } catch {}
-            }
-
-            const totalDurationSeconds = Number(row.total_duration_seconds ?? 0);
-            const listenedSec = Number(row.total_obs_duration_sec ?? 0);
-            const maxOffsetSec = Number(row.max_view_offset ?? 0);
-            let percentComplete = Number(row.max_percent_complete ?? 0);
-            if (totalDurationSeconds > 0 && listenedSec > 0) {
-              const calcPercent = Math.min(100, Math.round((listenedSec / totalDurationSeconds) * 100));
-              if (calcPercent > percentComplete) percentComplete = calcPercent;
-            }
-
-            const isCompleted = percentComplete >= 95 || (totalDurationSeconds > 0 && listenedSec >= totalDurationSeconds * 0.9) || (Number(row.completed_obs_count) > 0 && listenedSec >= totalDurationSeconds * 0.7);
-
-            if (!userBookMap.has(userId)) userBookMap.set(userId, new Map());
-            userBookMap.get(userId)!.set(bookId, {
-              audiobookId: bookId,
-              title: String(row.title ?? ''),
-              subtitle: row.subtitle ? String(row.subtitle) : null,
-              authors,
-              seriesTitle: row.series_title ? String(row.series_title) : null,
-              seriesIndex: row.series_index != null ? Number(row.series_index) : null,
-              totalDurationSeconds,
-              viewOffsetSeconds: isCompleted ? totalDurationSeconds : Math.max(maxOffsetSec, listenedSec),
-              percentComplete: isCompleted ? 100 : percentComplete,
-              chapterCount: row.chapter_count != null ? Number(row.chapter_count) : null,
-              completedChaptersCount: null,
-              isCompleted,
-              relistenCount: 0,
-              firstCompletedAt: isCompleted ? (row.latest_watch ?? null) : null,
-              latestWatchedAt: row.latest_watch ?? null,
-              coverUrl: row.cover_url ?? null,
-              posterUrl: `/api/artwork/${encodeURIComponent(`audiobook:${bookId}`)}?variant=poster`
-            });
+    if (hasRevisions && hasRevisionItems) {
+      try {
+        const revRows = this.db.prepare(`
+          SELECT rev_item.rating_key, rev_item.guid, rev.audiobook_id
+          FROM audiobook_media_revision_items rev_item
+          JOIN audiobook_media_revisions rev ON rev.id = rev_item.revision_id
+          WHERE rev.audiobook_id IS NOT NULL
+        `).all() as any[];
+        for (const row of revRows) {
+          if (row.rating_key && !rkToBookId.has(String(row.rating_key))) {
+            rkToBookId.set(String(row.rating_key), Number(row.audiobook_id));
+          }
+          if (row.guid && !guidToBookId.has(String(row.guid))) {
+            guidToBookId.set(String(row.guid), Number(row.audiobook_id));
           }
         }
       } catch {}
     }
 
-    // 2. Query exact stop captures from audiobook_position_evidence and merge
-    if (hasPositionEvidence && hasAudiobookBooks) {
+    // 1. Query historical and ongoing playback observations linked through revisions or content_catalog
+    if (hasPlaybackObservations) {
       try {
-        const apeRows = this.db.prepare(`
-          SELECT
-            ape.user_id,
-            ape.audiobook_id,
-            MAX(ape.view_offset_ms) as max_offset_ms,
-            MAX(ape.duration_ms) as max_duration_ms,
-            MIN(ape.observed_at) as first_observed_at,
-            MAX(ape.observed_at) as latest_observed_at,
-            COUNT(ape.id) as stop_count,
-            ab.title,
-            ab.subtitle,
-            ab.authors_json,
-            ab.series_title,
-            ab.series_index,
-            ab.cover_url,
-            ab.total_duration_seconds,
-            ab.chapter_count
-          FROM audiobook_position_evidence ape
-          JOIN audiobook_books ab ON ab.id = ape.audiobook_id
-          WHERE ape.duration_ms > 0
-          GROUP BY ape.user_id, ape.audiobook_id
+        const obsRows = this.db.prepare(`
+          SELECT id, user_id, rating_key, plex_guid, duration, view_offset, percent_complete, completed, watched_at
+          FROM playback_observations
+          WHERE media_type IN ('track', 'audiobook')
+          ORDER BY watched_at ASC, id ASC
         `).all() as any[];
 
-        for (const row of apeRows) {
+        for (const row of obsRows) {
           const userId = Number(row.user_id);
           if (!visibleUserIds.has(userId)) continue;
-          const bookId = Number(row.audiobook_id);
+
+          let bookId = rkToBookId.get(String(row.rating_key));
+          if (!bookId && row.plex_guid) {
+            bookId = guidToBookId.get(String(row.plex_guid));
+          }
+          if (!bookId) continue;
+
+          const meta = bookMetaMap.get(bookId);
+          if (!meta) continue;
 
           if (!userBookMap.has(userId)) userBookMap.set(userId, new Map());
-          const existing = userBookMap.get(userId)!.get(bookId);
+          const userBooks = userBookMap.get(userId)!;
 
-          const offsetMs = Number(row.max_offset_ms ?? 0);
-          const durationMs = Number(row.max_duration_ms ?? 0);
-          const apeDurationSec = durationMs > 0 ? Math.round(durationMs / 1000) : 0;
-          const apeOffsetSec = Math.round(offsetMs / 1000);
-          const apePercent = durationMs > 0 ? Math.min(100, Math.round((offsetMs / durationMs) * 100)) : 0;
-          const apeIsCompleted = offsetMs >= durationMs || apePercent >= 95;
+          let entry = userBooks.get(bookId);
+          if (!entry) {
+            entry = {
+              audiobookId: bookId,
+              title: meta.title,
+              subtitle: meta.subtitle,
+              authors: meta.authors,
+              seriesTitle: meta.seriesTitle,
+              seriesIndex: meta.seriesIndex,
+              totalDurationSeconds: meta.totalDurationSeconds,
+              viewOffsetSeconds: 0,
+              percentComplete: 0,
+              chapterCount: meta.chapterCount,
+              completedChaptersCount: null,
+              isCompleted: false,
+              relistenCount: 0,
+              firstCompletedAt: null,
+              latestWatchedAt: null,
+              coverUrl: meta.coverUrl,
+              posterUrl: `/api/artwork/${encodeURIComponent(`audiobook:${bookId}`)}?variant=poster`
+            };
+            userBooks.set(bookId, entry);
+          }
 
-          if (existing) {
-            existing.percentComplete = Math.max(existing.percentComplete, apeIsCompleted ? 100 : apePercent);
-            if (apeIsCompleted) existing.isCompleted = true;
-            if (apeDurationSec > 0 && (!existing.totalDurationSeconds || existing.totalDurationSeconds === 0)) {
-              existing.totalDurationSeconds = apeDurationSec;
+          const obsPercent = Number(row.percent_complete ?? 0);
+          const obsDur = Number(row.duration ?? 0);
+          const obsOffset = Number(row.view_offset ?? 0);
+          const isCompletedObs = (Number(row.completed) === 1 && obsPercent >= 80) || obsPercent >= 95;
+
+          if (isCompletedObs) {
+            if (!entry.isCompleted) {
+              entry.isCompleted = true;
+              entry.firstCompletedAt = row.watched_at ?? null;
             }
-            existing.viewOffsetSeconds = existing.isCompleted
-              ? existing.totalDurationSeconds
-              : Math.max(existing.viewOffsetSeconds, apeOffsetSec);
-            if (row.latest_observed_at && (!existing.latestWatchedAt || row.latest_observed_at > existing.latestWatchedAt)) {
-              existing.latestWatchedAt = row.latest_observed_at;
-            }
-            if (existing.isCompleted && !existing.firstCompletedAt) {
-              existing.firstCompletedAt = existing.latestWatchedAt;
+          }
+
+          entry.latestWatchedAt = row.watched_at ?? entry.latestWatchedAt;
+          if (entry.isCompleted) {
+            entry.percentComplete = 100;
+            entry.viewOffsetSeconds = entry.totalDurationSeconds;
+          } else {
+            entry.percentComplete = Math.max(entry.percentComplete, obsPercent);
+            entry.viewOffsetSeconds = Math.max(entry.viewOffsetSeconds, obsOffset || obsDur);
+          }
+        }
+      } catch {}
+    }
+
+    // 2. Query exact stop captures from audiobook_position_evidence and merge timeline
+    if (hasPositionEvidence) {
+      try {
+        const apeRows = this.db.prepare(`
+          SELECT id, user_id, audiobook_id, view_offset_ms, duration_ms, observed_at
+          FROM audiobook_position_evidence
+          WHERE duration_ms > 0
+          ORDER BY observed_at ASC, id ASC
+        `).all() as any[];
+
+        const apesByUserBook = new Map<string, any[]>();
+        for (const a of apeRows) {
+          const userId = Number(a.user_id);
+          if (!visibleUserIds.has(userId)) continue;
+          const key = `${userId}:${a.audiobook_id}`;
+          let list = apesByUserBook.get(key);
+          if (!list) {
+            list = [];
+            apesByUserBook.set(key, list);
+          }
+          list.push(a);
+        }
+
+        for (const [key, rows] of apesByUserBook.entries()) {
+          const [uIdStr, bIdStr] = key.split(':');
+          const userId = Number(uIdStr);
+          const bookId = Number(bIdStr);
+          const meta = bookMetaMap.get(bookId);
+          if (!meta) continue;
+
+          if (!userBookMap.has(userId)) userBookMap.set(userId, new Map());
+          const userBooks = userBookMap.get(userId)!;
+
+          let entry = userBooks.get(bookId);
+          if (!entry) {
+            entry = {
+              audiobookId: bookId,
+              title: meta.title,
+              subtitle: meta.subtitle,
+              authors: meta.authors,
+              seriesTitle: meta.seriesTitle,
+              seriesIndex: meta.seriesIndex,
+              totalDurationSeconds: meta.totalDurationSeconds,
+              viewOffsetSeconds: 0,
+              percentComplete: 0,
+              chapterCount: meta.chapterCount,
+              completedChaptersCount: null,
+              isCompleted: false,
+              relistenCount: 0,
+              firstCompletedAt: null,
+              latestWatchedAt: null,
+              coverUrl: meta.coverUrl,
+              posterUrl: `/api/artwork/${encodeURIComponent(`audiobook:${bookId}`)}?variant=poster`
+            };
+            userBooks.set(bookId, entry);
+          }
+
+          const latestRow = rows[rows.length - 1];
+          const latestOffsetMs = Number(latestRow.view_offset_ms ?? 0);
+          const latestDurationMs = Number(latestRow.duration_ms ?? 0);
+          const apeDurationSec = latestDurationMs > 0 ? Math.round(latestDurationMs / 1000) : entry.totalDurationSeconds;
+          if (apeDurationSec > 0 && (!entry.totalDurationSeconds || entry.totalDurationSeconds === 0)) {
+            entry.totalDurationSeconds = apeDurationSec;
+          }
+
+          const latestPercent = latestDurationMs > 0 ? Math.min(100, Math.round((latestOffsetMs / latestDurationMs) * 100)) : 0;
+          const latestOffsetSec = Math.round(latestOffsetMs / 1000);
+
+          const completedApeRow = rows.find((r) => {
+            const dur = Number(r.duration_ms ?? 0);
+            const off = Number(r.view_offset_ms ?? 0);
+            return dur > 0 && (off >= dur * 0.98 || off >= dur);
+          });
+
+          const isApeCompleted = Boolean(completedApeRow) || latestPercent >= 98;
+
+          if (isApeCompleted) {
+            entry.isCompleted = true;
+            entry.percentComplete = 100;
+            entry.viewOffsetSeconds = entry.totalDurationSeconds;
+            if (!entry.firstCompletedAt && completedApeRow) {
+              entry.firstCompletedAt = completedApeRow.observed_at;
             }
           } else {
-            let authors: string[] = [];
-            if (row.authors_json) {
-              try {
-                const parsed = JSON.parse(row.authors_json);
-                if (Array.isArray(parsed)) authors = parsed.map(String);
-              } catch {}
+            // High-fidelity stop captures override older or glitchy observation completion
+            entry.isCompleted = false;
+            entry.firstCompletedAt = null;
+            entry.percentComplete = latestPercent;
+            entry.viewOffsetSeconds = latestOffsetSec;
+          }
+
+          entry.latestWatchedAt = latestRow.observed_at ?? entry.latestWatchedAt;
+        }
+      } catch {}
+    }
+
+    // 3. Resolve chapter positions when cached audiobook chapters exist
+    if (hasChapters) {
+      try {
+        const getChapters = this.db.prepare(`
+          SELECT chapter_index, start_offset_ms, end_offset_ms
+          FROM audiobook_chapters
+          WHERE audiobook_id = ?
+          ORDER BY chapter_index ASC
+        `);
+
+        for (const userBooks of userBookMap.values()) {
+          for (const book of userBooks.values()) {
+            const chs = getChapters.all(book.audiobookId) as any[];
+            if (chs && chs.length > 0) {
+              book.chapterCount = chs.length;
+              if (book.isCompleted) {
+                book.completedChaptersCount = chs.length;
+              } else {
+                const offsetMs = book.viewOffsetSeconds * 1000;
+                const curr = chs.find((c) => offsetMs >= c.start_offset_ms && offsetMs < c.end_offset_ms);
+                if (curr) {
+                  book.completedChaptersCount = Math.max(0, curr.chapter_index - 1);
+                }
+              }
             }
-            const totalDurationSeconds = apeDurationSec || Number(row.total_duration_seconds ?? 0);
-            userBookMap.get(userId)!.set(bookId, {
-              audiobookId: bookId,
-              title: String(row.title ?? ''),
-              subtitle: row.subtitle ? String(row.subtitle) : null,
-              authors,
-              seriesTitle: row.series_title ? String(row.series_title) : null,
-              seriesIndex: row.series_index != null ? Number(row.series_index) : null,
-              totalDurationSeconds,
-              viewOffsetSeconds: apeIsCompleted ? totalDurationSeconds : apeOffsetSec,
-              percentComplete: apeIsCompleted ? 100 : apePercent,
-              chapterCount: row.chapter_count != null ? Number(row.chapter_count) : null,
-              completedChaptersCount: null,
-              isCompleted: apeIsCompleted,
-              relistenCount: 0,
-              firstCompletedAt: apeIsCompleted ? (row.latest_observed_at ?? null) : null,
-              latestWatchedAt: row.latest_observed_at ?? null,
-              coverUrl: row.cover_url ?? null,
-              posterUrl: `/api/artwork/${encodeURIComponent(`audiobook:${bookId}`)}?variant=poster`
-            });
           }
         }
       } catch {}

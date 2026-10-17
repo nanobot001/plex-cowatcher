@@ -355,7 +355,7 @@ export function evaluateSubjectAchievements(
             posterUrl: book.posterUrl,
             iconHint: 'audiobook',
             stats: {
-              totalHours: listenedHours,
+              totalHours,
               totalPlays: 1,
               completedItems: 0,
               rewatchCount: 0,
