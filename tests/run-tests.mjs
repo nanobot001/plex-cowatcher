@@ -8241,6 +8241,91 @@ test("3-6-6I Multi-Media Trophy Shelf Filters, Modal Presenters, and Obsession P
   });
 });
 
+test("3-6-6G Unified Audiobook Evidence: revision-backed historical audiobooks evaluate to completed book mastery trophies and milestone counts", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (7, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    db.prepare(`
+      INSERT INTO audiobook_books (id, folder_key, title, authors_json, total_duration_seconds, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES
+        (501, 'wheel-of-time-1', 'The Eye of the World', '["Robert Jordan"]', 100000, 'test', 'enriched', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+        (502, 'discworld-guards', 'Guards! Guards!', '["Terry Pratchett"]', 48000, 'test', 'enriched', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+        (503, 'atomic-habits', 'Atomic Habits', '["James Clear"]', 20000, 'test', 'enriched', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // Setup media revisions for Book 501 and Book 502
+    db.prepare(`
+      INSERT INTO audiobook_media_revisions (id, audiobook_id, media_revision, track_count, total_duration_ms, file_count, manifest_status, created_at)
+      VALUES
+        (1, 501, 'rev-501', 10, 100000000, 10, 'ready', '2026-08-01T00:00:00Z'),
+        (2, 502, 'rev-502', 5, 48000000, 5, 'ready', '2026-08-01T00:00:00Z'),
+        (3, 503, 'rev-503', 1, 20000000, 1, 'ready', '2026-08-01T00:00:00Z')
+    `).run();
+
+    db.prepare(`
+      INSERT INTO audiobook_media_revision_items (revision_id, item_order, stable_identity, rating_key, guid, duration_ms)
+      VALUES
+        (1, 0, 'guid:wot-1', 'rk-wot-1', 'guid-wot-1', 100000000),
+        (2, 0, 'guid:disc-1', 'rk-disc-1', 'guid-disc-1', 48000000),
+        (3, 0, 'guid:atomic-1', 'rk-atomic-1', 'guid-atomic-1', 20000000)
+    `).run();
+
+    // Playback observations for Tony (no audiobook_position_evidence rows):
+    // Book 501: completed (100,000s listened)
+    db.prepare(`
+      INSERT INTO playback_observations (user_id, rating_key, media_type, library_name, title, duration, percent_complete, completed, watched_at, created_at, updated_at)
+      VALUES (7, 'rk-wot-1', 'track', 'Audiobooks', 'Chapter 1', 100000, 100, 1, '2026-08-05T12:00:00Z', '2026-08-05T12:00:00Z', '2026-08-05T12:00:00Z')
+    `).run();
+
+    // Book 502: completed via duration (46,000s listened of 48,000s total = >90%)
+    db.prepare(`
+      INSERT INTO playback_observations (user_id, rating_key, media_type, library_name, title, duration, percent_complete, completed, watched_at, created_at, updated_at)
+      VALUES (7, 'rk-disc-1', 'track', 'Audiobooks', 'Part 1', 46000, 96, 1, '2026-08-06T12:00:00Z', '2026-08-06T12:00:00Z', '2026-08-06T12:00:00Z')
+    `).run();
+
+    // Book 503: in progress (10,000s of 20,000s = 50%)
+    db.prepare(`
+      INSERT INTO playback_observations (user_id, rating_key, media_type, library_name, title, duration, percent_complete, completed, watched_at, created_at, updated_at)
+      VALUES (7, 'rk-atomic-1', 'track', 'Audiobooks', 'Habits Part 1', 10000, 50, 0, '2026-08-07T12:00:00Z', '2026-08-07T12:00:00Z', '2026-08-07T12:00:00Z')
+    `).run();
+
+    const achievementService = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const achievements = achievementService.getAchievements({ user: 7 });
+
+    // Verify Book 501 Mastery (Earned)
+    const wotTrophy = achievements.results.find((r) => r.ruleId === 'book_mastery_501');
+    assert.ok(wotTrophy, "Book 501 (The Eye of the World) must generate a book mastery trophy");
+    assert.equal(wotTrophy.state, 'earned');
+    assert.equal(wotTrophy.badge.stats.percentComplete, 100);
+
+    // Verify Book 502 Mastery (Earned)
+    const discTrophy = achievements.results.find((r) => r.ruleId === 'book_mastery_502');
+    assert.ok(discTrophy, "Book 502 (Guards! Guards!) must generate a book mastery trophy");
+    assert.equal(discTrophy.state, 'earned');
+    assert.equal(discTrophy.badge.stats.percentComplete, 100);
+
+    // Verify Book 503 Progress (In Progress)
+    const atomicTrophy = achievements.results.find((r) => r.ruleId === 'book_mastery_503');
+    assert.ok(atomicTrophy, "Book 503 (Atomic Habits) must generate an in-progress trophy");
+    assert.equal(atomicTrophy.state, 'in_progress');
+    assert.equal(atomicTrophy.badge.stats.percentComplete, 50);
+
+    // Verify completed books count milestone: 2 completed books earned
+    const bookCount1 = achievements.results.find((r) => r.ruleId === 'audiobook_count_1');
+    assert.ok(bookCount1, "audiobook_count_1 rule must evaluate");
+    assert.equal(bookCount1.state, 'earned');
+    assert.equal(bookCount1.progress.current, 2);
+
+    // Opening Chapter earned
+    const firstListen = achievements.results.find((r) => r.ruleId === 'audiobook_first_watch');
+    assert.ok(firstListen, "audiobook_first_watch rule must evaluate");
+    assert.equal(firstListen.state, 'earned');
+  });
+});
+
 
 let passed = 0;
 for (const { name, fn } of tests) {

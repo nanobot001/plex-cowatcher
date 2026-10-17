@@ -3396,13 +3396,14 @@ export function registerWebRoutes(router: Router): void {
 
             const rawTitle = t.badge.title || '';
             const title = rawTitle
-              .replace(/^Show Mastery:\s*/i, '')
-              .replace(/^Series Progress:\s*/i, '')
-              .replace(/^Book Mastery:\s*/i, '')
-              .replace(/^Audiobook Progress:\s*/i, '')
-              .replace(/^Franchise Mastery:\s*/i, '')
-              .replace(/^Franchise Progress:\s*/i, '')
-              .replace(/^Movie Favorite:\s*/i, '');
+              .replace(/^Show Mastery:[ \t]*/i, '')
+              .replace(/^Series Progress:[ \t]*/i, '')
+              .replace(/^Book Mastery:[ \t]*/i, '')
+              .replace(/^Audiobook Progress:[ \t]*/i, '')
+              .replace(/^Franchise Mastery:[ \t]*/i, '')
+              .replace(/^Franchise Progress:[ \t]*/i, '')
+              .replace(/^Movie Favorite:[ \t]*/i, '')
+              .trim();
 
             const tierStyle = TIER_COLORS[t.badge.tier] || TIER_COLORS.bronze;
             const rewatchCount = t.badge.stats && t.badge.stats.rewatchCount ? t.badge.stats.rewatchCount : 0;
@@ -3411,6 +3412,15 @@ export function registerWebRoutes(router: Router): void {
             const isAudiobook = t.badge?.stats?.mediaCategory === 'audiobook' || t.badge?.iconHint === 'audiobook' || t.ruleId?.includes('audiobook');
             const isMovieCollection = t.badge?.stats?.mediaCategory === 'movie_collection' || t.ruleId?.startsWith('collection_mastery_');
             const isMovieFavorite = (t.badge?.stats?.mediaCategory === 'movie' && t.ruleId?.startsWith('movie_favorite_'));
+
+            let displayTitle = title;
+            if (isAudiobook) {
+              displayTitle = displayTitle
+                .replace(/^[0-9]{4}[ -]+/, '')
+                .replace(/^-[ ]*/, '')
+                .replace(/\\[.*\\]$/, '')
+                .trim();
+            }
 
             // Specialized Card Rendering
             if (isAudiobook) {
@@ -3433,9 +3443,9 @@ export function registerWebRoutes(router: Router): void {
                           '</div>' +
                         '</div>'
                     ) +
-                    '<span style="font-size: 0.85rem; font-weight: bold; color: #fff; line-height: 1.2; display: block;">' + title + '</span>' +
+                    '<span style="font-size: 0.85rem; font-weight: bold; color: #fff; line-height: 1.2; display: block;">' + displayTitle + '</span>' +
                   '</div>' +
-                  '<img src="' + t.badge.posterUrl + '" alt="' + title + '" onerror="this.style.display=\\'none\\'" />' +
+                  '<img src="' + t.badge.posterUrl + '" alt="' + displayTitle + '" onerror="this.style.display=\\'none\\'" />' +
                   (isComplete && rewatchCount > 0
                     ? '<div class="tier-ribbon ' + tierStyle.ribbon + '">' + rewatchCount + 'x Re-listened</div>'
                     : (!isComplete ? '<div class="tier-ribbon" style="background: rgba(56, 189, 248, 0.3); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.4);">In Progress</div>' : '')

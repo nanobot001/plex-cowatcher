@@ -42,3 +42,4 @@ scratch/
 *.sqlite
 *.sqlite3
 *.sqlite-journal
+*.db
