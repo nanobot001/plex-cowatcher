@@ -1,0 +1,51 @@
+{
+  "mission_impossible": {
+    "title": "Mission: Impossible Collection",
+    "canonicalTotalFilms": 7,
+    "films": [
+      { "title": "Mission: Impossible", "year": 1996 },
+      { "title": "Mission: Impossible II", "year": 2000 },
+      { "title": "Mission: Impossible III", "year": 2006 },
+      { "title": "Mission: Impossible - Ghost Protocol", "year": 2011 },
+      { "title": "Mission: Impossible - Rogue Nation", "year": 2015 },
+      { "title": "Mission: Impossible - Fallout", "year": 2018 },
+      { "title": "Mission: Impossible - Dead Reckoning Part One", "year": 2023 }
+    ]
+  },
+  "lord_of_the_rings": {
+    "title": "The Lord of the Rings Collection",
+    "canonicalTotalFilms": 3,
+    "films": [
+      { "title": "The Lord of the Rings: The Fellowship of the Ring", "year": 2001 },
+      { "title": "The Lord of the Rings: The Two Towers", "year": 2002 },
+      { "title": "The Lord of the Rings: The Return of the King", "year": 2003 }
+    ]
+  },
+  "dark_knight_trilogy": {
+    "title": "The Dark Knight Trilogy",
+    "canonicalTotalFilms": 3,
+    "films": [
+      { "title": "Batman Begins", "year": 2005 },
+      { "title": "The Dark Knight", "year": 2008 },
+      { "title": "The Dark Knight Rises", "year": 2012 }
+    ]
+  },
+  "dune": {
+    "title": "Dune Collection",
+    "canonicalTotalFilms": 2,
+    "films": [
+      { "title": "Dune", "year": 2021 },
+      { "title": "Dune: Part Two", "year": 2024 }
+    ]
+  },
+  "avengers": {
+    "title": "The Avengers Collection",
+    "canonicalTotalFilms": 4,
+    "films": [
+      { "title": "The Avengers", "year": 2012 },
+      { "title": "Avengers: Age of Ultron", "year": 2015 },
+      { "title": "Avengers: Infinity War", "year": 2018 },
+      { "title": "Avengers: Endgame", "year": 2019 }
+    ]
+  }
+}

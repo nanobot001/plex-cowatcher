@@ -2518,6 +2518,93 @@ export function registerWebRoutes(router: Router): void {
             display: none;
           }
         }
+        .modal-film-row {
+          display: grid;
+          grid-template-columns: 32px minmax(0, 1fr) 95px 55px 95px;
+          gap: 8px;
+          align-items: center;
+          padding: 7px 10px;
+          background: #0d1117;
+          border: 1px solid #21262d;
+          border-radius: 8px;
+          font-size: 0.78rem;
+          transition: background 0.15s ease;
+        }
+        .modal-film-row:hover {
+          background: #161b22;
+          border-color: #30363d;
+        }
+        @media (max-width: 600px) {
+          .modal-film-row {
+            grid-template-columns: 28px minmax(0, 1fr) 50px 85px;
+          }
+          .modal-film-row .hide-mobile {
+            display: none;
+          }
+        }
+        .hud-media-bar {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 6px 14px;
+          border-top: 1px solid rgba(255, 255, 255, 0.08);
+          background: rgba(13, 17, 23, 0.65);
+          flex-wrap: wrap;
+        }
+        .hud-media-label {
+          font-size: 0.72rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: var(--text-muted);
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .hud-media-filters {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          flex-wrap: wrap;
+        }
+        .btn-media {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 10px;
+          border-radius: 8px;
+          font-size: 0.76rem;
+          font-weight: 600;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          background: rgba(22, 27, 34, 0.7);
+          color: var(--text-muted, #8b949e);
+          cursor: pointer;
+          transition: all 0.15s ease;
+          white-space: nowrap;
+        }
+        .btn-media:hover {
+          color: #fff;
+          border-color: rgba(255, 255, 255, 0.25);
+          background: rgba(255, 255, 255, 0.06);
+        }
+        .btn-media.active {
+          background: #1f6feb;
+          color: #fff;
+          border-color: #388bfd;
+          box-shadow: 0 2px 8px rgba(31, 111, 235, 0.3);
+        }
+        .media-count-badge {
+          font-size: 0.68rem;
+          padding: 1px 5px;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.12);
+          color: #cbd5e1;
+          font-weight: 700;
+        }
+        .btn-media.active .media-count-badge {
+          background: rgba(255, 255, 255, 0.25);
+          color: #fff;
+        }
       </style>
 
       <div class="achievements-container">
@@ -2579,6 +2666,20 @@ export function registerWebRoutes(router: Router): void {
               <button id="btn-refresh-achievements" class="btn hud-refresh-btn" title="Refresh Live Achievements">
                 🔄
               </button>
+            </div>
+          </div>
+
+          <!-- Secondary Media Category Filter Bar -->
+          <div class="hud-media-bar">
+            <div class="hud-media-label">
+              <span>Filter Media:</span>
+            </div>
+            <div id="media-filters" class="hud-media-filters">
+              <button data-media="all" class="btn-media active">All Media <span id="count-media-all" class="media-count-badge">0</span></button>
+              <button data-media="tv" class="btn-media">📺 TV Shows <span id="count-media-tv" class="media-count-badge">0</span></button>
+              <button data-media="anime" class="btn-media">🎌 Anime <span id="count-media-anime" class="media-count-badge">0</span></button>
+              <button data-media="movie" class="btn-media">🎬 Movies <span id="count-media-movie" class="media-count-badge">0</span></button>
+              <button data-media="audiobook" class="btn-media">🎧 Audiobooks <span id="count-media-audiobook" class="media-count-badge">0</span></button>
             </div>
           </div>
 
@@ -2656,7 +2757,7 @@ export function registerWebRoutes(router: Router): void {
                 <span>⚡</span> <span id="trophy-caught-up-text">0 Caught Up</span>
               </button>
             </div>
-            <span style="font-size: 0.8rem; color: var(--text-muted);">100% Episode Completion Verified</span>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">100% Verified Media &amp; Series Completion</span>
           </div>
           <div id="trophy-caught-up-banner" style="display: none; padding: 10px 14px; background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 10px;"></div>
           <div id="trophy-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px;"></div>
@@ -2732,6 +2833,7 @@ export function registerWebRoutes(router: Router): void {
         let activeUserId = null;
         let activeFacet = 'all';
         let activeState = 'earned';
+        let activeMedia = 'all';
         let activeSort = 'default';
         try {
           activeSort = localStorage.getItem('plex_achievements_sort') || 'default';
@@ -2740,6 +2842,57 @@ export function registerWebRoutes(router: Router): void {
         let usersData = [];
         let achievementsStore = {};
         let draggedUserId = null;
+
+        function getItemMediaCategory(item) {
+          const statCat = item.badge?.stats?.mediaCategory;
+          if (statCat) {
+            if (statCat === 'movie_collection' || statCat === 'movie') return 'movie';
+            if (statCat === 'tv' || statCat === 'classic_tv') return 'tv';
+            if (statCat === 'anime') return 'anime';
+            if (statCat === 'audiobook') return 'audiobook';
+          }
+          const hint = item.badge?.iconHint;
+          if (hint === 'anime') return 'anime';
+          if (hint === 'audiobook') return 'audiobook';
+          if (hint === 'movie') return 'movie';
+          if (hint === 'tv' || hint === 'series') return 'tv';
+          const rId = item.ruleId || '';
+          if (rId.includes('audiobook') || rId.startsWith('book_mastery_')) return 'audiobook';
+          if (rId.includes('anime')) return 'anime';
+          if (rId.includes('movie') || rId.startsWith('collection_mastery_') || rId.startsWith('movie_favorite_')) return 'movie';
+          if (rId.includes('series') || rId.includes('tv') || rId.startsWith('show_mastery_')) return 'tv';
+          return 'other';
+        }
+
+        function updateMediaCounts() {
+          const results = achievementsStore[activeUserId] || [];
+          const filteredByState = results.filter(r => {
+            if (activeState === 'earned' && r.state !== 'earned') return false;
+            if (activeState === 'caught_up' && (r.state === 'earned' || !r.badge?.stats?.isCaughtUpOnPlex)) return false;
+            if (activeState === 'in_progress' && (r.state !== 'in_progress' || r.badge?.stats?.isCaughtUpOnPlex)) return false;
+            return true;
+          });
+
+          const counts = { all: filteredByState.length, tv: 0, anime: 0, movie: 0, audiobook: 0 };
+          for (const item of filteredByState) {
+            const cat = getItemMediaCategory(item);
+            if (cat === 'tv') counts.tv++;
+            else if (cat === 'anime') counts.anime++;
+            else if (cat === 'movie') counts.movie++;
+            else if (cat === 'audiobook') counts.audiobook++;
+          }
+
+          const elAll = document.getElementById('count-media-all');
+          if (elAll) elAll.textContent = counts.all;
+          const elTv = document.getElementById('count-media-tv');
+          if (elTv) elTv.textContent = counts.tv;
+          const elAnime = document.getElementById('count-media-anime');
+          if (elAnime) elAnime.textContent = counts.anime;
+          const elMovie = document.getElementById('count-media-movie');
+          if (elMovie) elMovie.textContent = counts.movie;
+          const elAudiobook = document.getElementById('count-media-audiobook');
+          if (elAudiobook) elAudiobook.textContent = counts.audiobook;
+        }
 
         const TIER_COLORS = {
           bronze: { bg: 'rgba(217, 119, 6, 0.15)', border: '#d97706', text: '#f59e0b', ribbon: 'ribbon-bronze', badge: 'border: 1px solid #d97706; color: #f59e0b;' },
@@ -2996,6 +3149,7 @@ export function registerWebRoutes(router: Router): void {
         }
 
         function renderAll() {
+          updateMediaCounts();
           renderUserHero();
           renderObsession();
           renderTrophyShelf();
@@ -3099,7 +3253,17 @@ export function registerWebRoutes(router: Router): void {
             return;
           }
 
+          if (activeMedia !== 'all' && getItemMediaCategory(obsession) !== activeMedia) {
+            container.innerHTML = '';
+            return;
+          }
+
           const stats = obsession.badge.stats || {};
+          const playsUnit = stats.mediaCategory === 'audiobook' ? 'Listens' :
+                            stats.mediaCategory === 'movie_collection' ? 'Films' :
+                            stats.mediaCategory === 'movie' ? 'Watches' : 'Episodes';
+          const timeUnit = stats.mediaCategory === 'audiobook' ? 'Listening Time' : 'Logged Time';
+
           container.innerHTML = '<div class="card" style="padding: 24px; border: 1px solid rgba(245, 158, 11, 0.35); background: linear-gradient(135deg, rgba(69, 26, 3, 0.3) 0%, rgba(22, 27, 34, 0.95) 100%); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 20px;">' +
             '<div style="display: flex; align-items: center; gap: 16px;">' +
               '<span style="font-size: 2.5rem;">🔥</span>' +
@@ -3115,11 +3279,11 @@ export function registerWebRoutes(router: Router): void {
             '<div style="display: flex; gap: 16px; text-align: center;">' +
               '<div style="background: rgba(13, 17, 23, 0.8); border: 1px solid #30363d; border-radius: 12px; padding: 10px 16px;">' +
                 '<div style="font-size: 1.3rem; font-weight: bold; color: #fbbf24;">' + (stats.totalHours || 0) + ' hrs</div>' +
-                '<div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Logged Time</div>' +
+                '<div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">' + timeUnit + '</div>' +
               '</div>' +
               '<div style="background: rgba(13, 17, 23, 0.8); border: 1px solid #30363d; border-radius: 12px; padding: 10px 16px;">' +
                 '<div style="font-size: 1.3rem; font-weight: bold; color: #fff;">' + (stats.totalPlays || 0) + '</div>' +
-                '<div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Episodes</div>' +
+                '<div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">' + playsUnit + '</div>' +
               '</div>' +
             '</div>' +
           '</div>';
@@ -3195,15 +3359,20 @@ export function registerWebRoutes(router: Router): void {
             if (activeState === 'earned' && r.state !== 'earned') return false;
             if (activeState === 'caught_up' && (r.state === 'earned' || !r.badge.stats || !r.badge.stats.isCaughtUpOnPlex)) return false;
             if (activeState === 'in_progress' && (r.state !== 'in_progress' || (r.badge.stats && r.badge.stats.isCaughtUpOnPlex))) return false;
+            if (activeMedia !== 'all' && getItemMediaCategory(r) !== activeMedia) return false;
             return true;
           });
 
           if (showTrophies.length === 0) {
+            const mediaLabel = activeMedia === 'tv' ? 'TV series' :
+                               activeMedia === 'anime' ? 'anime series' :
+                               activeMedia === 'movie' ? 'movies or franchises' :
+                               activeMedia === 'audiobook' ? 'audiobooks' : 'media';
             const msg = activeState === 'caught_up'
-              ? 'No in-progress series currently caught up on server library.'
+              ? 'No in-progress ' + mediaLabel + ' currently caught up on server library.'
               : activeState === 'in_progress'
-                ? 'No series currently in progress.'
-                : 'No series completed matching filters.';
+                ? 'No ' + mediaLabel + ' currently in progress.'
+                : 'No ' + mediaLabel + ' completed matching filters.';
             container.innerHTML = '<div style="grid-column: 1 / -1; padding: 32px; text-align: center; color: var(--text-muted); background: var(--bg-card); border-radius: 12px; border: 1px solid var(--border-color);">' + msg + '</div>';
             return;
           }
@@ -3224,11 +3393,157 @@ export function registerWebRoutes(router: Router): void {
             const nextAirAt = (t.badge && t.badge.stats && t.badge.stats.nextAirAt) || null;
             const shortNextAir = nextAirAt ? new Date(nextAirAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : null;
             const isAiringWithUpcoming = airedCount != null && t.progress && t.progress.target > airedCount;
-            const title = t.badge.title.replace('Show Mastery: ', '').replace('Series Progress: ', '');
+
+            const rawTitle = t.badge.title || '';
+            const title = rawTitle
+              .replace(/^Show Mastery:[ \t]*/i, '')
+              .replace(/^Series Progress:[ \t]*/i, '')
+              .replace(/^Book Mastery:[ \t]*/i, '')
+              .replace(/^Audiobook Progress:[ \t]*/i, '')
+              .replace(/^Franchise Mastery:[ \t]*/i, '')
+              .replace(/^Franchise Progress:[ \t]*/i, '')
+              .replace(/^Movie Favorite:[ \t]*/i, '')
+              .trim();
+
             const tierStyle = TIER_COLORS[t.badge.tier] || TIER_COLORS.bronze;
             const rewatchCount = t.badge.stats && t.badge.stats.rewatchCount ? t.badge.stats.rewatchCount : 0;
-            const progressPercent = t.progress ? Math.round((t.progress.current / t.progress.target) * 100) : 0;
+            const progressPercent = t.progress && t.progress.target ? Math.round((t.progress.current / t.progress.target) * 100) : 0;
 
+            const isAudiobook = t.badge?.stats?.mediaCategory === 'audiobook' || t.badge?.iconHint === 'audiobook' || t.ruleId?.includes('audiobook');
+            const isMovieCollection = t.badge?.stats?.mediaCategory === 'movie_collection' || t.ruleId?.startsWith('collection_mastery_');
+            const isMovieFavorite = (t.badge?.stats?.mediaCategory === 'movie' && t.ruleId?.startsWith('movie_favorite_'));
+
+            let displayTitle = title;
+            if (isAudiobook) {
+              displayTitle = displayTitle
+                .replace(/^[0-9]{4}[ -]+/, '')
+                .replace(/^-[ ]*/, '')
+                .replace(/\\[.*\\]$/, '')
+                .trim();
+            }
+
+            // Specialized Card Rendering
+            if (isAudiobook) {
+              const totalHrs = t.badge.stats?.totalHours || (t.progress?.target ? Math.round((t.progress.target / 3600) * 10) / 10 : 0);
+              const listenedHrs = t.badge.stats?.viewOffsetSeconds ? Math.round((t.badge.stats.viewOffsetSeconds / 3600) * 10) / 10 : (isComplete ? totalHrs : 0);
+              const bookPercent = t.badge.stats?.percentComplete || (totalHrs > 0 ? Math.round((listenedHrs / totalHrs) * 100) : 0);
+
+              return '<div data-rule="' + t.ruleId + '" class="trophy-card">' +
+                '<div class="trophy-poster-frame">' +
+                  '<div class="trophy-overlay">' +
+                    (isComplete
+                      ? '<span style="font-size: 0.75rem; font-weight: bold; color: #38bdf8; display: flex; align-items: center; gap: 4px; margin-bottom: 4px;">● 100% Completed</span>'
+                      : '<div style="margin-bottom: 6px;">' +
+                          '<div style="display: flex; justify-content: space-between; font-size: 0.7rem; font-weight: bold; color: #38bdf8; margin-bottom: 2px;">' +
+                            '<span>' + listenedHrs + ' / ' + totalHrs + ' hrs</span>' +
+                            '<span>' + bookPercent + '%</span>' +
+                          '</div>' +
+                          '<div style="width: 100%; background: rgba(0,0,0,0.8); height: 5px; border-radius: 999px; overflow: hidden;">' +
+                            '<div style="background: #38bdf8; width: ' + bookPercent + '%; height: 100%;"></div>' +
+                          '</div>' +
+                        '</div>'
+                    ) +
+                    '<span style="font-size: 0.85rem; font-weight: bold; color: #fff; line-height: 1.2; display: block;">' + displayTitle + '</span>' +
+                  '</div>' +
+                  '<img src="' + t.badge.posterUrl + '" alt="' + displayTitle + '" onerror="this.style.display=\\'none\\'" />' +
+                  (isComplete && rewatchCount > 0
+                    ? '<div class="tier-ribbon ' + tierStyle.ribbon + '">' + rewatchCount + 'x Re-listened</div>'
+                    : (!isComplete ? '<div class="tier-ribbon" style="background: rgba(56, 189, 248, 0.3); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.4);">In Progress</div>' : '')
+                  ) +
+                  '<div class="tier-pill" style="' + (isComplete ? tierStyle.badge : 'border: 1px solid #0284c7; color: #38bdf8;') + '">' +
+                    (isComplete ? t.badge.tier + '<span style="opacity: 0.5; margin: 0 4px;">•</span>Book' : '🎧 Book') +
+                  '</div>' +
+                '</div>' +
+                '<div style="padding: 10px 12px; background: rgba(13, 17, 23, 0.85); border-top: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; color: var(--text-muted);">' +
+                  (isComplete
+                    ? '<span>' + totalHrs + ' hrs duration</span>'
+                    : '<span style="color: #38bdf8; font-weight: 600;">' + listenedHrs + 'h of ' + totalHrs + 'h (' + bookPercent + '%)</span>'
+                  ) +
+                  '<span style="color: #58a6ff; font-weight: 500;">Details &rarr;</span>' +
+                '</div>' +
+              '</div>';
+            }
+
+            if (isMovieCollection) {
+              return '<div data-rule="' + t.ruleId + '" class="trophy-card">' +
+                '<div class="trophy-poster-frame">' +
+                  '<div class="trophy-overlay">' +
+                    (isComplete
+                      ? '<span style="font-size: 0.75rem; font-weight: bold; color: #3fb950; display: flex; align-items: center; gap: 4px; margin-bottom: 4px;">● 100% Completed</span>'
+                      : (isCaughtUp
+                          ? '<div style="margin-bottom: 6px;">' +
+                              '<div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.7rem; font-weight: bold; color: #34d399; margin-bottom: 2px;">' +
+                                '<span style="display: flex; align-items: center; gap: 4px;">⚡ Caught Up</span>' +
+                                '<span style="background: rgba(16, 185, 129, 0.25); color: #6ee7b7; padding: 1px 5px; border-radius: 4px; font-size: 0.65rem;">+' + missingCount + ' off-server</span>' +
+                              '</div>' +
+                              '<div style="display: flex; justify-content: space-between; font-size: 0.65rem; color: #cbd5e1; margin-bottom: 2px;">' +
+                                '<span>' + t.progress.current + ' of ' + t.progress.target + ' films</span>' +
+                                '<span>' + progressPercent + '%</span>' +
+                              '</div>' +
+                              '<div style="width: 100%; background: rgba(0,0,0,0.8); height: 5px; border-radius: 999px; overflow: hidden;">' +
+                                '<div style="background: #10b981; width: ' + progressPercent + '%; height: 100%;"></div>' +
+                              '</div>' +
+                            '</div>'
+                          : '<div style="margin-bottom: 6px;">' +
+                              '<div style="display: flex; justify-content: space-between; font-size: 0.7rem; font-weight: bold; color: #f59e0b; margin-bottom: 2px;">' +
+                                '<span>' + t.progress.current + ' of ' + t.progress.target + ' films</span>' +
+                                '<span>' + progressPercent + '%</span>' +
+                              '</div>' +
+                              '<div style="width: 100%; background: rgba(0,0,0,0.8); height: 5px; border-radius: 999px; overflow: hidden;">' +
+                                '<div style="background: #e5a00d; width: ' + progressPercent + '%; height: 100%;"></div>' +
+                              '</div>' +
+                            '</div>'
+                        )
+                    ) +
+                    '<span style="font-size: 0.85rem; font-weight: bold; color: #fff; line-height: 1.2; display: block;">' + title + '</span>' +
+                  '</div>' +
+                  '<img src="' + t.badge.posterUrl + '" alt="' + title + '" onerror="this.style.display=\\'none\\'" />' +
+                  (isComplete
+                    ? '<div class="tier-ribbon ' + tierStyle.ribbon + '">Franchise Complete</div>'
+                    : (isCaughtUp
+                        ? '<div class="tier-ribbon" style="background: rgba(16, 185, 129, 0.3); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.5); font-weight: 700;">Caught Up +' + missingCount + '</div>'
+                        : '<div class="tier-ribbon" style="background: rgba(245, 158, 11, 0.3); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.4);">In Progress</div>'
+                      )
+                  ) +
+                  '<div class="tier-pill" style="' + (isComplete ? tierStyle.badge : (isCaughtUp ? 'border: 1px solid #059669; color: #34d399;' : 'border: 1px solid #d97706; color: #f59e0b;')) + '">' +
+                    (isComplete ? t.badge.tier + '<span style="opacity: 0.5; margin: 0 4px;">•</span>Franchise' : '🎬 Franchise') +
+                  '</div>' +
+                '</div>' +
+                '<div style="padding: 10px 12px; background: rgba(13, 17, 23, 0.85); border-top: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; color: var(--text-muted);">' +
+                  (isComplete
+                    ? '<span>' + t.progress.target + ' films completed</span>'
+                    : (isCaughtUp
+                        ? '<span style="color: #34d399; font-weight: 600;">' + t.progress.current + '/' + availableCount + ' on Plex &bull; +' + missingCount + ' missing</span>'
+                        : '<span style="color: #f59e0b; font-weight: 600;">' + t.progress.current + ' of ' + t.progress.target + ' films (' + progressPercent + '%)</span>'
+                      )
+                  ) +
+                  '<span style="color: #58a6ff; font-weight: 500;">Details &rarr;</span>' +
+                '</div>' +
+              '</div>';
+            }
+
+            if (isMovieFavorite) {
+              const totalPlays = t.badge.stats?.totalPlays || (t.badge.stats?.rewatchCount ? t.badge.stats.rewatchCount + 1 : 2);
+              return '<div data-rule="' + t.ruleId + '" class="trophy-card">' +
+                '<div class="trophy-poster-frame">' +
+                  '<div class="trophy-overlay">' +
+                    '<span style="font-size: 0.75rem; font-weight: bold; color: #cbd5e1; display: flex; align-items: center; gap: 4px; margin-bottom: 4px;">● Watched ' + totalPlays + 'x</span>' +
+                    '<span style="font-size: 0.85rem; font-weight: bold; color: #fff; line-height: 1.2; display: block;">' + title + '</span>' +
+                  '</div>' +
+                  '<img src="' + t.badge.posterUrl + '" alt="' + title + '" onerror="this.style.display=\\'none\\'" />' +
+                  '<div class="tier-ribbon ' + tierStyle.ribbon + '">Watched ' + totalPlays + 'x</div>' +
+                  '<div class="tier-pill" style="' + tierStyle.badge + '">' +
+                    t.badge.tier + '<span style="opacity: 0.5; margin: 0 4px;">•</span>Movie' +
+                  '</div>' +
+                '</div>' +
+                '<div style="padding: 10px 12px; background: rgba(13, 17, 23, 0.85); border-top: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; color: var(--text-muted);">' +
+                  '<span>Watched ' + totalPlays + 'x' + (t.badge.stats?.latestWatchedAt ? ' &bull; ' + new Date(t.badge.stats.latestWatchedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '') + '</span>' +
+                  '<span style="color: #58a6ff; font-weight: 500;">Details &rarr;</span>' +
+                '</div>' +
+              '</div>';
+            }
+
+            // Standard TV / Anime Series Rendering
             return '<div data-rule="' + t.ruleId + '" class="trophy-card">' +
               '<div class="trophy-poster-frame">' +
                 '<div class="trophy-overlay">' +
@@ -3332,6 +3647,10 @@ export function registerWebRoutes(router: Router): void {
             if (activeState === 'earned' && r.state !== 'earned') return false;
             if (activeState === 'caught_up' && (r.state === 'earned' || !r.badge.stats || !r.badge.stats.isCaughtUpOnPlex)) return false;
             if (activeState === 'in_progress' && (r.state !== 'in_progress' || (r.badge.stats && r.badge.stats.isCaughtUpOnPlex))) return false;
+            if (activeMedia !== 'all') {
+              const cat = getItemMediaCategory(r);
+              if (cat !== activeMedia && cat !== 'other') return false;
+            }
             return true;
           });
 
@@ -3469,13 +3788,16 @@ export function registerWebRoutes(router: Router): void {
           const stats = ach.badge && ach.badge.stats;
           const isEarned = ach.state === 'earned';
           const isShowMastery = ach.badge && ach.badge.badgeKey && ach.badge.badgeKey.startsWith('show_mastery');
-          const firstCompletedAt = stats && stats.firstCompletedAt ? stats.firstCompletedAt : (isEarned && isShowMastery ? ach.earnedAt : null);
+          const isAudiobook = (stats && stats.mediaCategory === 'audiobook') || (ach.badge && ach.badge.badgeKey && ach.badge.badgeKey.startsWith('book_mastery_'));
+          const isMovieCollection = (stats && stats.mediaCategory === 'movie_collection') || (ach.badge && ach.badge.badgeKey && ach.badge.badgeKey.startsWith('collection_mastery_'));
+          const isMovieFavorite = (stats && stats.mediaCategory === 'movie' && ach.badge && ach.badge.badgeKey && ach.badge.badgeKey.startsWith('movie_favorite_')) || (ach.badge && ach.badge.badgeKey && ach.badge.badgeKey.startsWith('movie_favorite_'));
+          const firstCompletedAt = stats && stats.firstCompletedAt ? stats.firstCompletedAt : (isEarned ? ach.earnedAt : null);
 
           // 1. Prominent First Completion Milestone Banner
           const firstCompletionBanner = document.getElementById('modal-first-completion');
           if (firstCompletedAt && isEarned) {
             const completedDate = new Date(firstCompletedAt);
-            const formattedDate = completedDate.toLocaleDateString(undefined, {
+            const formattedDate = !isNaN(completedDate.getTime()) ? (completedDate.toLocaleDateString(undefined, {
               weekday: 'short',
               year: 'numeric',
               month: 'short',
@@ -3483,33 +3805,98 @@ export function registerWebRoutes(router: Router): void {
             }) + ' at ' + completedDate.toLocaleTimeString(undefined, {
               hour: 'numeric',
               minute: '2-digit'
-            });
-
-            let epCode = '';
-            if (stats && stats.firstCompletedEpisodeSeason != null && stats.firstCompletedEpisodeNumber != null) {
-              epCode = 'S' + String(stats.firstCompletedEpisodeSeason).padStart(2, '0') + 'E' + String(stats.firstCompletedEpisodeNumber).padStart(2, '0') + ' • ';
-            }
+            })) : 'Historical';
 
             let bannerHtml = '<div style="background: linear-gradient(135deg, rgba(217, 119, 6, 0.12) 0%, rgba(22, 27, 34, 0.95) 100%); border: 1px solid rgba(245, 158, 11, 0.35); border-left: 4px solid #f59e0b; border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px;">';
-            bannerHtml +=   '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">';
-            bannerHtml +=     '<div style="font-weight: 700; font-size: 0.8rem; color: #fbbf24; display: flex; align-items: center; gap: 6px; text-transform: uppercase; letter-spacing: 0.5px;">';
-            bannerHtml +=       '<span>🏆</span> First 100% Series Completion';
-            bannerHtml +=     '</div>';
-            bannerHtml +=     '<span style="font-size: 0.7rem; font-weight: 600; background: rgba(245, 158, 11, 0.2); color: #fde68a; padding: 2px 8px; border-radius: 999px;">';
-            bannerHtml +=       'All ' + (ach.progress ? ach.progress.target : '') + ' Episodes Completed';
-            bannerHtml +=     '</span>';
-            bannerHtml +=   '</div>';
-            bannerHtml +=   '<div style="font-size: 1.05rem; font-weight: 700; color: #fff;">' + formattedDate + '</div>';
-            if (stats && stats.firstCompletedEpisodeTitle) {
-              bannerHtml += '<div style="font-size: 0.8rem; color: #cbd5e1; display: flex; align-items: center; gap: 6px;">';
-              bannerHtml +=   '<span style="color: #34d399;">✓</span>';
-              bannerHtml +=   '<span>Milestone Finale: <strong style="color: #fff;">' + epCode + '"' + stats.firstCompletedEpisodeTitle + '"</strong></span>';
-              bannerHtml += '</div>';
-            }
-            if (stats && stats.rewatchCount > 0) {
-              bannerHtml += '<div style="font-size: 0.75rem; color: #94a3b8; border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 6px; margin-top: 2px;">';
-              bannerHtml +=   '<span>Current Trophy Level: <strong style="color: #cbd5e1;">' + ach.badge.title + '</strong> (' + (stats.rewatchCount + 1) + 'x Total Series Passes)</span>';
-              bannerHtml += '</div>';
+
+            if (isAudiobook) {
+              const totalHrs = stats && stats.totalDurationSeconds ? (stats.totalDurationSeconds / 3600).toFixed(1) : '—';
+              bannerHtml +=   '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">';
+              bannerHtml +=     '<div style="font-weight: 700; font-size: 0.8rem; color: #fbbf24; display: flex; align-items: center; gap: 6px; text-transform: uppercase; letter-spacing: 0.5px;">';
+              bannerHtml +=       '<span>🎧</span> First 100% Book Completion';
+              bannerHtml +=     '</div>';
+              bannerHtml +=     '<span style="font-size: 0.7rem; font-weight: 600; background: rgba(56, 189, 248, 0.2); color: #7dd3fc; padding: 2px 8px; border-radius: 999px;">';
+              bannerHtml +=       'Full Audiobook Completed (' + totalHrs + ' hrs)';
+              bannerHtml +=     '</span>';
+              bannerHtml +=   '</div>';
+              bannerHtml +=   '<div style="font-size: 1.05rem; font-weight: 700; color: #fff;">' + formattedDate + '</div>';
+              if (stats && stats.authors && stats.authors.length > 0) {
+                bannerHtml += '<div style="font-size: 0.8rem; color: #cbd5e1; display: flex; align-items: center; gap: 6px;">';
+                bannerHtml +=   '<span style="color: #38bdf8;">✓</span>';
+                bannerHtml +=   '<span>By <strong style="color: #fff;">' + stats.authors.join(', ') + '</strong>' + (stats.seriesTitle ? ' • ' + stats.seriesTitle + (stats.seriesIndex ? ' #' + stats.seriesIndex : '') : '') + '</span>';
+                bannerHtml += '</div>';
+              }
+              if (stats && stats.rewatchCount > 0) {
+                bannerHtml += '<div style="font-size: 0.75rem; color: #94a3b8; border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 6px; margin-top: 2px;">';
+                bannerHtml +=   '<span>Current Trophy Level: <strong style="color: #cbd5e1;">' + ach.badge.title + '</strong> (' + (stats.rewatchCount + 1) + 'x Total Listens)</span>';
+                bannerHtml += '</div>';
+              }
+            } else if (isMovieCollection) {
+              bannerHtml +=   '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">';
+              bannerHtml +=     '<div style="font-weight: 700; font-size: 0.8rem; color: #fbbf24; display: flex; align-items: center; gap: 6px; text-transform: uppercase; letter-spacing: 0.5px;">';
+              bannerHtml +=       '<span>🎬</span> First 100% Franchise Completion';
+              bannerHtml +=     '</div>';
+              bannerHtml +=     '<span style="font-size: 0.7rem; font-weight: 600; background: rgba(245, 158, 11, 0.2); color: #fde68a; padding: 2px 8px; border-radius: 999px;">';
+              bannerHtml +=       'All ' + (ach.progress ? ach.progress.target : '') + ' Films Completed';
+              bannerHtml +=     '</span>';
+              bannerHtml +=   '</div>';
+              bannerHtml +=   '<div style="font-size: 1.05rem; font-weight: 700; color: #fff;">' + formattedDate + '</div>';
+              if (stats && stats.totalPlays) {
+                bannerHtml += '<div style="font-size: 0.8rem; color: #cbd5e1; display: flex; align-items: center; gap: 6px;">';
+                bannerHtml +=   '<span style="color: #34d399;">✓</span>';
+                bannerHtml +=   '<span>Total Franchise Views: <strong style="color: #fff;">' + stats.totalPlays + ' film plays logged</strong></span>';
+                bannerHtml += '</div>';
+              }
+            } else if (isMovieFavorite) {
+              const playCount = (stats && stats.totalPlays) || ((stats && stats.rewatchCount || 0) + 1);
+              bannerHtml +=   '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">';
+              bannerHtml +=     '<div style="font-weight: 700; font-size: 0.8rem; color: #fbbf24; display: flex; align-items: center; gap: 6px; text-transform: uppercase; letter-spacing: 0.5px;">';
+              bannerHtml +=       '<span>🍿</span> Cult-Classic Favorite Milestone';
+              bannerHtml +=     '</div>';
+              bannerHtml +=     '<span style="font-size: 0.7rem; font-weight: 600; background: rgba(56, 189, 248, 0.2); color: #7dd3fc; padding: 2px 8px; border-radius: 999px;">';
+              bannerHtml +=       'Watched ' + playCount + 'x Across Distinct Sessions';
+              bannerHtml +=     '</span>';
+              bannerHtml +=   '</div>';
+              bannerHtml +=   '<div style="font-size: 1.05rem; font-weight: 700; color: #fff;">First Watched: ' + formattedDate + '</div>';
+              if (stats && stats.latestWatchedAt) {
+                const latestDate = new Date(stats.latestWatchedAt);
+                const latestStr = !isNaN(latestDate.getTime()) ? latestDate.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : 'Recent';
+                bannerHtml += '<div style="font-size: 0.8rem; color: #cbd5e1; display: flex; align-items: center; gap: 6px;">';
+                bannerHtml +=   '<span style="color: #34d399;">✓</span>';
+                bannerHtml +=   '<span>Latest Viewing Session: <strong style="color: #fff;">' + latestStr + '</strong></span>';
+                bannerHtml += '</div>';
+              }
+              if (stats && stats.rewatchCount > 0) {
+                bannerHtml += '<div style="font-size: 0.75rem; color: #94a3b8; border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 6px; margin-top: 2px;">';
+                bannerHtml +=   '<span>Current Trophy Level: <strong style="color: #cbd5e1;">' + ach.badge.title + '</strong></span>';
+                bannerHtml += '</div>';
+              }
+            } else {
+              let epCode = '';
+              if (stats && stats.firstCompletedEpisodeSeason != null && stats.firstCompletedEpisodeNumber != null) {
+                epCode = 'S' + String(stats.firstCompletedEpisodeSeason).padStart(2, '0') + 'E' + String(stats.firstCompletedEpisodeNumber).padStart(2, '0') + ' • ';
+              }
+
+              bannerHtml +=   '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">';
+              bannerHtml +=     '<div style="font-weight: 700; font-size: 0.8rem; color: #fbbf24; display: flex; align-items: center; gap: 6px; text-transform: uppercase; letter-spacing: 0.5px;">';
+              bannerHtml +=       '<span>🏆</span> First 100% Series Completion';
+              bannerHtml +=     '</div>';
+              bannerHtml +=     '<span style="font-size: 0.7rem; font-weight: 600; background: rgba(245, 158, 11, 0.2); color: #fde68a; padding: 2px 8px; border-radius: 999px;">';
+              bannerHtml +=       'All ' + (ach.progress ? ach.progress.target : '') + ' Episodes Completed';
+              bannerHtml +=     '</span>';
+              bannerHtml +=   '</div>';
+              bannerHtml +=   '<div style="font-size: 1.05rem; font-weight: 700; color: #fff;">' + formattedDate + '</div>';
+              if (stats && stats.firstCompletedEpisodeTitle) {
+                bannerHtml += '<div style="font-size: 0.8rem; color: #cbd5e1; display: flex; align-items: center; gap: 6px;">';
+                bannerHtml +=   '<span style="color: #34d399;">✓</span>';
+                bannerHtml +=   '<span>Milestone Finale: <strong style="color: #fff;">' + epCode + '"' + stats.firstCompletedEpisodeTitle + '"</strong></span>';
+                bannerHtml += '</div>';
+              }
+              if (stats && stats.rewatchCount > 0) {
+                bannerHtml += '<div style="font-size: 0.75rem; color: #94a3b8; border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 6px; margin-top: 2px;">';
+                bannerHtml +=   '<span>Current Trophy Level: <strong style="color: #cbd5e1;">' + ach.badge.title + '</strong> (' + (stats.rewatchCount + 1) + 'x Total Series Passes)</span>';
+                bannerHtml += '</div>';
+              }
             }
             bannerHtml += '</div>';
             firstCompletionBanner.innerHTML = bannerHtml;
@@ -3529,6 +3916,9 @@ export function registerWebRoutes(router: Router): void {
                                ntp.nextTier === 'gold' ? 'rgba(245, 158, 11, 0.35)' :
                                ntp.nextTier === 'platinum' ? 'rgba(56, 189, 248, 0.35)' : 'rgba(217, 119, 6, 0.35)';
 
+            const unitLabel = isMovieFavorite ? 'film viewings' : (isAudiobook ? 'listens' : 'episodes');
+            const unitRemaining = isMovieFavorite ? 'viewings' : (isAudiobook ? 'listens' : 'eps');
+
             let nmHtml = '<div style="background: rgba(13, 17, 23, 0.85); border: 1px solid ' + tierBorder + '; border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">';
             nmHtml +=   '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">';
             nmHtml +=     '<div style="display: flex; align-items: center; gap: 8px;">';
@@ -3543,14 +3933,20 @@ export function registerWebRoutes(router: Router): void {
             nmHtml +=     '<div style="background: linear-gradient(90deg, ' + tierColor + ', #34d399); width: ' + ntp.percentComplete + '%; height: 100%; border-radius: 999px;"></div>';
             nmHtml +=   '</div>';
             nmHtml +=   '<div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: #94a3b8; flex-wrap: wrap; gap: 6px;">';
-            nmHtml +=     '<span>' + (ntp.nextTier === 'bronze' ? 'Watched' : 'Rewatched') + ': <strong style="color: #fff;">' + ntp.rewatchedCount + '</strong> of ' + ntp.targetCount + ' episodes</span>';
-            nmHtml +=     '<span style="color: ' + tierColor + '; font-weight: 600;">' + (ntp.remainingCount > 0 ? ntp.remainingCount + ' eps remaining' : 'Ready for upgrade') + '</span>';
+            nmHtml +=     '<span>' + (ntp.nextTier === 'bronze' ? 'Watched' : 'Rewatched') + ': <strong style="color: #fff;">' + ntp.rewatchedCount + '</strong> of ' + ntp.targetCount + ' ' + unitLabel + '</span>';
+            nmHtml +=     '<span style="color: ' + tierColor + '; font-weight: 600;">' + (ntp.remainingCount > 0 ? ntp.remainingCount + ' ' + unitRemaining + ' remaining' : 'Ready for upgrade') + '</span>';
             nmHtml +=   '</div>';
             nmHtml +=   '<div style="font-size: 0.72rem; color: #8b949e; background: rgba(0,0,0,0.25); padding: 6px 10px; border-radius: 6px;">';
-            nmHtml +=     (ntp.nextTier === 'silver' ? 'Re-watch every episode at least once (2x total plays) to unlock the Silver medal.' :
-                           ntp.nextTier === 'gold' ? 'Re-watch every episode at least 2 times (3x total plays) to unlock the Gold medal.' :
-                           ntp.nextTier === 'platinum' ? 'Re-watch every episode at least 3 times (4x total plays) to unlock the Platinum medal.' :
-                           'Complete remaining episodes to earn the series trophy.');
+            if (isMovieFavorite) {
+              nmHtml += (ntp.nextTier === 'gold' ? 'Watch this movie a 3rd time across distinct sessions to unlock the Gold medal.' :
+                         ntp.nextTier === 'platinum' ? 'Watch this movie 4+ times across distinct sessions to unlock the Platinum medal.' :
+                         'Watch this movie again across distinct sessions to level up your favorite medal.');
+            } else {
+              nmHtml += (ntp.nextTier === 'silver' ? 'Re-watch every episode at least once (2x total plays) to unlock the Silver medal.' :
+                         ntp.nextTier === 'gold' ? 'Re-watch every episode at least 2 times (3x total plays) to unlock the Gold medal.' :
+                         ntp.nextTier === 'platinum' ? 'Re-watch every episode at least 3 times (4x total plays) to unlock the Platinum medal.' :
+                         'Complete remaining episodes to earn the series trophy.');
+            }
             nmHtml +=   '</div>';
             nmHtml += '</div>';
 
@@ -3561,7 +3957,9 @@ export function registerWebRoutes(router: Router): void {
               '<span style="font-size: 1.5rem;">👑</span>' +
               '<div>' +
                 '<div style="font-weight: 700; font-size: 0.9rem; color: #7dd3fc;">Pinnacle Replay Medal (Platinum) Achieved!</div>' +
-                '<div style="font-size: 0.75rem; color: #94a3b8; margin-top: 2px;">Completed ' + stats.rewatchCount + ' full series rewatches across all episodes.</div>' +
+                '<div style="font-size: 0.75rem; color: #94a3b8; margin-top: 2px;">' +
+                  (isMovieFavorite ? 'Watched ' + (stats.rewatchCount + 1) + ' times across distinct viewing sessions.' : 'Completed ' + stats.rewatchCount + ' full series rewatches across all episodes.') +
+                '</div>' +
               '</div>' +
             '</div>';
             nextMedalCard.style.display = 'block';
@@ -3575,7 +3973,157 @@ export function registerWebRoutes(router: Router): void {
           const hasEpDetails = epDetails && epDetails.length > 0;
           const hasCoverageAudit = isCaughtUp || (!isEarned && isShowMastery && stats && stats.availableOnPlex != null);
 
-          if (hasCoverageAudit) {
+          if (isAudiobook) {
+            statsBox.style.display = 'block';
+            const totalSec = stats && stats.totalDurationSeconds ? stats.totalDurationSeconds : (ach.progress ? ach.progress.target : 0);
+            const offsetSec = stats && stats.viewOffsetSeconds ? stats.viewOffsetSeconds : (ach.progress ? ach.progress.current : 0);
+            const listenedHrs = (offsetSec / 3600).toFixed(1);
+            const totalHrs = (totalSec / 3600).toFixed(1);
+            const pct = stats && stats.percentComplete != null ? stats.percentComplete : (totalSec > 0 ? Math.round((offsetSec / totalSec) * 100) : 0);
+
+            let html = '<div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">';
+            html +=   '<div style="display: flex; justify-content: space-between; font-weight: 600; color: #fff;">';
+            html +=     '<span>Listening Progress: ' + listenedHrs + ' / ' + totalHrs + ' hrs</span>';
+            html +=     '<span style="color: #38bdf8;">' + pct + '% (' + (isEarned ? 'Completed' : 'In Progress') + ')</span>';
+            html +=   '</div>';
+            html +=   '<div style="width: 100%; background: rgba(0,0,0,0.6); height: 6px; border-radius: 999px; overflow: hidden;">';
+            html +=     '<div style="background: #38bdf8; width: ' + pct + '%; height: 100%;"></div>';
+            html +=   '</div>';
+            html +=   '<div style="padding: 12px 14px; background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 10px; display: flex; flex-direction: column; gap: 8px;">';
+            html +=     '<div style="display: flex; justify-content: space-between; align-items: center;">';
+            html +=       '<span style="font-weight: 700; font-size: 0.8rem; color: #38bdf8; display: flex; align-items: center; gap: 6px;">';
+            html +=         '<span>🎧</span> Listening Progress Summary';
+            html +=       '</span>';
+            html +=       '<span style="font-size: 0.7rem; font-weight: 600; background: rgba(56, 189, 248, 0.2); color: #7dd3fc; padding: 2px 8px; border-radius: 999px;">';
+            html +=         isEarned ? '100% Finished' : (pct + '% Listened');
+            html +=       '</span>';
+            html +=     '</div>';
+            html +=     '<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; font-size: 0.75rem; text-align: center; margin-top: 4px;">';
+            html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
+            html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Time Listened</div>';
+            html +=         '<div style="font-weight: 700; color: #e2e8f0;">' + listenedHrs + ' hrs</div>';
+            html +=       '</div>';
+            html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
+            html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Total Duration</div>';
+            html +=         '<div style="font-weight: 700; color: #38bdf8;">' + totalHrs + ' hrs</div>';
+            html +=       '</div>';
+            html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
+            html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Chapters</div>';
+            html +=         '<div style="font-weight: 700; color: #a5f3fc;">' + (stats && stats.chapterCount ? stats.chapterCount + ' chapters' : 'Standard') + '</div>';
+            html +=       '</div>';
+            html +=     '</div>';
+            if (stats && stats.narrators && stats.narrators.length > 0) {
+              html +=   '<div style="font-size: 0.75rem; color: #cbd5e1; display: flex; align-items: center; gap: 6px; margin-top: 2px;">';
+              html +=     '<span>🎙️</span>';
+              html +=     '<span>Narrated by: <strong style="color: #fff;">' + stats.narrators.join(', ') + '</strong></span>';
+              html +=   '</div>';
+            }
+            html +=     '<div style="font-size: 0.75rem; color: #94a3b8; display: flex; align-items: center; gap: 6px; margin-top: 2px;">';
+            html +=       '<span>📱</span>';
+            html +=       '<span>Audiobook listening progress tracked automatically via Plex and Prologue playback events.</span>';
+            html +=     '</div>';
+            html +=   '</div>';
+            html += '</div>';
+            statsBox.innerHTML = html;
+          } else if (isMovieCollection) {
+            statsBox.style.display = 'block';
+            const watched = ach.progress ? ach.progress.current : (stats && stats.completedItems != null ? stats.completedItems : 0);
+            const target = ach.progress ? ach.progress.target : (stats && stats.collectionFilms ? stats.collectionFilms.length : 1);
+            const available = stats && stats.availableOnPlex != null ? stats.availableOnPlex : target;
+            const missing = stats && stats.missingOffServerCount != null ? stats.missingOffServerCount : Math.max(0, target - available);
+            const pct = Math.round((watched / target) * 100);
+
+            const boxAccent = isCaughtUp ? '#34d399' : (isEarned ? '#fbbf24' : '#f59e0b');
+            const boxBg = isCaughtUp ? 'rgba(16, 185, 129, 0.08)' : (isEarned ? 'rgba(245, 158, 11, 0.08)' : 'rgba(245, 158, 11, 0.08)');
+            const boxBorder = isCaughtUp ? 'rgba(16, 185, 129, 0.25)' : (isEarned ? 'rgba(245, 158, 11, 0.35)' : 'rgba(245, 158, 11, 0.25)');
+
+            let html = '<div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">';
+            html +=   '<div style="display: flex; justify-content: space-between; font-weight: 600; color: #fff;">';
+            html +=     '<span>Franchise Progress: ' + watched + ' / ' + target + ' films</span>';
+            html +=     '<span style="color: ' + boxAccent + ';">' + pct + '% (' + (isEarned ? '100% Complete' : (isCaughtUp ? 'Caught Up' : 'In Progress')) + ')</span>';
+            html +=   '</div>';
+            html +=   '<div style="width: 100%; background: rgba(0,0,0,0.6); height: 6px; border-radius: 999px; overflow: hidden;">';
+            html +=     '<div style="background: ' + boxAccent + '; width: ' + pct + '%; height: 100%;"></div>';
+            html +=   '</div>';
+            html +=   '<div style="padding: 12px 14px; background: ' + boxBg + '; border: 1px solid ' + boxBorder + '; border-radius: 10px; display: flex; flex-direction: column; gap: 8px;">';
+            html +=     '<div style="display: flex; justify-content: space-between; align-items: center;">';
+            html +=       '<span style="font-weight: 700; font-size: 0.8rem; color: ' + boxAccent + '; display: flex; align-items: center; gap: 6px;">';
+            html +=         '<span>🛡️</span> Franchise Coverage Audit';
+            html +=       '</span>';
+            html +=       '<span style="font-size: 0.7rem; font-weight: 600; background: rgba(245, 158, 11, 0.2); color: #fde68a; padding: 2px 8px; border-radius: 999px;">';
+            html +=         isEarned ? 'Full Franchise Completed' : (isCaughtUp ? 'Caught Up on Plex' : (watched + ' of ' + target + ' watched'));
+            html +=       '</span>';
+            html +=     '</div>';
+            html +=     '<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; font-size: 0.75rem; text-align: center; margin-top: 4px;">';
+            html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
+            html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Plex Library</div>';
+            html +=         '<div style="font-weight: 700; color: #e2e8f0;">' + Math.min(watched, available) + '/' + available + ' films</div>';
+            html +=       '</div>';
+            html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
+            html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Household Watched</div>';
+            html +=         '<div style="font-weight: 700; color: ' + boxAccent + ';">' + watched + ' films</div>';
+            html +=       '</div>';
+            html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
+            html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Missing Off-Server</div>';
+            html +=         '<div style="font-weight: 700; color: ' + (missing > 0 ? '#f59e0b' : '#34d399') + ';">' + (missing > 0 ? '+' + missing + ' films' : '0 (None)') + '</div>';
+            html +=       '</div>';
+            html +=     '</div>';
+            if (missing > 0) {
+              html +=   '<div style="font-size: 0.75rem; color: #cbd5e1; display: flex; align-items: center; gap: 6px; margin-top: 2px;">';
+              html +=     '<span>🔒</span>';
+              html +=     '<span>Franchise Trophy locked until full canonical franchise (' + target + ' films) is acquired on server and completed.</span>';
+              html +=   '</div>';
+            } else {
+              html +=   '<div style="font-size: 0.75rem; color: #34d399; display: flex; align-items: center; gap: 6px; margin-top: 2px;">';
+              html +=     '<span>✓</span>';
+              html +=     '<span>All canonical franchise films are present in your local Plex library.</span>';
+              html +=   '</div>';
+            }
+            html +=   '</div>';
+            html += '</div>';
+            statsBox.innerHTML = html;
+          } else if (isMovieFavorite) {
+            statsBox.style.display = 'block';
+            const totalPlays = stats && stats.totalPlays != null ? stats.totalPlays : ((stats && stats.rewatchCount || 0) + 1);
+            const rewatchCount = stats && stats.rewatchCount != null ? stats.rewatchCount : (totalPlays - 1);
+            const tierName = ach.badge.tier.toUpperCase();
+
+            let html = '<div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">';
+            html +=   '<div style="display: flex; justify-content: space-between; font-weight: 600; color: #fff;">';
+            html +=     '<span>Replay Loyalty: ' + totalPlays + 'x Total Watches</span>';
+            html +=     '<span style="color: #fbbf24;">' + tierName + ' TIER</span>';
+            html +=   '</div>';
+            html +=   '<div style="padding: 12px 14px; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 10px; display: flex; flex-direction: column; gap: 8px;">';
+            html +=     '<div style="display: flex; justify-content: space-between; align-items: center;">';
+            html +=       '<span style="font-weight: 700; font-size: 0.8rem; color: #fbbf24; display: flex; align-items: center; gap: 6px;">';
+            html +=         '<span>🍿</span> Replay Loyalty Summary';
+            html +=       '</span>';
+            html +=       '<span style="font-size: 0.7rem; font-weight: 600; background: rgba(245, 158, 11, 0.2); color: #fde68a; padding: 2px 8px; border-radius: 999px;">';
+            html +=         rewatchCount + ' Re-watches Logged';
+            html +=       '</span>';
+            html +=     '</div>';
+            html +=     '<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; font-size: 0.75rem; text-align: center; margin-top: 4px;">';
+            html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
+            html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Total Plays</div>';
+            html +=         '<div style="font-weight: 700; color: #fbbf24;">' + totalPlays + ' views</div>';
+            html +=       '</div>';
+            html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
+            html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">First Watched</div>';
+            html +=         '<div style="font-weight: 700; color: #e2e8f0;">' + (stats && stats.firstCompletedAt ? new Date(stats.firstCompletedAt).toLocaleDateString() : 'Historical') + '</div>';
+            html +=       '</div>';
+            html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
+            html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Latest Viewing</div>';
+            html +=         '<div style="font-weight: 700; color: #34d399;">' + (stats && stats.latestWatchedAt ? new Date(stats.latestWatchedAt).toLocaleDateString() : 'Recent') + '</div>';
+            html +=       '</div>';
+            html +=     '</div>';
+            html +=     '<div style="font-size: 0.75rem; color: #cbd5e1; display: flex; align-items: center; gap: 6px; margin-top: 2px;">';
+            html +=       '<span>✨</span>';
+            html +=       '<span>Cult-Classic Favorite: Distinct viewing sessions separated by at least 12 hours count toward rewatch medal tiers.</span>';
+            html +=     '</div>';
+            html +=   '</div>';
+            html += '</div>';
+            statsBox.innerHTML = html;
+          } else if (hasCoverageAudit) {
             statsBox.style.display = 'block';
             const available = ach.badge.stats.availableOnPlex != null ? ach.badge.stats.availableOnPlex : ach.progress.current;
             const missing = ach.badge.stats.missingOffServerCount != null ? ach.badge.stats.missingOffServerCount : Math.max(0, ach.progress.target - available);
@@ -3665,9 +4213,60 @@ export function registerWebRoutes(router: Router): void {
             statsBox.style.display = 'none';
           }
 
-          // 4. Episode Repeat Watch Breakdown
+          // 4. Item Breakdown / Checklist (Franchise Films or TV/Anime Episodes)
           const epSection = document.getElementById('modal-episodes-section');
-          if (hasEpDetails) {
+          if (isMovieCollection && stats && stats.collectionFilms && stats.collectionFilms.length > 0) {
+            epSection.style.display = 'block';
+            const films = stats.collectionFilms;
+            const watchedCount = films.filter(f => f.completed).length;
+            const totalCount = films.length;
+
+            let epHtml = '<div style="display: flex; flex-direction: column; gap: 10px;">';
+            epHtml +=   '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">';
+            epHtml +=     '<div style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; color: #8b949e; letter-spacing: 0.5px;">';
+            epHtml +=       'Franchise Film Checklist (' + watchedCount + ' / ' + totalCount + ' Watched)';
+            epHtml +=     '</div>';
+            epHtml +=   '</div>';
+
+            // Table Header
+            epHtml +=   '<div style="display: grid; grid-template-columns: minmax(0, 1fr) 55px 75px 50px 75px; gap: 8px; padding: 4px 10px; font-size: 0.7rem; font-weight: 700; color: #6e7681; text-transform: uppercase;">';
+            epHtml +=     '<span>Film Title</span>';
+            epHtml +=     '<span>Year</span>';
+            epHtml +=     '<span>Plex</span>';
+            epHtml +=     '<span style="text-align: center;">Plays</span>';
+            epHtml +=     '<span style="text-align: right;">Status</span>';
+            epHtml +=   '</div>';
+
+            // Table Rows
+            epHtml +=   '<div style="max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px;" class="thin-scroll">';
+            epHtml += films.map(f => {
+              const statusBadge = f.completed
+                ? '<span class="badge" style="background: rgba(16, 185, 129, 0.2); color: #34d399; font-weight: 700; font-size: 0.72rem; padding: 2px 6px;">Watched</span>'
+                : (f.availableOnPlex
+                    ? '<span class="badge" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; font-weight: 600; font-size: 0.72rem; padding: 2px 6px;">Unwatched</span>'
+                    : '<span class="badge" style="background: rgba(139, 148, 158, 0.2); color: #8b949e; font-weight: 600; font-size: 0.72rem; padding: 2px 6px;">Off-Server</span>');
+
+              const plexLabel = f.availableOnPlex
+                ? '<span style="color: #34d399; font-size: 0.75rem; font-weight: 600;">On Server</span>'
+                : '<span style="color: #f59e0b; font-size: 0.75rem;">Off Server</span>';
+
+              const playLabel = f.playCount > 0
+                ? '<span style="font-weight: 700; color: #fff; font-size: 0.75rem;">' + f.playCount + 'x</span>'
+                : '<span style="color: #6e7681; font-size: 0.75rem;">—</span>';
+
+              return '<div class="modal-film-row" style="display: grid; grid-template-columns: minmax(0, 1fr) 55px 75px 50px 75px; gap: 8px; padding: 6px 10px; background: rgba(22, 27, 34, 0.6); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 6px; align-items: center;">' +
+                '<span style="color: #e6edf3; font-weight: 600; font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + f.title + '">' + f.title + '</span>' +
+                '<span style="color: #8b949e; font-size: 0.75rem;">' + (f.year || '—') + '</span>' +
+                '<span>' + plexLabel + '</span>' +
+                '<span style="text-align: center;">' + playLabel + '</span>' +
+                '<span style="text-align: right;">' + statusBadge + '</span>' +
+              '</div>';
+            }).join('');
+            epHtml +=   '</div>';
+            epHtml += '</div>';
+
+            epSection.innerHTML = epHtml;
+          } else if (hasEpDetails) {
             epSection.style.display = 'block';
             const totalCount = epDetails.length;
             const rewatchedCount = epDetails.filter(e => e.replayCount > 0).length;
@@ -3784,11 +4383,17 @@ export function registerWebRoutes(router: Router): void {
             }).join('');
           }
 
-          document.getElementById('modal-earned-at').textContent = ach.earnedAt
-            ? 'Earned on ' + new Date(ach.earnedAt).toLocaleString()
-            : (isCaughtUp
-                ? 'Status: Caught Up on Plex (' + ach.progress.current + '/' + (ach.badge.stats.availableOnPlex || ach.progress.current) + ' available on server)'
-                : 'Status: ' + ach.state);
+          let earnedStatusText = 'Status: ' + ach.state;
+          if (ach.earnedAt) {
+            earnedStatusText = 'Earned on ' + new Date(ach.earnedAt).toLocaleString();
+          } else if (isCaughtUp) {
+            if (isMovieCollection) {
+              earnedStatusText = 'Status: Caught Up on Plex (' + ach.progress.current + '/' + (stats && stats.availableOnPlex || ach.progress.current) + ' available films on server)';
+            } else {
+              earnedStatusText = 'Status: Caught Up on Plex (' + ach.progress.current + '/' + ((stats && stats.availableOnPlex) || ach.progress.current) + ' available on server)';
+            }
+          }
+          document.getElementById('modal-earned-at').textContent = earnedStatusText;
 
           modal.style.display = 'flex';
         }
@@ -3806,6 +4411,15 @@ export function registerWebRoutes(router: Router): void {
             document.querySelectorAll('#facet-filters button').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             activeFacet = btn.dataset.facet;
+            renderAll();
+          });
+        });
+
+        document.querySelectorAll('#media-filters button').forEach(btn => {
+          btn.addEventListener('click', () => {
+            document.querySelectorAll('#media-filters button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            activeMedia = btn.dataset.media;
             renderAll();
           });
         });

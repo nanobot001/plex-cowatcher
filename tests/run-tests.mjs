@@ -8006,6 +8006,394 @@ test("TV broadcast progress: aired_episodes_count, 6-hour release grace period, 
   });
 });
 
+test("3-6-6G Audiobook Mastery: dynamic cover-art Book Mastery trophies (in_progress and earned) and listening-hour milestones", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    db.prepare(`
+      INSERT INTO audiobook_books (id, folder_key, title, authors_json, total_duration_seconds, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES
+        (101, 'sanderson-mistborn-1', 'The Final Empire', '["Brandon Sanderson"]', 36000, 'test', 'enriched', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+        (102, 'sanderson-mistborn-2', 'The Well of Ascension', '["Brandon Sanderson"]', 36000, 'test', 'enriched', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+        (103, 'sanderson-mistborn-3', 'The Hero of Ages', '["Brandon Sanderson"]', 36000, 'test', 'enriched', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // Book 101: 100% completed in position evidence (10 hours = 36,000,000 ms)
+    db.prepare(`
+      INSERT INTO audiobook_position_evidence
+        (id, source_type, source_event_key, source_user_key, source_session_key, user_id, audiobook_id, rating_key, observed_at, session_stopped_at, view_offset_ms, duration_ms, capture_reason, payload_digest, created_at)
+      VALUES
+        (1, 'tautulli_stop', 'ev-1', 'u-1', 's-1', 1, 101, 'rk-101', '2026-08-10T12:00:00Z', '2026-08-10T12:00:00Z', 36000000, 36000000, 'playback_stop', 'hash1', '2026-08-10T12:00:00Z')
+    `).run();
+
+    // Book 102: 50% in progress (18,000,000 ms / 36,000,000 ms)
+    db.prepare(`
+      INSERT INTO audiobook_position_evidence
+        (id, source_type, source_event_key, source_user_key, source_session_key, user_id, audiobook_id, rating_key, observed_at, session_stopped_at, view_offset_ms, duration_ms, capture_reason, payload_digest, created_at)
+      VALUES
+        (2, 'tautulli_stop', 'ev-2', 'u-1', 's-2', 1, 102, 'rk-102', '2026-08-12T12:00:00Z', '2026-08-12T12:00:00Z', 18000000, 36000000, 'playback_stop', 'hash2', '2026-08-12T12:00:00Z')
+    `).run();
+
+    // Book 103: 1% (< 2% threshold) -> should not create trophy
+    db.prepare(`
+      INSERT INTO audiobook_position_evidence
+        (id, source_type, source_event_key, source_user_key, source_session_key, user_id, audiobook_id, rating_key, observed_at, session_stopped_at, view_offset_ms, duration_ms, capture_reason, payload_digest, created_at)
+      VALUES
+        (3, 'tautulli_stop', 'ev-3', 'u-1', 's-3', 1, 103, 'rk-103', '2026-08-13T12:00:00Z', '2026-08-13T12:00:00Z', 360000, 36000000, 'playback_stop', 'hash3', '2026-08-13T12:00:00Z')
+    `).run();
+
+    const achievementService = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const achievements = achievementService.getAchievements({ user: 1 });
+
+    // Verify Book 101 (Completed Trophy)
+    const book101Trophy = achievements.results.find((r) => r.ruleId === 'book_mastery_101');
+    assert.ok(book101Trophy, "Book 101 mastery trophy must exist");
+    assert.equal(book101Trophy.state, 'earned');
+    assert.equal(book101Trophy.badge.stats.mediaCategory, 'audiobook');
+    assert.equal(book101Trophy.badge.stats.percentComplete, 100);
+    assert.equal(book101Trophy.badge.iconHint, 'audiobook');
+    assert.ok(book101Trophy.badge.posterUrl.includes('audiobook%3A101'));
+
+    // Verify Book 102 (In Progress Trophy)
+    const book102Trophy = achievements.results.find((r) => r.ruleId === 'book_mastery_102');
+    assert.ok(book102Trophy, "Book 102 in-progress trophy must exist");
+    assert.equal(book102Trophy.state, 'in_progress');
+    assert.equal(book102Trophy.badge.stats.percentComplete, 50);
+    assert.equal(book102Trophy.badge.stats.mediaCategory, 'audiobook');
+
+    // Verify Book 103 (< 2% progress)
+    const book103Trophy = achievements.results.find((r) => r.ruleId === 'book_mastery_103');
+    assert.equal(book103Trophy, undefined, "Book with < 2% progress must NOT generate a trophy card");
+
+    // Verify Audiobook Hours Milestone: 10 hrs + 5 hrs = 15 hrs (under 25h threshold)
+    const hours25 = achievements.results.find((r) => r.ruleId === 'audiobook_hours_25');
+    assert.ok(hours25, "audiobook_hours_25 rule must evaluate");
+    assert.equal(hours25.state, 'in_progress');
+    assert.equal(hours25.progress.current, 15);
+    assert.equal(hours25.progress.target, 25);
+  });
+});
+
+test("3-6-6H Movie Franchises & Rewatch Favorites: dynamic collection mastery and cult-classic rewatch favorite trophies", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // Catalog movies for Dune collection and a standalone cult classic
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, library_title, genres_json, source_provenance, refreshed_at)
+      VALUES
+        ('dune-1', 'movie', 'Dune', 'Movies', '["Science Fiction", "Adventure"]', 'plex', '2026-08-01T00:00:00Z'),
+        ('dune-2', 'movie', 'Dune: Part Two', 'Movies', '["Science Fiction", "Adventure"]', 'plex', '2026-08-01T00:00:00Z'),
+        ('fav-thor', 'movie', 'Thor', 'Movies', '["Action", "Fantasy"]', 'plex', '2026-08-01T00:00:00Z'),
+        ('once-1917', 'movie', '1917', 'Movies', '["War", "Drama"]', 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // User watched Dune (1 of 2 films in Dune Collection)
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (701, 1, 'dune-1', 'movie', 'Movies', 'Dune', '2026-08-10T20:00:00Z', 1, 9000, '2026-08-10T20:00:00Z', '2026-08-10T20:00:00Z')
+    `).run();
+
+    // User watched Thor 2 times across distinct viewing days (cult classic rewatch favorite!)
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES
+        (702, 1, 'fav-thor', 'movie', 'Movies', 'Thor', '2026-08-11T20:00:00Z', 1, 6900, '2026-08-11T20:00:00Z', '2026-08-11T20:00:00Z'),
+        (703, 1, 'fav-thor', 'movie', 'Movies', 'Thor', '2026-08-20T20:00:00Z', 1, 6900, '2026-08-20T20:00:00Z', '2026-08-20T20:00:00Z')
+    `).run();
+
+    // User watched 1917 only once
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (704, 1, 'once-1917', 'movie', 'Movies', '1917', '2026-08-15T20:00:00Z', 1, 7100, '2026-08-15T20:00:00Z', '2026-08-15T20:00:00Z')
+    `).run();
+
+    const achievementService = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    let shelf = achievementService.getAchievements({ user: 1, facet: 'trophy_shelf' });
+
+    // 1. Dune Collection Trophy (In Progress: 1 of 2 films)
+    const duneTrophy = shelf.results.find((r) => r.ruleId === 'collection_mastery_dune');
+    assert.ok(duneTrophy, "Dune collection trophy must exist on Trophy Shelf");
+    assert.equal(duneTrophy.state, 'in_progress');
+    assert.equal(duneTrophy.progress.current, 1);
+    assert.equal(duneTrophy.progress.target, 2);
+    assert.equal(duneTrophy.badge.stats.mediaCategory, 'movie_collection');
+
+    // 2. Thor Rewatch Favorite (Silver 2x Replay)
+    const thorFavorite = shelf.results.find((r) => r.ruleId === 'movie_favorite_fav-thor');
+    assert.ok(thorFavorite, "Thor rewatch favorite trophy must exist");
+    assert.equal(thorFavorite.state, 'earned');
+    assert.equal(thorFavorite.badge.tier, 'silver');
+    assert.equal(thorFavorite.badge.stats.rewatchCount, 1);
+    assert.equal(thorFavorite.badge.stats.mediaCategory, 'movie');
+
+    // 3. 1917 watched once -> must NOT clutter Trophy Shelf
+    const onceTrophy = shelf.results.find((r) => r.ruleId === 'movie_favorite_once-1917');
+    assert.equal(onceTrophy, undefined, "1x standalone movie watches must NOT generate individual trophy cards");
+
+    // Complete Dune: Part Two -> now 2 of 2 films completed -> Franchise Mastery Earned!
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (705, 1, 'dune-2', 'movie', 'Movies', 'Dune: Part Two', '2026-08-25T20:00:00Z', 1, 9900, '2026-08-25T20:00:00Z', '2026-08-25T20:00:00Z')
+    `).run();
+
+    shelf = achievementService.getAchievements({ user: 1, facet: 'trophy_shelf' });
+    const duneCompleted = shelf.results.find((r) => r.ruleId === 'collection_mastery_dune');
+    assert.equal(duneCompleted.state, 'earned');
+    assert.equal(duneCompleted.progress.current, 2);
+    assert.equal(duneCompleted.progress.target, 2);
+    assert.equal(duneCompleted.badge.stats.completedItems, 2);
+  });
+});
+
+test("3-6-6I Multi-Media Trophy Shelf Filters, Modal Presenters, and Obsession Parity", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 1. Catalog & Audiobooks: An audiobook listening session
+    db.prepare(`
+      INSERT INTO audiobook_books (id, folder_key, title, authors_json, total_duration_seconds, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES (101, 'weir-project-hail-mary', 'Project Hail Mary', '["Andy Weir"]', 57600, 'test', 'enriched', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+    db.prepare(`
+      INSERT INTO audiobook_position_evidence
+        (id, source_type, source_event_key, source_user_key, source_session_key, user_id, audiobook_id, rating_key, observed_at, session_stopped_at, view_offset_ms, duration_ms, capture_reason, payload_digest, created_at)
+      VALUES
+        (800, 'tautulli_stop', 'ev-800', 'u-1', 's-800', 1, 101, 'rk-101', '2026-08-20T12:00:00Z', '2026-08-20T12:00:00Z', 57600000, 57600000, 'playback_stop', 'hash800', '2026-08-20T12:00:00Z')
+    `).run();
+
+    // 2. Catalog & Movies: Dune Collection & Thor Cult Classic Favorite
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, library_title, genres_json, source_provenance, refreshed_at)
+      VALUES
+        ('dune-1', 'movie', 'Dune', 'Movies', '["Science Fiction"]', 'plex', '2026-08-01T00:00:00Z'),
+        ('fav-thor', 'movie', 'Thor', 'Movies', '["Action"]', 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES
+        (801, 1, 'dune-1', 'movie', 'Movies', 'Dune', '2026-08-10T20:00:00Z', 1, 9000, '2026-08-10T20:00:00Z', '2026-08-10T20:00:00Z'),
+        (802, 1, 'fav-thor', 'movie', 'Movies', 'Thor', '2026-08-11T20:00:00Z', 1, 6900, '2026-08-11T20:00:00Z', '2026-08-11T20:00:00Z'),
+        (803, 1, 'fav-thor', 'movie', 'Movies', 'Thor', '2026-08-22T20:00:00Z', 1, 6900, '2026-08-22T20:00:00Z', '2026-08-22T20:00:00Z')
+    `).run();
+
+    // 3. Catalog & TV: Severance (1 ep watched, leaf_count = 9)
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, media_type, title, leaf_count, source_provenance, refreshed_at)
+      VALUES ('sev-show', 'show', 'Severance', 9, 'plex', '2026-08-01T00:00:00Z')
+    `).run();
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, title, show_title, watched_at, completed, duration, created_at, updated_at)
+      VALUES (804, 1, 'sev-1', 'sev-show', 'episode', 'TV Shows', 'Good News About Hell', 'Severance', '2026-08-05T20:00:00Z', 1, 3300, '2026-08-05T20:00:00Z', '2026-08-05T20:00:00Z')
+    `).run();
+
+    const achievementService = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const shelf = achievementService.getAchievements({ user: 1, facet: 'trophy_shelf' });
+
+    // Verify all media categories exist on shelf
+    const bookTrophy = shelf.results.find((r) => r.ruleId === 'book_mastery_101');
+    assert.ok(bookTrophy, "Book mastery trophy must be present on shelf");
+    assert.equal(bookTrophy.badge.stats.mediaCategory, 'audiobook');
+    assert.equal(bookTrophy.badge.stats.totalDurationSeconds, 57600);
+    assert.equal(bookTrophy.badge.stats.percentComplete, 100);
+
+    const collectionTrophy = shelf.results.find((r) => r.ruleId === 'collection_mastery_dune');
+    assert.ok(collectionTrophy, "Franchise collection trophy must be present");
+    assert.equal(collectionTrophy.badge.stats.mediaCategory, 'movie_collection');
+    assert.ok(Array.isArray(collectionTrophy.badge.stats.collectionFilms), "collectionFilms checklist must be populated");
+    assert.equal(collectionTrophy.badge.stats.collectionFilms.length, 2);
+
+    const favoriteTrophy = shelf.results.find((r) => r.ruleId === 'movie_favorite_fav-thor');
+    assert.ok(favoriteTrophy, "Movie rewatch favorite trophy must be present");
+    assert.equal(favoriteTrophy.badge.stats.mediaCategory, 'movie');
+    assert.equal(favoriteTrophy.badge.stats.rewatchCount, 1);
+    assert.ok(favoriteTrophy.badge.stats.nextTierProgress, "Next tier progress must be defined");
+
+    const tvTrophy = shelf.results.find((r) => r.ruleId === 'show_mastery_sev-show');
+    assert.ok(tvTrophy, "TV show trophy must be present");
+    assert.equal(tvTrophy.badge.stats.mediaCategory, 'tv');
+
+    // Verify Obsession Spotlight contains a top title and valid hours/plays
+    const obsession = achievementService.getAchievements({ user: 1, facet: 'obsession_spotlight' });
+    const topObsession = obsession.results.find((r) => r.facet === 'obsession_spotlight');
+    assert.ok(topObsession, "Obsession spotlight must be evaluated");
+    assert.ok(topObsession.badge.stats.totalHours >= 0, "Obsession totalHours must be valid");
+
+    // Verify dashboard HTML/JS contract contains media filters and presenters
+    const webIndexSource = fs.readFileSync('src/web/index.ts', 'utf-8');
+    assert.ok(webIndexSource.includes('id="media-filters"'), "Media filters container must exist in web index");
+    assert.ok(webIndexSource.includes('data-media="all"'), "All media filter button must exist");
+    assert.ok(webIndexSource.includes('data-media="audiobook"'), "Audiobook filter button must exist");
+    assert.ok(webIndexSource.includes('data-media="movie"'), "Movie filter button must exist");
+    assert.ok(webIndexSource.includes('Listening Progress Summary'), "Audiobook modal presenter must exist");
+    assert.ok(webIndexSource.includes('Franchise Coverage Audit'), "Franchise modal audit must exist");
+    assert.ok(webIndexSource.includes('Franchise Film Checklist'), "Franchise film checklist must exist");
+    assert.ok(webIndexSource.includes('Replay Loyalty Summary'), "Movie favorite modal summary must exist");
+  });
+});
+
+test("3-6-6G Unified Audiobook Evidence: revision-backed historical audiobooks evaluate to completed book mastery trophies and milestone counts", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (7, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    db.prepare(`
+      INSERT INTO audiobook_books (id, folder_key, title, authors_json, total_duration_seconds, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES
+        (501, 'wheel-of-time-1', 'The Eye of the World', '["Robert Jordan"]', 100000, 'test', 'enriched', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+        (502, 'discworld-guards', 'Guards! Guards!', '["Terry Pratchett"]', 48000, 'test', 'enriched', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+        (503, 'atomic-habits', 'Atomic Habits', '["James Clear"]', 20000, 'test', 'enriched', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // Setup media revisions for Book 501 and Book 502
+    db.prepare(`
+      INSERT INTO audiobook_media_revisions (id, audiobook_id, media_revision, track_count, total_duration_ms, file_count, manifest_status, created_at)
+      VALUES
+        (1, 501, 'rev-501', 10, 100000000, 10, 'ready', '2026-08-01T00:00:00Z'),
+        (2, 502, 'rev-502', 5, 48000000, 5, 'ready', '2026-08-01T00:00:00Z'),
+        (3, 503, 'rev-503', 1, 20000000, 1, 'ready', '2026-08-01T00:00:00Z')
+    `).run();
+
+    db.prepare(`
+      INSERT INTO audiobook_media_revision_items (revision_id, item_order, stable_identity, rating_key, guid, duration_ms)
+      VALUES
+        (1, 0, 'guid:wot-1', 'rk-wot-1', 'guid-wot-1', 100000000),
+        (2, 0, 'guid:disc-1', 'rk-disc-1', 'guid-disc-1', 48000000),
+        (3, 0, 'guid:atomic-1', 'rk-atomic-1', 'guid-atomic-1', 20000000)
+    `).run();
+
+    // Playback observations for Tony (no audiobook_position_evidence rows):
+    // Book 501: completed (100,000s listened)
+    db.prepare(`
+      INSERT INTO playback_observations (user_id, rating_key, media_type, library_name, title, duration, percent_complete, completed, watched_at, created_at, updated_at)
+      VALUES (7, 'rk-wot-1', 'track', 'Audiobooks', 'Chapter 1', 100000, 100, 1, '2026-08-05T12:00:00Z', '2026-08-05T12:00:00Z', '2026-08-05T12:00:00Z')
+    `).run();
+
+    // Book 502: completed via duration (46,000s listened of 48,000s total = >90%)
+    db.prepare(`
+      INSERT INTO playback_observations (user_id, rating_key, media_type, library_name, title, duration, percent_complete, completed, watched_at, created_at, updated_at)
+      VALUES (7, 'rk-disc-1', 'track', 'Audiobooks', 'Part 1', 46000, 96, 1, '2026-08-06T12:00:00Z', '2026-08-06T12:00:00Z', '2026-08-06T12:00:00Z')
+    `).run();
+
+    // Book 503: in progress (10,000s of 20,000s = 50%)
+    db.prepare(`
+      INSERT INTO playback_observations (user_id, rating_key, media_type, library_name, title, duration, percent_complete, completed, watched_at, created_at, updated_at)
+      VALUES (7, 'rk-atomic-1', 'track', 'Audiobooks', 'Habits Part 1', 10000, 50, 0, '2026-08-07T12:00:00Z', '2026-08-07T12:00:00Z', '2026-08-07T12:00:00Z')
+    `).run();
+
+    const achievementService = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const achievements = achievementService.getAchievements({ user: 7 });
+
+    // Verify Book 501 Mastery (Earned)
+    const wotTrophy = achievements.results.find((r) => r.ruleId === 'book_mastery_501');
+    assert.ok(wotTrophy, "Book 501 (The Eye of the World) must generate a book mastery trophy");
+    assert.equal(wotTrophy.state, 'earned');
+    assert.equal(wotTrophy.badge.stats.percentComplete, 100);
+
+    // Verify Book 502 Mastery (Earned)
+    const discTrophy = achievements.results.find((r) => r.ruleId === 'book_mastery_502');
+    assert.ok(discTrophy, "Book 502 (Guards! Guards!) must generate a book mastery trophy");
+    assert.equal(discTrophy.state, 'earned');
+    assert.equal(discTrophy.badge.stats.percentComplete, 100);
+
+    // Verify Book 503 Progress (In Progress)
+    const atomicTrophy = achievements.results.find((r) => r.ruleId === 'book_mastery_503');
+    assert.ok(atomicTrophy, "Book 503 (Atomic Habits) must generate an in-progress trophy");
+    assert.equal(atomicTrophy.state, 'in_progress');
+    assert.equal(atomicTrophy.badge.stats.percentComplete, 50);
+
+    // Verify completed books count milestone: 2 completed books earned
+    const bookCount1 = achievements.results.find((r) => r.ruleId === 'audiobook_count_1');
+    assert.ok(bookCount1, "audiobook_count_1 rule must evaluate");
+    assert.equal(bookCount1.state, 'earned');
+    assert.equal(bookCount1.progress.current, 2);
+
+    // Opening Chapter earned
+    const firstListen = achievements.results.find((r) => r.ruleId === 'audiobook_first_watch');
+    assert.ok(firstListen, "audiobook_first_watch rule must evaluate");
+    assert.equal(firstListen.state, 'earned');
+  });
+});
+
+test("audiobook progress evaluates in-progress status from exact stop captures and ignores transition glitches", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (7, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    db.prepare(`
+      INSERT INTO audiobook_books (id, folder_key, title, authors_json, total_duration_seconds, chapter_count, source_provenance, enrichment_status, created_at, updated_at)
+      VALUES (601, 'sanderson-wor', 'Words of Radiance', '["Brandon Sanderson"]', 173578, 106, 'test', 'enriched', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, title, media_type, library_title, audiobook_id, duration, source_provenance, refreshed_at)
+      VALUES ('rk-wor', 'Words of Radiance', 'audiobook', 'Audiobooks', 601, 173578000, 'test', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // Stale transition webhook glitch from finishing previous book (184s duration, completed=1, percent=94)
+    db.prepare(`
+      INSERT INTO playback_observations (user_id, rating_key, media_type, library_name, title, duration, percent_complete, completed, watched_at, created_at, updated_at)
+      VALUES (7, 'rk-wor', 'track', 'Audiobooks', 'Words of Radiance', 184, 94, 1, '2026-09-09T13:51:59Z', '2026-09-09T13:51:59Z', '2026-09-09T13:51:59Z')
+    `).run();
+
+    // Actual continuous listening observations starting from 0% climbing to 72%
+    db.prepare(`
+      INSERT INTO playback_observations (user_id, rating_key, media_type, library_name, title, duration, percent_complete, completed, watched_at, created_at, updated_at)
+      VALUES
+        (7, 'rk-wor', 'track', 'Audiobooks', 'Words of Radiance', 213, 0, 0, '2026-09-09T13:56:29Z', '2026-09-09T13:56:29Z', '2026-09-09T13:56:29Z'),
+        (7, 'rk-wor', 'track', 'Audiobooks', 'Words of Radiance', 79745, 72, 0, '2026-10-16T00:15:49Z', '2026-10-16T00:15:49Z', '2026-10-16T00:15:49Z')
+    `).run();
+
+    // Position evidence: transition glitch at 94% followed by real listening at 0ms up to 124,183,000ms (~72% / Chapter 78)
+    db.prepare(`
+      INSERT INTO audiobook_position_evidence
+        (id, source_type, source_event_key, source_user_key, source_session_key, user_id, audiobook_id, rating_key, observed_at, session_stopped_at, view_offset_ms, duration_ms, capture_reason, payload_digest, created_at)
+      VALUES
+        (1, 'tautulli_stop', 'ev-1', 'u-1', 's-1', 7, 601, 'rk-wor', '2026-09-09T13:55:03Z', '2026-09-09T13:55:03Z', 163985000, 173578676, 'playback_stop', 'hash1', '2026-09-09T13:55:03Z'),
+        (2, 'tautulli_stop', 'ev-2', 'u-1', 's-2', 7, 601, 'rk-wor', '2026-09-09T14:00:03Z', '2026-09-09T14:00:03Z', 0, 173578676, 'playback_stop', 'hash2', '2026-09-09T14:00:03Z'),
+        (3, 'tautulli_stop', 'ev-3', 'u-1', 's-3', 7, 601, 'rk-wor', '2026-10-16T00:21:09Z', '2026-10-16T00:21:09Z', 124183000, 173578676, 'playback_stop', 'hash3', '2026-10-16T00:21:09Z')
+    `).run();
+
+    // Chapters
+    db.prepare(`
+      INSERT INTO audiobook_chapters (audiobook_id, chapter_index, title, start_offset_ms, end_offset_ms, created_at, updated_at)
+      VALUES
+        (601, 77, 'Chapter 65', 122000000, 123990463, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+        (601, 78, 'Chapter 66 - Stormblessings', 123990463, 125275423, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+        (601, 79, 'Chapter 67', 125275423, 127000000, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    const achievementService = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const achievements = achievementService.getAchievements({ user: 7 });
+
+    const worTrophy = achievements.results.find((r) => r.ruleId === 'book_mastery_601');
+    assert.ok(worTrophy, "Book 601 (Words of Radiance) must generate an in-progress trophy");
+    assert.equal(worTrophy.state, 'in_progress', "In-progress audiobook must NOT be marked earned");
+    assert.equal(worTrophy.badge.stats.percentComplete, 72);
+    assert.equal(worTrophy.progress.current, 124183);
+    assert.equal(worTrophy.progress.target, 173578);
+
+    // Ensure it is not counted as a completed book for volume milestone
+    const bookCount1 = achievements.results.find((r) => r.ruleId === 'audiobook_count_1');
+    assert.equal(bookCount1.state, 'not_earned');
+    assert.equal(bookCount1.progress.current, 0);
+  });
+});
+
+
 let passed = 0;
 for (const { name, fn } of tests) {
   try {

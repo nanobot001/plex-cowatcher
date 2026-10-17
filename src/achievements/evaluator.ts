@@ -161,6 +161,7 @@ export function evaluateSubjectAchievements(
                   nextAirAt: show.nextAirAt ?? null,
                   isCaughtUpOnPlex: false,
                   seriesStatus: show.seriesStatus ?? null,
+                  mediaCategory: show.category === 'anime' ? 'anime' : 'tv',
                   firstCompletedAt: show.lastCompletedWatchedAt || (show.allCompletedPlays[show.allCompletedPlays.length - 1]?.watchedAt ?? null),
                   latestWatchedAt: show.latestWatchedAt || (show.allCompletedPlays[show.allCompletedPlays.length - 1]?.watchedAt ?? null),
                   firstCompletedEpisodeTitle: show.firstCompletedEpisodeTitle ?? null,
@@ -239,6 +240,7 @@ export function evaluateSubjectAchievements(
                   nextAirAt: show.nextAirAt ?? null,
                   isCaughtUpOnPlex: isCaughtUp,
                   seriesStatus: show.seriesStatus ?? null,
+                  mediaCategory: show.category === 'anime' ? 'anime' : 'tv',
                   latestWatchedAt: show.latestWatchedAt || (show.allCompletedPlays[show.allCompletedPlays.length - 1]?.watchedAt ?? null),
                   nextTierProgress,
                   episodeReplayDetails: epList
@@ -266,6 +268,294 @@ export function evaluateSubjectAchievements(
           }
         }
       }
+    }
+  }
+
+  // Dynamic Trophy Shelf: Audiobooks (Book Mastery & In-Progress)
+  if (subject.audiobookProgress) {
+    for (const book of subject.audiobookProgress.values()) {
+      const dynamicRuleId = `book_mastery_${book.audiobookId}`;
+      if (results.some((r) => r.ruleId === dynamicRuleId)) continue;
+
+      const isComplete = book.isCompleted;
+      const rewatchCount = book.relistenCount;
+      let tier: BadgeTier = 'bronze';
+      let rewatchSuffix = '';
+      let rewatchDesc = '';
+
+      if (rewatchCount >= 3) {
+        tier = 'platinum';
+        rewatchSuffix = ' (4x+)';
+        rewatchDesc = ` Re-listened ${rewatchCount} times.`;
+      } else if (rewatchCount === 2) {
+        tier = 'gold';
+        rewatchSuffix = ' (3x)';
+        rewatchDesc = ' Re-listened 2 times.';
+      } else if (rewatchCount === 1) {
+        tier = 'silver';
+        rewatchSuffix = ' (2x)';
+        rewatchDesc = ' Re-listened once.';
+      }
+
+      const totalHours = Math.round((book.totalDurationSeconds / 3600) * 10) / 10;
+      const listenedHours = Math.round((book.viewOffsetSeconds / 3600) * 10) / 10;
+
+      if (isComplete) {
+        results.push({
+          userId: subject.userId,
+          ruleId: dynamicRuleId,
+          version: 1,
+          facet: 'trophy_shelf',
+          badge: {
+            badgeKey: `book_mastery_${book.audiobookId}`,
+            tier,
+            title: `Book Mastery: ${book.title}${rewatchSuffix}`,
+            description: `Completed 100% of ${book.title}.${rewatchDesc}`,
+            posterUrl: book.posterUrl,
+            iconHint: 'audiobook',
+            stats: {
+              totalHours,
+              totalPlays: 1 + rewatchCount,
+              completedItems: 1,
+              rewatchCount,
+              mediaCategory: 'audiobook',
+              audiobookId: book.audiobookId,
+              authors: book.authors,
+              seriesTitle: book.seriesTitle,
+              seriesIndex: book.seriesIndex,
+              totalDurationSeconds: book.totalDurationSeconds,
+              viewOffsetSeconds: book.viewOffsetSeconds,
+              percentComplete: 100,
+              chapterCount: book.chapterCount,
+              latestWatchedAt: book.latestWatchedAt,
+              firstCompletedAt: book.firstCompletedAt
+            }
+          },
+          state: 'earned',
+          progress: {
+            current: book.totalDurationSeconds,
+            target: book.totalDurationSeconds,
+            unit: 'second' as any
+          },
+          earnedAt: book.firstCompletedAt || book.latestWatchedAt || new Date().toISOString(),
+          supportingEvidence: [],
+          reason: `Completed 100% of audiobook ${book.title}`
+        });
+      } else {
+        results.push({
+          userId: subject.userId,
+          ruleId: dynamicRuleId,
+          version: 1,
+          facet: 'trophy_shelf',
+          badge: {
+            badgeKey: `book_mastery_${book.audiobookId}`,
+            tier: 'bronze',
+            title: `Audiobook Progress: ${book.title}`,
+            description: `Listened to ${listenedHours} of ${totalHours} hrs (${book.percentComplete}%).`,
+            posterUrl: book.posterUrl,
+            iconHint: 'audiobook',
+            stats: {
+              totalHours,
+              totalPlays: 1,
+              completedItems: 0,
+              rewatchCount: 0,
+              mediaCategory: 'audiobook',
+              audiobookId: book.audiobookId,
+              authors: book.authors,
+              seriesTitle: book.seriesTitle,
+              seriesIndex: book.seriesIndex,
+              totalDurationSeconds: book.totalDurationSeconds,
+              viewOffsetSeconds: book.viewOffsetSeconds,
+              percentComplete: book.percentComplete,
+              chapterCount: book.chapterCount,
+              latestWatchedAt: book.latestWatchedAt
+            }
+          },
+          state: 'in_progress',
+          progress: {
+            current: book.viewOffsetSeconds,
+            target: book.totalDurationSeconds,
+            unit: 'second' as any
+          },
+          earnedAt: null,
+          supportingEvidence: [],
+          reason: `Listened to ${book.percentComplete}% of ${book.title}`
+        });
+      }
+    }
+  }
+
+  // Dynamic Trophy Shelf: Movie Franchises (Franchise Mastery & Progress)
+  if (subject.movieCollectionProgress) {
+    for (const col of subject.movieCollectionProgress.values()) {
+      const dynamicRuleId = `collection_mastery_${col.collectionKey}`;
+      if (results.some((r) => r.ruleId === dynamicRuleId)) continue;
+
+      const isComplete = col.completedFilmKeys.size >= col.totalFilms && col.missingOffServerCount === 0;
+      const isCaughtUp = !isComplete && col.availableOnPlex > 0 && col.completedFilmKeys.size >= col.availableOnPlex;
+      const percentComplete = col.totalFilms > 0 ? Math.round((col.completedFilmKeys.size / col.totalFilms) * 100) : 0;
+
+      if (isComplete) {
+        results.push({
+          userId: subject.userId,
+          ruleId: dynamicRuleId,
+          version: 1,
+          facet: 'trophy_shelf',
+          badge: {
+            badgeKey: `collection_mastery_${col.collectionKey}`,
+            tier: 'bronze',
+            title: `Franchise Mastery: ${col.collectionTitle}`,
+            description: `Completed all ${col.totalFilms} films in the ${col.collectionTitle}.`,
+            posterUrl: col.posterUrl,
+            iconHint: 'movie',
+            stats: {
+              totalPlays: col.allCompletedPlays.length,
+              completedItems: col.completedFilmKeys.size,
+              rewatchCount: 0,
+              availableOnPlex: col.availableOnPlex,
+              missingOffServerCount: 0,
+              isCaughtUpOnPlex: false,
+              mediaCategory: 'movie_collection',
+              collectionKey: col.collectionKey,
+              collectionFilms: col.filmDetails,
+              latestWatchedAt: col.latestWatchedAt,
+              firstCompletedAt: col.latestWatchedAt
+            }
+          },
+          state: 'earned',
+          progress: {
+            current: col.completedFilmKeys.size,
+            target: col.totalFilms,
+            unit: 'movie'
+          },
+          earnedAt: col.latestWatchedAt || new Date().toISOString(),
+          supportingEvidence: col.allCompletedPlays.slice(0, 10).map((p) => ({
+            kind: p.sourceKind,
+            id: p.id,
+            eventTime: p.watchedAt,
+            title: p.title
+          })),
+          reason: `Completed all ${col.totalFilms} films in ${col.collectionTitle}`
+        });
+      } else {
+        let desc = `Watched ${col.completedFilmKeys.size} of ${col.totalFilms} films in ${col.collectionTitle} (${percentComplete}%).`;
+        if (isCaughtUp) {
+          desc = `Caught up on Plex (${col.completedFilmKeys.size} of ${col.availableOnPlex} available; ${col.missingOffServerCount} off-server). Franchise trophy locked until full collection is acquired.`;
+        }
+
+        results.push({
+          userId: subject.userId,
+          ruleId: dynamicRuleId,
+          version: 1,
+          facet: 'trophy_shelf',
+          badge: {
+            badgeKey: `collection_mastery_${col.collectionKey}`,
+            tier: 'bronze',
+            title: `Franchise Progress: ${col.collectionTitle}`,
+            description: desc,
+            posterUrl: col.posterUrl,
+            iconHint: 'movie',
+            stats: {
+              totalPlays: col.allCompletedPlays.length,
+              completedItems: col.completedFilmKeys.size,
+              rewatchCount: 0,
+              availableOnPlex: col.availableOnPlex,
+              missingOffServerCount: col.missingOffServerCount,
+              isCaughtUpOnPlex: isCaughtUp,
+              mediaCategory: 'movie_collection',
+              collectionKey: col.collectionKey,
+              collectionFilms: col.filmDetails,
+              latestWatchedAt: col.latestWatchedAt
+            }
+          },
+          state: 'in_progress',
+          progress: {
+            current: col.completedFilmKeys.size,
+            target: col.totalFilms,
+            unit: 'movie'
+          },
+          earnedAt: null,
+          supportingEvidence: col.allCompletedPlays.slice(0, 10).map((p) => ({
+            kind: p.sourceKind,
+            id: p.id,
+            eventTime: p.watchedAt,
+            title: p.title
+          })),
+          reason: isCaughtUp ? 'Caught up on available Plex films' : `${col.completedFilmKeys.size} of ${col.totalFilms} films completed`
+        });
+      }
+    }
+  }
+
+  // Dynamic Trophy Shelf: Movie Favorites (Rewatched 2x+ across distinct sessions)
+  if (subject.movieReplayProgress) {
+    for (const movie of subject.movieReplayProgress.values()) {
+      const dynamicRuleId = `movie_favorite_${movie.ratingKey}`;
+      if (results.some((r) => r.ruleId === dynamicRuleId)) continue;
+
+      const rep = movie.replayCount;
+      let tier: BadgeTier = 'silver';
+      let nextTier: BadgeTier | null = 'gold';
+      let nextTierName: string | null = 'Gold (3x Replay)';
+      let suffix = ' (2x)';
+
+      if (rep >= 3) {
+        tier = 'platinum';
+        nextTier = null;
+        nextTierName = null;
+        suffix = ` (${rep + 1}x+)`;
+      } else if (rep === 2) {
+        tier = 'gold';
+        nextTier = 'platinum';
+        nextTierName = 'Platinum (4x+ Replay)';
+        suffix = ' (3x)';
+      }
+
+      results.push({
+        userId: subject.userId,
+        ruleId: dynamicRuleId,
+        version: 1,
+        facet: 'trophy_shelf',
+        badge: {
+          badgeKey: `movie_favorite_${movie.ratingKey}`,
+          tier,
+          title: `Movie Favorite: ${movie.title}${suffix}`,
+          description: `Rewatched ${rep} time${rep > 1 ? 's' : ''} across distinct viewing sessions.`,
+          posterUrl: movie.posterUrl,
+          iconHint: 'movie',
+          stats: {
+            totalPlays: movie.playCount,
+            completedItems: 1,
+            rewatchCount: rep,
+            mediaCategory: 'movie',
+            latestWatchedAt: movie.latestWatchedAt,
+            firstCompletedAt: movie.firstWatchedAt,
+            nextTierProgress: nextTier ? {
+              currentTier: tier,
+              nextTier,
+              nextTierName,
+              rewatchedCount: rep,
+              targetCount: rep + 1,
+              remainingCount: 1,
+              percentComplete: Math.round((rep / (rep + 1)) * 100)
+            } : null
+          }
+        },
+        state: 'earned',
+        progress: {
+          current: movie.playCount,
+          target: movie.playCount,
+          unit: 'movie'
+        },
+        earnedAt: movie.latestWatchedAt || new Date().toISOString(),
+        supportingEvidence: movie.allCompletedPlays.slice(0, 10).map((p) => ({
+          kind: p.sourceKind,
+          id: p.id,
+          eventTime: p.watchedAt,
+          title: p.title
+        })),
+        reason: `Rewatched ${rep} times across distinct viewing sessions`
+      });
     }
   }
 
@@ -431,6 +721,9 @@ function evaluateWatchCount(rule: AchievementRule, subject: SubjectEvidence): Ac
   let totalDurationSec = 0;
   for (const play of matchingPlays) {
     totalDurationSec += play.durationSeconds ?? 0;
+  }
+  if (rule.scope?.category === 'audiobook' && subject.totalAudiobookSeconds) {
+    totalDurationSec = Math.max(totalDurationSec, subject.totalAudiobookSeconds);
   }
   const totalHours = Math.round((totalDurationSec / 3600) * 10) / 10;
 
@@ -829,7 +1122,7 @@ function evaluateObsessionSpotlight(
 ): AchievementResult {
   const showMap = new Map<
     string,
-    { title: string; durationSeconds: number; plays: CanonicalPlay[]; ratingKeys: Set<string> }
+    { title: string; category: string; durationSeconds: number; plays: CanonicalPlay[]; ratingKeys: Set<string> }
   >();
 
   for (const play of subject.plays) {
@@ -838,6 +1131,7 @@ function evaluateObsessionSpotlight(
     if (!showTitle) continue;
     const entry = showMap.get(showTitle) ?? {
       title: showTitle,
+      category: play.category,
       durationSeconds: 0,
       plays: [],
       ratingKeys: new Set<string>()
@@ -846,6 +1140,56 @@ function evaluateObsessionSpotlight(
     entry.plays.push(play);
     entry.ratingKeys.add(play.ratingKey);
     showMap.set(showTitle, entry);
+  }
+
+  if (subject.audiobookProgress) {
+    for (const book of subject.audiobookProgress.values()) {
+      if (book.viewOffsetSeconds > 0) {
+        showMap.set(book.title, {
+          title: book.title,
+          category: 'audiobook',
+          durationSeconds: book.viewOffsetSeconds,
+          plays: [],
+          ratingKeys: new Set([String(book.audiobookId)])
+        });
+      }
+    }
+  }
+
+  if (subject.movieCollectionProgress) {
+    for (const col of subject.movieCollectionProgress.values()) {
+      let franchiseDuration = 0;
+      for (const play of col.allCompletedPlays) {
+        franchiseDuration += play.durationSeconds ?? 0;
+      }
+      if (franchiseDuration > 0) {
+        showMap.set(col.collectionTitle, {
+          title: col.collectionTitle,
+          category: 'movie_collection',
+          durationSeconds: franchiseDuration,
+          plays: col.allCompletedPlays,
+          ratingKeys: new Set(col.completedFilmKeys)
+        });
+      }
+    }
+  }
+
+  if (subject.movieReplayProgress) {
+    for (const movie of subject.movieReplayProgress.values()) {
+      let movieDuration = 0;
+      for (const play of movie.allCompletedPlays) {
+        movieDuration += play.durationSeconds ?? 0;
+      }
+      if (movieDuration > 0 && !showMap.has(movie.title)) {
+        showMap.set(movie.title, {
+          title: movie.title,
+          category: 'movie',
+          durationSeconds: movieDuration,
+          plays: movie.allCompletedPlays,
+          ratingKeys: new Set([movie.ratingKey])
+        });
+      }
+    }
   }
 
   const shows = [...showMap.values()].sort(
@@ -865,7 +1209,7 @@ function evaluateObsessionSpotlight(
       progress: { current: 0, target: rule.threshold, unit: 'hour' },
       earnedAt: null,
       supportingEvidence: [],
-      reason: 'No series playback recorded'
+      reason: 'No playback recorded'
     };
   }
 
@@ -873,8 +1217,24 @@ function evaluateObsessionSpotlight(
   const runnerUpHours = runnerUp ? Math.round((runnerUp.durationSeconds / 3600) * 10) / 10 : undefined;
   const earned = topHours >= rule.threshold;
 
+  const categoryLabel = topShow.category === 'audiobook'
+    ? 'Audiobook'
+    : topShow.category === 'movie_collection'
+      ? 'Franchise'
+      : topShow.category === 'movie'
+        ? 'Movie'
+        : 'Series';
+
+  const unitLabel = topShow.category === 'audiobook'
+    ? 'listening to'
+    : topShow.category === 'movie_collection'
+      ? `across ${topShow.ratingKeys.size} films of`
+      : topShow.category === 'movie'
+        ? `across ${topShow.plays.length} viewings of`
+        : `across ${topShow.plays.length} episodes of`;
+
   const runnerUpSuffix = runnerUp
-    ? ` Runner-up: ${runnerUp.title} (${runnerUpHours} hours across ${runnerUp.plays.length} plays).`
+    ? ` Runner-up: ${runnerUp.title} (${runnerUpHours} hours).`
     : '';
 
   return {
@@ -884,16 +1244,17 @@ function evaluateObsessionSpotlight(
     facet: 'obsession_spotlight',
     badge: {
       ...rule.badge,
-      title: `Series Obsession: ${topShow.title}`,
-      description: `Logged ${topHours} hours across ${topShow.plays.length} episodes of ${topShow.title}.${runnerUpSuffix}`,
+      title: `${categoryLabel} Obsession: ${topShow.title}`,
+      description: `Logged ${topHours} hours ${unitLabel} ${topShow.title}.${runnerUpSuffix}`,
       stats: {
         totalHours: topHours,
-        totalPlays: topShow.plays.length,
+        totalPlays: topShow.plays.length || topShow.ratingKeys.size,
         completedItems: topShow.ratingKeys.size,
         topTitle: topShow.title,
         runnerUpTitle: runnerUp?.title,
         runnerUpHours,
-        runnerUpPlays: runnerUp?.plays.length
+        runnerUpPlays: runnerUp?.plays.length,
+        mediaCategory: topShow.category as any
       }
     },
     state: earned ? 'earned' : topHours > 0 ? 'in_progress' : 'not_earned',
@@ -906,7 +1267,7 @@ function evaluateObsessionSpotlight(
       title: p.title
     })),
     reason: earned
-      ? `Most watched series is ${topShow.title} with ${topHours} hours logged`
+      ? `Most dedicated media is ${topShow.title} with ${topHours} hours logged`
       : `${topShow.title} has ${topHours} of ${rule.threshold} hours logged`
   };
 }
