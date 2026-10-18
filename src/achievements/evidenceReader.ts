@@ -23,7 +23,8 @@ import type {
   EpisodeReplayDetail,
   AudiobookProgressEvidence,
   MovieCollectionEvidence,
-  MovieReplayEvidence
+  MovieReplayEvidence,
+  MovieProgressEvidence
 } from './types.js';
 
 export interface ReadEvidenceOptions {
@@ -79,7 +80,11 @@ export class AchievementEvidenceReader {
     const inferredOnlyByUser = this.checkInferredCoWatchOnly(visibleUserIds, coWatchesByUser);
     const { progressByUser: audiobookProgressByUser, secondsByUser: audiobookSecondsByUser } = this.readAudiobookProgress(visibleUserIds, playsByUser);
     const audiobookCountsByUser = this.readCompletedAudiobookCounts(visibleUserIds, audiobookProgressByUser);
-    const { collectionsByUser: movieCollectionsByUser, replaysByUser: movieReplaysByUser } = this.readMovieCollectionsAndReplays(visibleUserIds, playsByUser);
+    const {
+      collectionsByUser: movieCollectionsByUser,
+      replaysByUser: movieReplaysByUser,
+      progressByUser: movieProgressByUser
+    } = this.readMovieCollectionsAndReplays(visibleUserIds, playsByUser);
 
     const subjects: SubjectEvidence[] = [];
 
@@ -94,6 +99,7 @@ export class AchievementEvidenceReader {
       const totalAudiobookSeconds = audiobookSecondsByUser.get(user.id) ?? 0;
       const movieCollectionProgress = movieCollectionsByUser.get(user.id);
       const movieReplayProgress = movieReplaysByUser.get(user.id);
+      const movieProgress = movieProgressByUser.get(user.id);
 
       subjects.push({
         userId: user.id,
@@ -109,6 +115,7 @@ export class AchievementEvidenceReader {
         totalAudiobookSeconds,
         movieCollectionProgress,
         movieReplayProgress,
+        movieProgress,
         hasInferredCoWatchOnly
       });
     }
@@ -126,6 +133,7 @@ export class AchievementEvidenceReader {
         po.user_id,
         po.rating_key,
         po.grandparent_rating_key,
+        po.plex_guid,
         po.media_type,
         COALESCE(NULLIF(po.library_name, ''), cat.library_title, gp_cat.library_title) as library_name,
         po.title,
@@ -137,6 +145,8 @@ export class AchievementEvidenceReader {
         po.duration,
         po.view_offset,
         po.percent_complete,
+        po.session_start_at,
+        po.session_end_at,
         COALESCE(cat.genres_json, gp_cat.genres_json) as genres_json
       FROM playback_observations po
       LEFT JOIN content_catalog cat ON cat.rating_key = po.rating_key
@@ -160,7 +170,32 @@ export class AchievementEvidenceReader {
         }
       }
 
-      const category = this.normalizeCategory(row.media_type, row.library_name, genres);
+      const category = this.normalizeCategory(row.media_type, row.library_name, genres, row.title, row.plex_guid);
+      if (category === 'other') continue;
+
+      let isCompleted = Boolean(row.completed);
+      let durationSec = row.duration != null ? normalizeDurationSeconds(row.duration) : null;
+      let viewOffsetSec = row.view_offset != null ? Number(row.view_offset) : null;
+      let percentComplete = row.percent_complete != null ? Number(row.percent_complete) : null;
+
+      // Intelligent Movie Completion Guard:
+      // If a playback observation was flagged completed (e.g. via credit skipping or Plex 90% mark),
+      // but the actual wall-clock session duration is far less than the movie runtime (< 70%),
+      // the user only scrubbed or played part of the film. Treat as in-progress rather than earned.
+      if (category === 'movie' && isCompleted && row.session_start_at && row.session_end_at) {
+        const startMs = Date.parse(row.session_start_at);
+        const endMs = Date.parse(row.session_end_at);
+        if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs) {
+          const sessionSec = Math.round((endMs - startMs) / 1000);
+          const expectedDur = durationSec || 7200;
+          if (expectedDur > 0 && sessionSec < expectedDur * 0.70) {
+            isCompleted = false;
+            percentComplete = Math.min(89, Math.max(2, Math.round((sessionSec / expectedDur) * 100)));
+            viewOffsetSec = sessionSec;
+          }
+        }
+      }
+
       const play: CanonicalPlay = {
         id: Number(row.id),
         sourceKind: 'playback_observation',
@@ -175,10 +210,10 @@ export class AchievementEvidenceReader {
         episodeNumber: row.episode_number != null ? Number(row.episode_number) : null,
         genres,
         watchedAt: row.watched_at ?? null,
-        completed: Boolean(row.completed),
-        durationSeconds: row.duration != null ? normalizeDurationSeconds(row.duration) : null,
-        viewOffsetSeconds: row.view_offset != null ? Number(row.view_offset) : null,
-        percentComplete: row.percent_complete != null ? Number(row.percent_complete) : null
+        completed: isCompleted,
+        durationSeconds: durationSec,
+        viewOffsetSeconds: viewOffsetSec,
+        percentComplete: percentComplete
       };
 
       const list = playsByUser.get(userId) ?? [];
@@ -240,7 +275,8 @@ export class AchievementEvidenceReader {
         } catch {}
       }
 
-      const category = this.normalizeCategory(mediaType, libraryName);
+      const category = this.normalizeCategory(mediaType, libraryName, undefined, row.title_snapshot);
+      if (category === 'other') continue;
       const play: CanonicalPlay = {
         id: Number(row.id),
         sourceKind: 'archive_watch_event',
@@ -332,7 +368,8 @@ export class AchievementEvidenceReader {
 
           const mediaType = String(row.po_media_type || row.we_media_type || 'movie');
           const libraryName = row.resolved_library_name || row.po_library_name || row.we_library_name;
-          const category = this.normalizeCategory(mediaType, libraryName, genres);
+          const category = this.normalizeCategory(mediaType, libraryName, genres, row.po_title || row.we_title);
+          if (category === 'other') continue;
           const play: CanonicalPlay = {
             id: Number(row.observation_id || row.event_id),
             sourceKind: 'cowatch_confirmation',
@@ -863,8 +900,9 @@ export class AchievementEvidenceReader {
       let firstCompletedEpisodeSeason: number | null = null;
       let firstCompletedEpisodeNumber: number | null = null;
 
+      const isRunning = seriesStatus === 'running' || Boolean(nextAirAt);
       const hasMissingOffServer = (missingOffServerCount ?? 0) > 0;
-      const isComplete = totalEpisodes != null && completedEpisodeKeys.size >= totalEpisodes && allCompletedPlays.length > 0 && !hasMissingOffServer;
+      const isComplete = !isRunning && totalEpisodes != null && completedEpisodeKeys.size >= totalEpisodes && allCompletedPlays.length > 0 && !hasMissingOffServer;
       if (isComplete && totalEpisodes !== null) {
         const firstCompletions = [...firstWatchedByEpisode.values()].sort((a, b) => {
           if (!a.watchedAt && !b.watchedAt) return a.id - b.id;
@@ -907,6 +945,7 @@ export class AchievementEvidenceReader {
 
       const hasUnreleasedOrMissing =
         hasMissingOffServer ||
+        isRunning ||
         (totalEpisodes !== null && availableOnPlex !== null && availableOnPlex < totalEpisodes);
 
       const isCaughtUpOnPlex = !isComplete && (
@@ -1319,11 +1358,13 @@ export class AchievementEvidenceReader {
   ): {
     collectionsByUser: Map<number, Map<string, MovieCollectionEvidence>>;
     replaysByUser: Map<number, Map<string, MovieReplayEvidence>>;
+    progressByUser: Map<number, Map<string, MovieProgressEvidence>>;
   } {
     const collectionsByUser = new Map<number, Map<string, MovieCollectionEvidence>>();
     const replaysByUser = new Map<number, Map<string, MovieReplayEvidence>>();
+    const progressByUser = new Map<number, Map<string, MovieProgressEvidence>>();
 
-    // 1. Movie Replay Favorites (movies with replayCount >= 1 via evaluateReplaySemantics)
+    // 1. Movie Replay Favorites & In-Progress Movies
     for (const userId of visibleUserIds) {
       const plays = playsByUser.get(userId) ?? [];
       const moviePlays = plays.filter((p) => p.category === 'movie' && p.completed);
@@ -1341,6 +1382,8 @@ export class AchievementEvidenceReader {
         const repCount = replaysByRatingKey.get(ratingKey) ?? 0;
         if (repCount >= 1) {
           const sample = keyPlays[0];
+          const sortedCompleted = [...keyPlays].sort((a, b) => (a.watchedAt || '').localeCompare(b.watchedAt || ''));
+          const lastCompleted = sortedCompleted[sortedCompleted.length - 1];
           userReplays.set(ratingKey, {
             ratingKey,
             title: sample.title,
@@ -1348,14 +1391,52 @@ export class AchievementEvidenceReader {
             year: null,
             playCount: keyPlays.length,
             replayCount: repCount,
-            firstWatchedAt: keyPlays[0]?.watchedAt ?? null,
-            latestWatchedAt: keyPlays[keyPlays.length - 1]?.watchedAt ?? null,
+            firstWatchedAt: sortedCompleted[0]?.watchedAt ?? null,
+            lastCompletedWatchedAt: lastCompleted?.watchedAt ?? null,
+            latestWatchedAt: sortedCompleted[sortedCompleted.length - 1]?.watchedAt ?? null,
             allCompletedPlays: keyPlays
           });
         }
       }
 
       replaysByUser.set(userId, userReplays);
+
+      // In-Progress Movies
+      const userMovieProgress = new Map<string, MovieProgressEvidence>();
+      const allMoviePlaysByKey = new Map<string, CanonicalPlay[]>();
+      for (const p of plays) {
+        if (p.category !== 'movie') continue;
+        const list = allMoviePlaysByKey.get(p.ratingKey) ?? [];
+        list.push(p);
+        allMoviePlaysByKey.set(p.ratingKey, list);
+      }
+
+      for (const [ratingKey, keyPlays] of allMoviePlaysByKey.entries()) {
+        if (keyPlays.length === 0) continue;
+        const latestPlay = keyPlays[keyPlays.length - 1];
+        const pct = latestPlay.percentComplete ?? 0;
+        const isLatestIncomplete = !latestPlay.completed && pct >= 2 && pct < 90;
+
+        if (isLatestIncomplete) {
+          const durSec = latestPlay.durationSeconds || 7200;
+          const offsetSec = latestPlay.viewOffsetSeconds != null && latestPlay.viewOffsetSeconds > 0
+            ? latestPlay.viewOffsetSeconds
+            : Math.round(durSec * (pct / 100));
+
+          userMovieProgress.set(ratingKey, {
+            ratingKey,
+            title: latestPlay.title,
+            posterUrl: `/api/artwork/${encodeURIComponent(ratingKey)}?variant=poster`,
+            year: null,
+            totalDurationSeconds: durSec,
+            viewOffsetSeconds: offsetSec,
+            percentComplete: pct,
+            latestWatchedAt: latestPlay.watchedAt ?? null
+          });
+        }
+      }
+
+      progressByUser.set(userId, userMovieProgress);
     }
 
     // 2. Movie Franchises / Collections
@@ -1466,30 +1547,97 @@ export class AchievementEvidenceReader {
       collectionsByUser.set(userId, userCollections);
     }
 
-    return { collectionsByUser, replaysByUser };
+    return { collectionsByUser, replaysByUser, progressByUser };
   }
 
   private normalizeCategory(
     mediaType?: string | null,
     libraryName?: string | null,
-    genres?: string[] | null
-  ): 'movie' | 'tv' | 'anime' | 'classic_tv' | 'audiobook' {
+    genres?: string[] | null,
+    title?: string | null,
+    guid?: string | null
+  ): 'movie' | 'tv' | 'anime' | 'classic_tv' | 'audiobook' | 'other' {
     const m = (mediaType ?? '').toLowerCase();
     const lib = (libraryName ?? '').toLowerCase();
+    const t = (title ?? '').toLowerCase();
+    const g = (guid ?? '').toLowerCase();
 
-    if (m === 'track' || m === 'audiobook' || lib.includes('audiobook')) {
+    // Audiobooks
+    if (m === 'audiobook' || lib.includes('audiobook') || (m === 'track' && (!lib || lib.includes('audiobook')))) {
       return 'audiobook';
     }
-    if (lib.includes('anime') || genres?.some((g) => g.toLowerCase() === 'anime')) {
+
+    // Anime
+    if (lib.includes('anime') || genres?.some((gen) => gen.toLowerCase() === 'anime')) {
       return 'anime';
     }
+
+    // Classic TV
     if (lib.includes('classic')) {
       return 'classic_tv';
     }
-    if (m === 'episode' || m === 'show' || m === 'season' || lib.includes('tv') || lib.includes('show') || lib.includes('jdrama') || lib.includes('etv')) {
+
+    // TV Shows
+    if (
+      m === 'episode' ||
+      m === 'show' ||
+      m === 'season' ||
+      lib.includes('tv') ||
+      lib.includes('show') ||
+      lib.includes('jdrama') ||
+      lib.includes('etv')
+    ) {
       return 'tv';
     }
-    return 'movie';
+
+    // Explicit non-movie libraries, agents, or video titles: workouts, learning, sports, clips, music
+    if (
+      lib.includes('workout') ||
+      lib.includes('exercise') ||
+      lib.includes('fitness') ||
+      lib.includes('learning') ||
+      lib.includes('masterclass') ||
+      lib.includes('raptor') ||
+      lib.includes('sport') ||
+      lib.includes('home video') ||
+      lib.includes('music') ||
+      m === 'clip' ||
+      m === 'photo' ||
+      m === 'track' ||
+      g.startsWith('com.plexapp.agents.none') ||
+      g.startsWith('local://') ||
+      t.includes('workout') ||
+      t.includes('cardio') ||
+      t.includes('liift') ||
+      t.includes('tabata') ||
+      t.includes('insanity') ||
+      t.includes('procreate') ||
+      t.includes('tutorial') ||
+      t.includes('lesson') ||
+      t.includes('friday fight') ||
+      t.includes('max out') ||
+      t.includes('sweat fest') ||
+      t.includes('fight night') ||
+      t.includes('presentation') ||
+      t.includes('stains and textures') ||
+      /^u\d+\.\d+/.test(t)
+    ) {
+      return 'other';
+    }
+
+    // Movies: must be in a movie library or have media_type = 'movie' with no conflicting library
+    if (
+      lib.includes('movie') ||
+      lib.includes('film') ||
+      lib.includes('cinema') ||
+      (!lib && m === 'movie') ||
+      lib === 'movies' ||
+      lib === '4k movies'
+    ) {
+      return 'movie';
+    }
+
+    return 'other';
   }
 }
 

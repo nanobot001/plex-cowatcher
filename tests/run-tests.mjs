@@ -8241,6 +8241,128 @@ test("3-6-6I Multi-Media Trophy Shelf Filters, Modal Presenters, and Obsession P
   });
 });
 
+test("3-6-6J Movie Video Exclusion & In-Progress Tracking: workouts/learning excluded, incomplete movies track under in-progress, and earned trophies preserve completed date", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // 1. Non-movie videos: Workout and Learning videos with media_type 'movie' in SQLite
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES
+        (901, 1, 'wo-1', 'movie', 'Workouts', 'LIIFT4 - Chest & Triceps', '2026-08-01T12:00:00Z', 1, 2400, '2026-08-01T12:00:00Z', '2026-08-01T12:00:00Z'),
+        (902, 1, 'wo-1', 'movie', 'Workouts', 'LIIFT4 - Chest & Triceps', '2026-08-03T12:00:00Z', 1, 2400, '2026-08-03T12:00:00Z', '2026-08-03T12:00:00Z'),
+        (903, 1, 'learn-1', 'movie', 'Learning', 'Procreate Digital Painting Masterclass', '2026-08-02T12:00:00Z', 1, 3600, '2026-08-02T12:00:00Z', '2026-08-02T12:00:00Z')
+    `).run();
+
+    // 2. Cult Classic Favorite with completed watches in 2020 and a partial watch in 2026
+    // Movie: Avengers: Infinity War (key: rk-inf-war)
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, percent_complete, view_offset, created_at, updated_at)
+      VALUES
+        (904, 1, 'rk-inf-war', 'movie', 'Movies', 'Avengers: Infinity War', '2020-05-01T20:00:00Z', 1, 9000, 100, 9000, '2020-05-01T20:00:00Z', '2020-05-01T20:00:00Z'),
+        (905, 1, 'rk-inf-war', 'movie', 'Movies', 'Avengers: Infinity War', '2020-05-15T20:00:00Z', 1, 9000, 100, 9000, '2020-05-15T20:00:00Z', '2020-05-15T20:00:00Z'),
+        (906, 1, 'rk-inf-war', 'movie', 'Movies', 'Avengers: Infinity War', '2026-09-26T21:00:00Z', 0, 9000, 12, 1080, '2026-09-26T21:00:00Z', '2026-09-26T21:00:00Z')
+    `).run();
+
+    // 3. Standalone movie watched only partially in 2026 (never completed before)
+    // Movie: Interstellar (key: rk-interstellar), 35% watched
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, percent_complete, view_offset, created_at, updated_at)
+      VALUES
+        (907, 1, 'rk-interstellar', 'movie', 'Movies', 'Interstellar', '2026-09-28T20:00:00Z', 0, 10140, 35, 3549, '2026-09-28T20:00:00Z', '2026-09-28T20:00:00Z')
+    `).run();
+
+    // 4. Movie scrubbed to 92% with 30-minute session on 150-minute runtime marked completed by player
+    // Movie: Gladiator II (key: rk-glad-2), 1800s wall-clock session on 9000s duration
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, media_type, library_name, title, watched_at, completed, duration, percent_complete, view_offset, session_start_at, session_end_at, created_at, updated_at)
+      VALUES
+        (908, 1, 'rk-glad-2', 'movie', 'Movies', 'Gladiator II', '2026-10-01T20:00:00Z', 1, 9000, 92, 8280, '2026-10-01T20:00:00Z', '2026-10-01T20:30:00Z', '2026-10-01T20:00:00Z', '2026-10-01T20:00:00Z')
+    `).run();
+
+    const achievementService = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const shelf = achievementService.getAchievements({ user: 1, facet: 'trophy_shelf' });
+
+    // A. Workout videos must NOT generate Movie Favorites or trophy cards
+    const workoutTrophy = shelf.results.find((r) => r.ruleId.includes('wo-1') || (r.badge && r.badge.title.includes('LIIFT4')));
+    assert.equal(workoutTrophy, undefined, "Workout videos must never generate movie trophy cards");
+
+    // B. Avengers: Infinity War favorite trophy must have earnedAt and lastCompletedWatchedAt matching the 2020 completion date
+    const infWarFavorite = shelf.results.find((r) => r.ruleId === 'movie_favorite_rk-inf-war');
+    assert.ok(infWarFavorite, "Infinity War rewatch favorite trophy must exist");
+    assert.equal(infWarFavorite.state, 'earned');
+    assert.equal(infWarFavorite.earnedAt, '2020-05-15T20:00:00Z', "earnedAt must be the last complete viewing date (2020), not the 2026 partial touch");
+    assert.equal(infWarFavorite.badge.stats.lastCompletedWatchedAt, '2020-05-15T20:00:00Z');
+
+    // C. Avengers: Infinity War also tracks its recent partial watch as in_progress
+    const infWarProgress = shelf.results.find((r) => r.ruleId === 'movie_progress_rk-inf-war');
+    assert.ok(infWarProgress, "Infinity War partial watch must generate an in-progress trophy card");
+    assert.equal(infWarProgress.state, 'in_progress');
+    assert.equal(infWarProgress.badge.stats.percentComplete, 12);
+
+    // D. Interstellar partial watch generates an in-progress trophy card and no earned trophy
+    const interstellarProgress = shelf.results.find((r) => r.ruleId === 'movie_progress_rk-interstellar');
+    assert.ok(interstellarProgress, "Interstellar partial watch must generate an in-progress trophy card");
+    assert.equal(interstellarProgress.state, 'in_progress');
+    assert.equal(interstellarProgress.badge.stats.percentComplete, 35);
+    const interstellarEarned = shelf.results.find((r) => r.ruleId === 'movie_favorite_rk-interstellar');
+    assert.equal(interstellarEarned, undefined, "Incomplete movie must never generate an earned movie favorite trophy");
+
+    // E. Short wall-clock scrub with completed=1 must be guarded against false completion
+    const gladProgress = shelf.results.find((r) => r.ruleId === 'movie_progress_rk-glad-2');
+    assert.ok(gladProgress, "Gladiator II scrub session must generate an in-progress trophy card");
+    assert.equal(gladProgress.state, 'in_progress');
+    assert.equal(gladProgress.badge.stats.percentComplete, 20, "20% (1800s / 9000s) must be computed from wall-clock session duration");
+    const gladEarned = shelf.results.find((r) => r.ruleId === 'movie_favorite_rk-glad-2');
+    assert.equal(gladEarned, undefined, "Scrubbed movie session must never generate an earned movie favorite trophy");
+
+    // F. Verify web implementation contract
+    const webIndexSource = fs.readFileSync('src/web/index.ts', 'utf-8');
+    assert.ok(webIndexSource.includes('isMovieProgress'), "web/index.ts must handle isMovieProgress");
+    assert.ok(webIndexSource.includes('lastCompletedWatchedAt'), "web/index.ts must prioritize lastCompletedWatchedAt for earned items");
+    assert.ok(webIndexSource.includes("sortKey === 'date-desc' || sortKey === 'default'"), "web/index.ts must default sort to date descending");
+  });
+});
+
+test("3-6-6K Actively Airing Series Invariant: running anime with upcoming episodes never awards earned completion and remains Caught Up", async () => {
+  await withTestDb(async (db) => {
+    db.prepare(`
+      INSERT INTO users (id, plex_username, display_name, is_source_user, is_typical_cowatcher, enabled, dashboard_shown, created_at, updated_at)
+      VALUES (1, 'Tony', 'Tony', 1, 0, 1, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+    `).run();
+
+    // Catalog entry for actively airing show
+    db.prepare(`
+      INSERT INTO content_catalog (rating_key, title, media_type, library_title, leaf_count, canonical_total_episodes, series_status, aired_episodes_count, next_air_at, source_provenance, refreshed_at)
+      VALUES ('70092', 'The Laid-Off Cheat-Granting Mage Enjoys a Second Lease on Life', 'show', 'Anime', 2, 12, 'running', 2, '2026-10-20T15:00:00Z', 'manual', '2026-10-01T00:00:00Z')
+    `).run();
+
+    // 2 aired episodes in library, both completed by Tony
+    db.prepare(`
+      INSERT INTO playback_observations (id, user_id, rating_key, grandparent_rating_key, media_type, library_name, show_title, title, watched_at, completed, duration, created_at, updated_at)
+      VALUES
+        (801, 1, 'ep-1', '70092', 'episode', 'Anime', 'The Laid-Off Cheat-Granting Mage Enjoys a Second Lease on Life', 'Episode 1', '2026-10-06T20:00:00Z', 1, 1440, '2026-10-06T20:00:00Z', '2026-10-06T20:00:00Z'),
+        (802, 1, 'ep-2', '70092', 'episode', 'Anime', 'The Laid-Off Cheat-Granting Mage Enjoys a Second Lease on Life', 'Episode 2', '2026-10-13T20:00:00Z', 1, 1440, '2026-10-13T20:00:00Z', '2026-10-13T20:00:00Z')
+    `).run();
+
+    const achievementService = new AchievementService(db, DEFAULT_ACHIEVEMENT_RULES);
+    const shelf = achievementService.getAchievements({ user: 1, facet: 'trophy_shelf' });
+
+    const mageTrophy = shelf.results.find((r) => r.ruleId === 'show_mastery_70092');
+    assert.ok(mageTrophy, "Show mastery badge must be generated for Laid-Off Mage");
+    assert.notEqual(mageTrophy.state, 'earned', "Actively airing show must NEVER have state earned");
+    assert.equal(mageTrophy.state, 'in_progress', "Airing show must have state in_progress");
+    assert.equal(mageTrophy.badge.stats.isCaughtUpOnPlex, true, "Show must be recognized as caught up on Plex");
+    assert.equal(mageTrophy.badge.stats.seriesStatus, 'running');
+    assert.equal(mageTrophy.badge.stats.nextAirAt, '2026-10-20T15:00:00Z');
+    assert.equal(mageTrophy.badge.stats.completedItems, 2);
+    assert.equal(mageTrophy.badge.title, 'Series Progress: The Laid-Off Cheat-Granting Mage Enjoys a Second Lease on Life');
+  });
+});
+
 test("3-6-6G Unified Audiobook Evidence: revision-backed historical audiobooks evaluate to completed book mastery trophies and milestone counts", async () => {
   await withTestDb(async (db) => {
     db.prepare(`

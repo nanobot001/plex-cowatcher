@@ -138,7 +138,7 @@ export async function resolveAniListMetadata(
     const canonicalTotalEpisodes =
       (typeof media.episodes === "number" && media.episodes > 0)
         ? Number(media.episodes)
-        : (airedEpisodesCount ?? 0);
+        : (seriesStatus === "running" ? Math.max(12, (airedEpisodesCount ?? 0) + 1) : (airedEpisodesCount ?? 0));
 
     if (canonicalTotalEpisodes <= 0) return null;
 

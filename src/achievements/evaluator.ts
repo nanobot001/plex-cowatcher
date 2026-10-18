@@ -79,7 +79,9 @@ export function evaluateSubjectAchievements(
       if (show.totalEpisodes !== null && show.completedEpisodeKeys.size > 0) {
         const dynamicRuleId = `show_mastery_${show.grandparentRatingKey}`;
         if (!results.some((r) => r.ruleId === dynamicRuleId)) {
-          const isComplete = (show.missingOffServerCount ?? 0) === 0 &&
+          const isRunning = show.seriesStatus === 'running' || Boolean(show.nextAirAt);
+          const isComplete = !isRunning &&
+            (show.missingOffServerCount ?? 0) === 0 &&
             !show.isCaughtUpOnPlex &&
             show.totalEpisodes !== null &&
             show.completedEpisodeKeys.size >= show.totalEpisodes &&
@@ -530,6 +532,7 @@ export function evaluateSubjectAchievements(
             mediaCategory: 'movie',
             latestWatchedAt: movie.latestWatchedAt,
             firstCompletedAt: movie.firstWatchedAt,
+            lastCompletedWatchedAt: movie.lastCompletedWatchedAt || movie.latestWatchedAt,
             nextTierProgress: nextTier ? {
               currentTier: tier,
               nextTier,
@@ -547,7 +550,7 @@ export function evaluateSubjectAchievements(
           target: movie.playCount,
           unit: 'movie'
         },
-        earnedAt: movie.latestWatchedAt || new Date().toISOString(),
+        earnedAt: movie.lastCompletedWatchedAt || movie.latestWatchedAt || new Date().toISOString(),
         supportingEvidence: movie.allCompletedPlays.slice(0, 10).map((p) => ({
           kind: p.sourceKind,
           id: p.id,
@@ -555,6 +558,57 @@ export function evaluateSubjectAchievements(
           title: p.title
         })),
         reason: `Rewatched ${rep} times across distinct viewing sessions`
+      });
+    }
+  }
+
+  // Dynamic Trophy Shelf: In-Progress Movies
+  if (subject.movieProgress) {
+    for (const movie of subject.movieProgress.values()) {
+      const dynamicRuleId = `movie_progress_${movie.ratingKey}`;
+      if (results.some((r) => r.ruleId === dynamicRuleId)) continue;
+
+      const totalHours = Math.round((movie.totalDurationSeconds / 3600) * 10) / 10;
+      const watchedHours = Math.round((movie.viewOffsetSeconds / 3600) * 10) / 10;
+
+      results.push({
+        userId: subject.userId,
+        ruleId: dynamicRuleId,
+        version: 1,
+        facet: 'trophy_shelf',
+        badge: {
+          badgeKey: `movie_progress_${movie.ratingKey}`,
+          tier: 'bronze',
+          title: `Movie Progress: ${movie.title}`,
+          description: `Watched ${watchedHours} of ${totalHours} hrs (${movie.percentComplete}%).`,
+          posterUrl: movie.posterUrl,
+          iconHint: 'movie',
+          stats: {
+            totalHours,
+            totalPlays: 1,
+            completedItems: 0,
+            rewatchCount: 0,
+            mediaCategory: 'movie',
+            totalDurationSeconds: movie.totalDurationSeconds,
+            viewOffsetSeconds: movie.viewOffsetSeconds,
+            percentComplete: movie.percentComplete,
+            latestWatchedAt: movie.latestWatchedAt
+          }
+        },
+        state: 'in_progress',
+        progress: {
+          current: movie.viewOffsetSeconds,
+          target: movie.totalDurationSeconds,
+          unit: 'hour'
+        },
+        earnedAt: null,
+        supportingEvidence: movie.latestWatchedAt ? [{
+          kind: 'playback_observation',
+          id: 0,
+          eventTime: movie.latestWatchedAt,
+          title: movie.title
+        }] : [],
+        reason: `Watched ${movie.percentComplete}% of ${movie.title}`
       });
     }
   }

@@ -2653,7 +2653,7 @@ export function registerWebRoutes(router: Router): void {
 
               <div id="sort-controls" class="hud-sort-controls">
                 <select id="sort-badges-select" title="Sort badges and trophies">
-                  <option value="default">⇅ Default</option>
+                  <option value="default">⇅ Default (Newest)</option>
                   <option value="date-desc">⇅ Date (Newest)</option>
                   <option value="date-asc">⇅ Date (Oldest)</option>
                   <option value="name-asc">⇅ Name (A–Z)</option>
@@ -2902,17 +2902,40 @@ export function registerWebRoutes(router: Router): void {
         };
 
         function getItemActivityTimestamp(item) {
-          if (item.badge?.stats?.latestWatchedAt) {
-            const t = new Date(item.badge.stats.latestWatchedAt).getTime();
-            if (!isNaN(t) && t > 0) return t;
-          }
-          if (item.earnedAt) {
-            const t = new Date(item.earnedAt).getTime();
-            if (!isNaN(t) && t > 0) return t;
-          }
-          if (item.badge?.stats?.firstCompletedAt) {
-            const t = new Date(item.badge.stats.firstCompletedAt).getTime();
-            if (!isNaN(t) && t > 0) return t;
+          if (item.state === 'earned') {
+            if (item.badge?.stats?.lastCompletedWatchedAt) {
+              const t = new Date(item.badge.stats.lastCompletedWatchedAt).getTime();
+              if (!isNaN(t) && t > 0) return t;
+            }
+            if (item.earnedAt) {
+              const t = new Date(item.earnedAt).getTime();
+              if (!isNaN(t) && t > 0) return t;
+            }
+            if (item.badge?.stats?.firstCompletedAt) {
+              const t = new Date(item.badge.stats.firstCompletedAt).getTime();
+              if (!isNaN(t) && t > 0) return t;
+            }
+            if (item.badge?.stats?.latestWatchedAt) {
+              const t = new Date(item.badge.stats.latestWatchedAt).getTime();
+              if (!isNaN(t) && t > 0) return t;
+            }
+          } else {
+            if (item.badge?.stats?.latestWatchedAt) {
+              const t = new Date(item.badge.stats.latestWatchedAt).getTime();
+              if (!isNaN(t) && t > 0) return t;
+            }
+            if (item.badge?.stats?.lastCompletedWatchedAt) {
+              const t = new Date(item.badge.stats.lastCompletedWatchedAt).getTime();
+              if (!isNaN(t) && t > 0) return t;
+            }
+            if (item.earnedAt) {
+              const t = new Date(item.earnedAt).getTime();
+              if (!isNaN(t) && t > 0) return t;
+            }
+            if (item.badge?.stats?.firstCompletedAt) {
+              const t = new Date(item.badge.stats.firstCompletedAt).getTime();
+              if (!isNaN(t) && t > 0) return t;
+            }
           }
           if (item.badge?.stats?.episodeReplayDetails && item.badge.stats.episodeReplayDetails.length > 0) {
             let maxT = 0;
@@ -2942,7 +2965,7 @@ export function registerWebRoutes(router: Router): void {
           if (sortKey === 'name-desc') {
             return list.sort((a, b) => (b.badge?.title || '').localeCompare(a.badge?.title || ''));
           }
-          if (sortKey === 'date-desc') {
+          if (sortKey === 'date-desc' || sortKey === 'default') {
             return list.sort((a, b) => {
               const timeA = getItemActivityTimestamp(a);
               const timeB = getItemActivityTimestamp(b);
@@ -3403,6 +3426,7 @@ export function registerWebRoutes(router: Router): void {
               .replace(/^Franchise Mastery:[ \t]*/i, '')
               .replace(/^Franchise Progress:[ \t]*/i, '')
               .replace(/^Movie Favorite:[ \t]*/i, '')
+              .replace(/^Movie Progress:[ \t]*/i, '')
               .trim();
 
             const tierStyle = TIER_COLORS[t.badge.tier] || TIER_COLORS.bronze;
@@ -3412,13 +3436,14 @@ export function registerWebRoutes(router: Router): void {
             const isAudiobook = t.badge?.stats?.mediaCategory === 'audiobook' || t.badge?.iconHint === 'audiobook' || t.ruleId?.includes('audiobook');
             const isMovieCollection = t.badge?.stats?.mediaCategory === 'movie_collection' || t.ruleId?.startsWith('collection_mastery_');
             const isMovieFavorite = (t.badge?.stats?.mediaCategory === 'movie' && t.ruleId?.startsWith('movie_favorite_'));
+            const isMovieProgress = (t.badge?.stats?.mediaCategory === 'movie' && (t.ruleId?.startsWith('movie_progress_') || t.badge?.badgeKey?.startsWith('movie_progress_')));
 
             let displayTitle = title;
             if (isAudiobook) {
               displayTitle = displayTitle
                 .replace(/^[0-9]{4}[ -]+/, '')
                 .replace(/^-[ ]*/, '')
-                .replace(/\\[.*\\]$/, '')
+                .replace(/\[.*\]$/, '')
                 .trim();
             }
 
@@ -3524,6 +3549,7 @@ export function registerWebRoutes(router: Router): void {
 
             if (isMovieFavorite) {
               const totalPlays = t.badge.stats?.totalPlays || (t.badge.stats?.rewatchCount ? t.badge.stats.rewatchCount + 1 : 2);
+              const completedDate = t.badge.stats?.lastCompletedWatchedAt || t.badge.stats?.firstCompletedAt || t.earnedAt || t.badge.stats?.latestWatchedAt;
               return '<div data-rule="' + t.ruleId + '" class="trophy-card">' +
                 '<div class="trophy-poster-frame">' +
                   '<div class="trophy-overlay">' +
@@ -3537,7 +3563,39 @@ export function registerWebRoutes(router: Router): void {
                   '</div>' +
                 '</div>' +
                 '<div style="padding: 10px 12px; background: rgba(13, 17, 23, 0.85); border-top: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; color: var(--text-muted);">' +
-                  '<span>Watched ' + totalPlays + 'x' + (t.badge.stats?.latestWatchedAt ? ' &bull; ' + new Date(t.badge.stats.latestWatchedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '') + '</span>' +
+                  '<span>Watched ' + totalPlays + 'x' + (completedDate ? ' &bull; ' + new Date(completedDate).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '') + '</span>' +
+                  '<span style="color: #58a6ff; font-weight: 500;">Details &rarr;</span>' +
+                '</div>' +
+              '</div>';
+            }
+
+            if (isMovieProgress) {
+              const totalHrs = t.badge.stats?.totalHours || (t.badge.stats?.totalDurationSeconds ? Math.round((t.badge.stats.totalDurationSeconds / 3600) * 10) / 10 : 2);
+              const watchedHrs = t.badge.stats?.viewOffsetSeconds ? Math.round((t.badge.stats.viewOffsetSeconds / 3600) * 10) / 10 : (t.progress?.current ? Math.round((t.progress.current / 3600) * 10) / 10 : 0);
+              const moviePercent = t.badge.stats?.percentComplete || (totalHrs > 0 ? Math.round((watchedHrs / totalHrs) * 100) : 0);
+
+              return '<div data-rule="' + t.ruleId + '" class="trophy-card">' +
+                '<div class="trophy-poster-frame">' +
+                  '<div class="trophy-overlay">' +
+                    '<div style="margin-bottom: 6px;">' +
+                      '<div style="display: flex; justify-content: space-between; font-size: 0.7rem; font-weight: bold; color: #fbbf24; margin-bottom: 2px;">' +
+                        '<span>' + watchedHrs + ' / ' + totalHrs + ' hrs</span>' +
+                        '<span>' + moviePercent + '%</span>' +
+                      '</div>' +
+                      '<div style="width: 100%; background: rgba(0,0,0,0.8); height: 5px; border-radius: 999px; overflow: hidden;">' +
+                        '<div style="background: #f59e0b; width: ' + moviePercent + '%; height: 100%;"></div>' +
+                      '</div>' +
+                    '</div>' +
+                    '<span style="font-size: 0.85rem; font-weight: bold; color: #fff; line-height: 1.2; display: block;">' + title + '</span>' +
+                  '</div>' +
+                  '<img src="' + t.badge.posterUrl + '" alt="' + title + '" onerror="this.style.display=\\'none\\'" />' +
+                  '<div class="tier-ribbon" style="background: rgba(245, 158, 11, 0.3); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.4);">In Progress</div>' +
+                  '<div class="tier-pill" style="border: 1px solid #d97706; color: #f59e0b;">' +
+                    '🎬 Movie' +
+                  '</div>' +
+                '</div>' +
+                '<div style="padding: 10px 12px; background: rgba(13, 17, 23, 0.85); border-top: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; color: var(--text-muted);">' +
+                  '<span style="color: #fbbf24; font-weight: 600;">' + watchedHrs + 'h of ' + totalHrs + 'h (' + moviePercent + '%)</span>' +
                   '<span style="color: #58a6ff; font-weight: 500;">Details &rarr;</span>' +
                 '</div>' +
               '</div>';
@@ -3791,6 +3849,7 @@ export function registerWebRoutes(router: Router): void {
           const isAudiobook = (stats && stats.mediaCategory === 'audiobook') || (ach.badge && ach.badge.badgeKey && ach.badge.badgeKey.startsWith('book_mastery_'));
           const isMovieCollection = (stats && stats.mediaCategory === 'movie_collection') || (ach.badge && ach.badge.badgeKey && ach.badge.badgeKey.startsWith('collection_mastery_'));
           const isMovieFavorite = (stats && stats.mediaCategory === 'movie' && ach.badge && ach.badge.badgeKey && ach.badge.badgeKey.startsWith('movie_favorite_')) || (ach.badge && ach.badge.badgeKey && ach.badge.badgeKey.startsWith('movie_favorite_'));
+          const isMovieProgress = (stats && stats.mediaCategory === 'movie' && ((ach.badge && ach.badge.badgeKey && ach.badge.badgeKey.startsWith('movie_progress_')) || (ach.ruleId && ach.ruleId.startsWith('movie_progress_'))));
           const firstCompletedAt = stats && stats.firstCompletedAt ? stats.firstCompletedAt : (isEarned ? ach.earnedAt : null);
 
           // 1. Prominent First Completion Milestone Banner
@@ -3858,12 +3917,12 @@ export function registerWebRoutes(router: Router): void {
               bannerHtml +=     '</span>';
               bannerHtml +=   '</div>';
               bannerHtml +=   '<div style="font-size: 1.05rem; font-weight: 700; color: #fff;">First Watched: ' + formattedDate + '</div>';
-              if (stats && stats.latestWatchedAt) {
-                const latestDate = new Date(stats.latestWatchedAt);
+              if (stats && (stats.lastCompletedWatchedAt || stats.latestWatchedAt)) {
+                const latestDate = new Date(stats.lastCompletedWatchedAt || stats.latestWatchedAt);
                 const latestStr = !isNaN(latestDate.getTime()) ? latestDate.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : 'Recent';
                 bannerHtml += '<div style="font-size: 0.8rem; color: #cbd5e1; display: flex; align-items: center; gap: 6px;">';
                 bannerHtml +=   '<span style="color: #34d399;">✓</span>';
-                bannerHtml +=   '<span>Latest Viewing Session: <strong style="color: #fff;">' + latestStr + '</strong></span>';
+                bannerHtml +=   '<span>Latest Complete Viewing: <strong style="color: #fff;">' + latestStr + '</strong></span>';
                 bannerHtml += '</div>';
               }
               if (stats && stats.rewatchCount > 0) {
@@ -4112,13 +4171,59 @@ export function registerWebRoutes(router: Router): void {
             html +=         '<div style="font-weight: 700; color: #e2e8f0;">' + (stats && stats.firstCompletedAt ? new Date(stats.firstCompletedAt).toLocaleDateString() : 'Historical') + '</div>';
             html +=       '</div>';
             html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
-            html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Latest Viewing</div>';
-            html +=         '<div style="font-weight: 700; color: #34d399;">' + (stats && stats.latestWatchedAt ? new Date(stats.latestWatchedAt).toLocaleDateString() : 'Recent') + '</div>';
+            html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Latest Complete Viewing</div>';
+            html +=         '<div style="font-weight: 700; color: #34d399;">' + ((stats && (stats.lastCompletedWatchedAt || stats.latestWatchedAt)) ? new Date(stats.lastCompletedWatchedAt || stats.latestWatchedAt).toLocaleDateString() : 'Recent') + '</div>';
             html +=       '</div>';
             html +=     '</div>';
             html +=     '<div style="font-size: 0.75rem; color: #cbd5e1; display: flex; align-items: center; gap: 6px; margin-top: 2px;">';
             html +=       '<span>✨</span>';
             html +=       '<span>Cult-Classic Favorite: Distinct viewing sessions separated by at least 12 hours count toward rewatch medal tiers.</span>';
+            html +=     '</div>';
+            html +=   '</div>';
+            html += '</div>';
+            statsBox.innerHTML = html;
+          } else if (isMovieProgress) {
+            statsBox.style.display = 'block';
+            const totalSec = stats && stats.totalDurationSeconds ? stats.totalDurationSeconds : (ach.progress ? ach.progress.target : 7200);
+            const offsetSec = stats && stats.viewOffsetSeconds ? stats.viewOffsetSeconds : (ach.progress ? ach.progress.current : 0);
+            const watchedHrs = (offsetSec / 3600).toFixed(1);
+            const totalHrs = (totalSec / 3600).toFixed(1);
+            const pct = stats && stats.percentComplete != null ? stats.percentComplete : (totalSec > 0 ? Math.round((offsetSec / totalSec) * 100) : 0);
+
+            let html = '<div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">';
+            html +=   '<div style="display: flex; justify-content: space-between; font-weight: 600; color: #fff;">';
+            html +=     '<span>Movie Progress: ' + watchedHrs + ' / ' + totalHrs + ' hrs</span>';
+            html +=     '<span style="color: #fbbf24;">' + pct + '% (In Progress)</span>';
+            html +=   '</div>';
+            html +=   '<div style="width: 100%; background: rgba(0,0,0,0.6); height: 6px; border-radius: 999px; overflow: hidden;">';
+            html +=     '<div style="background: #f59e0b; width: ' + pct + '%; height: 100%;"></div>';
+            html +=   '</div>';
+            html +=   '<div style="padding: 12px 14px; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 10px; display: flex; flex-direction: column; gap: 8px;">';
+            html +=     '<div style="display: flex; justify-content: space-between; align-items: center;">';
+            html +=       '<span style="font-weight: 700; font-size: 0.8rem; color: #fbbf24; display: flex; align-items: center; gap: 6px;">';
+            html +=         '<span>🎬</span> Viewing Progress Summary';
+            html +=       '</span>';
+            html +=       '<span style="font-size: 0.7rem; font-weight: 600; background: rgba(245, 158, 11, 0.2); color: #fde68a; padding: 2px 8px; border-radius: 999px;">';
+            html +=         pct + '% Watched';
+            html +=       '</span>';
+            html +=     '</div>';
+            html +=     '<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; font-size: 0.75rem; text-align: center; margin-top: 4px;">';
+            html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
+            html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Time Watched</div>';
+            html +=         '<div style="font-weight: 700; color: #fbbf24;">' + watchedHrs + ' hrs</div>';
+            html +=       '</div>';
+            html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
+            html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Runtime</div>';
+            html +=         '<div style="font-weight: 700; color: #e2e8f0;">' + totalHrs + ' hrs</div>';
+            html +=       '</div>';
+            html +=       '<div style="background: rgba(0,0,0,0.3); padding: 6px; border-radius: 6px;">';
+            html +=         '<div style="color: #94a3b8; font-size: 0.7rem;">Latest Playback</div>';
+            html +=         '<div style="font-weight: 700; color: #34d399;">' + (stats && stats.latestWatchedAt ? new Date(stats.latestWatchedAt).toLocaleDateString() : 'Recent') + '</div>';
+            html +=       '</div>';
+            html +=     '</div>';
+            html +=     '<div style="font-size: 0.75rem; color: #cbd5e1; display: flex; align-items: center; gap: 6px; margin-top: 2px;">';
+            html +=       '<span>🍿</span>';
+            html +=       '<span>Incomplete Feature Film: Resume playback on Plex to complete the film and earn milestone credit.</span>';
             html +=     '</div>';
             html +=   '</div>';
             html += '</div>';

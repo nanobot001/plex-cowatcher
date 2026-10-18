@@ -46,6 +46,7 @@ export interface BadgeFlavorStats {
   seriesStatus?: string | null;
   latestWatchedAt?: string | null;
   firstCompletedAt?: string | null;
+  lastCompletedWatchedAt?: string | null;
   firstCompletedEpisodeTitle?: string | null;
   firstCompletedEpisodeSeason?: number | null;
   firstCompletedEpisodeNumber?: number | null;
@@ -284,6 +285,17 @@ export interface MovieCollectionEvidence {
   latestWatchedAt?: string | null;
 }
 
+export interface MovieProgressEvidence {
+  ratingKey: string;
+  title: string;
+  posterUrl: string | null;
+  year?: number | null;
+  totalDurationSeconds: number;
+  viewOffsetSeconds: number;
+  percentComplete: number;
+  latestWatchedAt: string | null;
+}
+
 export interface MovieReplayEvidence {
   ratingKey: string;
   title: string;
@@ -292,6 +304,7 @@ export interface MovieReplayEvidence {
   playCount: number;
   replayCount: number;
   firstWatchedAt: string | null;
+  lastCompletedWatchedAt?: string | null;
   latestWatchedAt: string | null;
   allCompletedPlays: CanonicalPlay[];
 }
@@ -310,6 +323,7 @@ export interface SubjectEvidence {
   totalAudiobookSeconds?: number;
   movieCollectionProgress?: Map<string, MovieCollectionEvidence>;
   movieReplayProgress?: Map<string, MovieReplayEvidence>;
+  movieProgress?: Map<string, MovieProgressEvidence>;
   hasInferredCoWatchOnly?: boolean;
   hasUnknownDenominator?: boolean;
 }
